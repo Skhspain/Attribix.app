@@ -1,14 +1,9 @@
-// app/routes/app.stats.jsx
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import prisma from "../db.server";
-import { authenticate } from "../shopify.server";
-
-// Import Polaris safely (CommonJS compatibility)
-import Polaris from "@shopify/polaris";
+import { Page, Card, Text } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-
-const { Page, Card, Text, Stack, Heading } = Polaris;
+import prisma from "../../db.server";
+import { authenticate } from "../../shopify.server";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -34,37 +29,18 @@ export default function StatsPage() {
   const { count, totalValue, bySource } = useLoaderData();
 
   return (
-    <Page fullWidth>
+    <Page>
       <TitleBar title="Stats Overview" />
-      <Layout>
-        <Layout.Section>
-          <Card title="Summary" sectioned>
-            <Stack vertical spacing="tight">
-              <Heading>Total Events</Heading>
-              <Text variant="bodyMd">{count}</Text>
-
-              <Heading>Total Value</Heading>
-              <Text variant="bodyMd">${totalValue.toFixed(2)}</Text>
-            </Stack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card title="Events by UTM Source" sectioned>
-            <Stack vertical spacing="tight">
-              {bySource.length === 0 && <Text>No UTM source data.</Text>}
-              {bySource.map((source) => (
-                <Stack alignment="center" key={source.utmSource}>
-                  <Text variant="bodyMd" fontWeight="medium">
-                    {source.utmSource || "Unknown"}:
-                  </Text>
-                  <Text variant="bodyMd">{source._count}</Text>
-                </Stack>
-              ))}
-            </Stack>
-          </Card>
-        </Layout.Section>
-      </Layout>
+      <Card>
+        <Text as="p">🛒 Total events: {count}</Text>
+        <Text as="p">💰 Total value: ${totalValue.toFixed(2)}</Text>
+        <Text as="p">📊 Events by UTM Source:</Text>
+        {bySource.map((s) => (
+          <Text key={s.utmSource} as="p">
+            • {s.utmSource}: {s._count}
+          </Text>
+        ))}
+      </Card>
     </Page>
   );
 }

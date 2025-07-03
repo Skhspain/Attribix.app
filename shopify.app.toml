@@ -1,7 +1,7 @@
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix.app"
 handle = "attribix-app"
-application_url = "https://editor-dollar-hood-que.trycloudflare.com"
+application_url = "https://3f0f-217-70-250-212.ngrok-free.app"
 embedded = true
 
 [build]
@@ -28,7 +28,7 @@ api_version = "2025-04"
 scopes = "write_products"
 
 [auth]
-redirect_urls = ["https://editor-dollar-hood-que.trycloudflare.com/auth/callback", "https://editor-dollar-hood-que.trycloudflare.com/auth/shopify/callback", "https://editor-dollar-hood-que.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://3f0f-217-70-250-212.ngrok-free.app/auth/callback", "https://3f0f-217-70-250-212.ngrok-free.app/auth/shopify/callback", "https://somewhat-webcams-rx-noon.trycloudflare.com/api/auth/callback"]
 
 [pos]
 embedded = false
