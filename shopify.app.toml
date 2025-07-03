@@ -1,9 +1,7 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
-
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix.app"
 handle = "attribix-app"
-application_url = "https://cingular-tabs-weddings-annoying.trycloudflare.com"
+application_url = "https://age-electoral-obligations-conflict.trycloudflare.com"
 embedded = true
 
 [build]
@@ -21,12 +19,16 @@ api_version = "2025-04"
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
 
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders_create"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "write_products"
 
 [auth]
-redirect_urls = ["https://cingular-tabs-weddings-annoying.trycloudflare.com/auth/callback", "https://cingular-tabs-weddings-annoying.trycloudflare.com/auth/shopify/callback", "https://cingular-tabs-weddings-annoying.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://age-electoral-obligations-conflict.trycloudflare.com/auth/callback", "https://age-electoral-obligations-conflict.trycloudflare.com/auth/shopify/callback", "https://age-electoral-obligations-conflict.trycloudflare.com/api/auth/callback"]
 
 [pos]
 embedded = false

@@ -1,13 +1,22 @@
-/** @type {import('@types/eslint').Linter.BaseConfig} */
 module.exports = {
   root: true,
   extends: [
-    "@remix-run/eslint-config",
-    "@remix-run/eslint-config/node",
-    "@remix-run/eslint-config/jest-testing-library",
-    "prettier",
+    'eslint:recommended',
+    'plugin:react/recommended',
+    'plugin:@typescript-eslint/recommended',
   ],
-  globals: {
-    shopify: "readonly"
+  env: {
+    browser: true,
+    node: true,
+    es2021: true,
   },
+  parserOptions: {
+    ecmaFeatures: {
+      jsx: true,
+    },
+    ecmaVersion: 'latest',
+    sourceType: 'module',
+  },
+  plugins: ['react'],
+  rules: {},
 };
