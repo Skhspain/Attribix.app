@@ -1,15 +1,14 @@
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
-import { Outlet, Link, useLoaderData, useRouteError } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import { boundary } from "@shopify/shopify-app-remix/server";
 import Tracking from "./components/Tracking";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
+
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
@@ -24,14 +23,14 @@ export default function App() {
         </Link>
         <Link to="/app/additional">Additional page</Link>
         <Link to="/app/tracked-items">Tracked Items</Link>
-        <Link to="/app/reports-products">Product Report</Link>
-        <Link to="/app/seed-test-data">Seed Test Data</Link> {/* ✅ Add this line */}
+        <Link to="/app/stats">Stats</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>
   );
 }
 
+// Shopify needs Remix to catch some thrown responses, so that their headers are included in the response.
 export function ErrorBoundary() {
   return boundary.error(useRouteError());
 }
