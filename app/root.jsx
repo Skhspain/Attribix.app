@@ -3,9 +3,11 @@ import {
   Meta,
   Outlet,
   Scripts,
-  ScrollRestoration
+  ScrollRestoration,
 } from "@remix-run/react";
-import "@shopify/polaris/build/esm/styles.css";
+import "@shopify/polaris/build/esm/styles.css"; // Polaris styles
+import "~/styles/app.css"; // ✅ Your custom styles
+
 import { AppProvider } from "@shopify/polaris";
 import enTranslations from "@shopify/polaris/locales/en.json";
 

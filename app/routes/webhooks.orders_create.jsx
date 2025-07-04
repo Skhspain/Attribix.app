@@ -1,5 +1,5 @@
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import { db } from "~/utils/db.server";
 
 export const action = async ({ request }) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
@@ -37,15 +37,17 @@ export const action = async ({ request }) => {
   }
 
   const products = Array.isArray(line_items)
-    ? line_items.map((item) => ({
-        productId: item.product_id ? String(item.product_id) : null,
-        productName: item.title,
-        quantity: item.quantity ?? 0,
-      }))
+    ? line_items
+        .filter((item) => item.title) // Defensive check
+        .map((item) => ({
+          productId: item.product_id ? String(item.product_id) : null,
+          productName: item.title,
+          quantity: item.quantity ?? 0,
+        }))
     : [];
 
   try {
-    await prisma.trackedEvent.create({
+    await db.trackedEvent.create({
       data: {
         eventName: "Purchase",
         url: landing_site,

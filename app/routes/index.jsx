@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import './App.css';
+import '~/styles/app.css';
 import { trackEvent } from '../utils/tracking';
 import { createStorefrontApiClient } from '@shopify/storefront-api-client';
 
