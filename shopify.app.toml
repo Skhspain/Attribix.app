@@ -3,7 +3,7 @@
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix.app"
 handle = "attribix-app"
-application_url = "https://settings-jackson-contrast-objectives.trycloudflare.com"
+application_url = "https://one-six-royalty-national.trycloudflare.com"
 embedded = true
 
 [build]
@@ -30,7 +30,7 @@ api_version = "2025-04"
 scopes = "write_products"
 
 [auth]
-redirect_urls = ["https://settings-jackson-contrast-objectives.trycloudflare.com/auth/callback", "https://settings-jackson-contrast-objectives.trycloudflare.com/auth/shopify/callback", "https://settings-jackson-contrast-objectives.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://one-six-royalty-national.trycloudflare.com/auth/callback", "https://one-six-royalty-national.trycloudflare.com/auth/shopify/callback", "https://one-six-royalty-national.trycloudflare.com/api/auth/callback"]
 
 [pos]
 embedded = false

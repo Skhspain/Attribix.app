@@ -61,3 +61,9 @@ model TrackedProduct {
   productName    String
   quantity       Int
 }
+
+model TrackingSettings {
+  shop    String  @id
+  pixelId String
+  enabled Boolean @default(false)
+}

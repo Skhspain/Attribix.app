@@ -1,11 +1,8 @@
+// app/components/Tracking.tsx
+
 declare global {
   interface Window {
-    fbq?: ((...args: any[]) => void) & {
-      callMethod?: (...args: any[]) => void;
-      queue?: any[];
-      loaded?: boolean;
-      version?: string;
-    };
+    fbq?: (...args: any[]) => void;
   }
 }
 
@@ -18,7 +15,7 @@ const Tracking = {
       return;
     }
 
-    // Load Facebook Pixel script (fully typed)
+    // Load Facebook Pixel script
     const fbScript = document.createElement('script');
     fbScript.async = true;
     fbScript.src = 'https://connect.facebook.net/en_US/fbevents.js';
@@ -27,6 +24,7 @@ const Tracking = {
       firstScript.parentNode.insertBefore(fbScript, firstScript);
     }
 
+    // Stub for fbq
     const fbq: any = function (...args: any[]) {
       (fbq.q = fbq.q || []).push(args);
     };
@@ -35,12 +33,14 @@ const Tracking = {
     fbq.version = '2.0';
 
     window.fbq = fbq;
-    window.fbq('init', pixelId);
-    window.fbq('track', 'PageView');
+
+    // ✅ Safe invocation with optional chaining
+    window.fbq?.('init', pixelId);
+    window.fbq?.('track', 'PageView');
   },
 
   async trigger(eventName: string, data: Record<string, unknown> = {}) {
-    // Send to server
+    // Send to server API
     try {
       await fetch('/api/track', {
         method: 'POST',
@@ -55,9 +55,9 @@ const Tracking = {
       console.error('API tracking failed:', err);
     }
 
-    // Send to FB Pixel
-    if (typeof window.fbq === 'function') {
-      window.fbq('track', eventName, data);
+    // Also send to Facebook Pixel if loaded
+    if (typeof window !== 'undefined' && typeof window.fbq === 'function') {
+      window.fbq?.('track', eventName, data);
     } else {
       console.warn('Facebook Pixel not initialized');
     }
