@@ -1,40 +1,45 @@
-import express from "express";
-import { MongoClient } from "mongodb";
+import express from 'express';
+import { MongoClient } from 'mongodb';
 
 const app = express();
 const port = process.env.PORT || 3000;
 let db;
+
+// Middleware to parse JSON
 app.use(express.json());
-const uri = process.env.MONGODB_URI;
-if (!uri) {
-  console.error("❌ Missing MONGODB_URI environment variable");
-  process.exit(1);
-}
+
+// MongoDB connection URI (includes your username, password, and cluster info)
+const uri = 'mongodb+srv://attribix1:DVTFMmPwXTTf472V@my-project-backend.smfmrhid.mongodb.net/?retryWrites=true&w=majority&appName=My-project-backend';
+
+// Connect to MongoDB and start the server
 async function startServer() {
   try {
     const client = new MongoClient(uri);
     await client.connect();
-    db = client.db(process.env.MONGODB_DB || "attribix");
-    console.log("✅ Connected to MongoDB");
+    db = client.db('attribix');  // You can change 'attribix' to your preferred database name
+    console.log('✅ Connected to MongoDB');
 
     app.listen(port, () => {
       console.log(`🚀 Server running on http://localhost:${port}`);
     });
   } catch (err) {
-      console.error("❌ MongoDB connection error:", err);
+    console.error('❌ MongoDB connection error:', err);
   }
 }
 
 startServer();
 
-app.get("/hello", (req, res) => {
-  res.send("Hello, world!");
+// Basic test route
+app.get('/hello', (req, res) => {
+  res.send('Hello, world!');
 });
-app.get("/test-db", async (req, res) => {
+
+// Optional: test DB connection route
+app.get('/test-db', async (req, res) => {
   try {
     const collections = await db.listCollections().toArray();
     res.json({ collections });
   } catch (error) {
-    res.status(500).json({ error: "Database error", details: error.message });
+    res.status(500).json({ error: 'Database error', details: error.message });
   }
-  });
+});

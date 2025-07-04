@@ -1,4 +1,3 @@
-// app/routes/seed-test-data.jsx
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { Page, Card, Text } from "@shopify/polaris";

@@ -1,30 +1,27 @@
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import { Page, Card, Text } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import Event, { connectMongo } from "~/models/event.model";
 
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+export const action = async ({ request }) => {
+  try {
+    await connectMongo();
+    const body = await request.json();
+    const shop = request.headers.get("x-shopify-shop") || "unknown";
+    const { event, data, timestamp } = body;
 
-  const sampleItems = Array.from({ length: 5 }).map((_, i) => ({
-    name: `Test Item ${i + 1}`,
-  }));
+    if (!event || typeof event !== "string") {
+      return json({ error: "Missing event name" }, { status: 400 });
+    }
 
-  await db.trackedItem.createMany({ data: sampleItems });
+    const stored = await Event.create({
+      shop,
+      event,
+      data,
+      createdAt: timestamp ? new Date(timestamp) : new Date(),
+    });
 
-  return json({ created: sampleItems.length });
+    return json({ success: true, id: stored._id });
+  } catch (err) {
+    console.error("Track error:", err);
+    return json({ error: "Failed to process event" }, { status: 500 });
+  }
 };
-
-export default function SeedTestData() {
-  const { created } = useLoaderData();
-  return (
-    <Page>
-      <TitleBar title="Seed Test Data" />
-      <Card>
-        <Text as="p">Created {created} test tracked items.</Text>
-      </Card>
-    </Page>
-  );
-}
