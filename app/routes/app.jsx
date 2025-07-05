@@ -6,7 +6,9 @@ import { authenticate } from "../shopify.server";
 import Tracking from "../components/Tracking";
 import { Link, Outlet, useLoaderData } from "@remix-run/react";
 
-export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
+export const links = () => [
+  { rel: "stylesheet", href: polarisStyles }
+];
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
