@@ -1,76 +1,74 @@
 // app/routes/app.settings.jsx
-import React, { useState, useEffect } from "react";
+import { json } from "@remix-run/node";
+import { useLoaderData, useActionData, Form } from "@remix-run/react";
 import {
   Page,
   Layout,
   Card,
+  FormLayout,
   TextField,
   Checkbox,
   Button,
   Banner,
-  InlineStack,           // ← use InlineStack, not Stack
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 
-export default function AppSettings() {
-  const [pixelId, setPixelId] = useState("");
-  const [enabled, setEnabled] = useState(false);
-  const [status, setStatus] = useState("");
+// In-memory settings (replaceable by a DB later)
+let settings = {
+  pixelId: "",
+  enabled: false,
+};
 
-  useEffect(() => {
-    fetch("/app/api/settings/tracking")
-      .then((res) => {
-        if (!res.ok) throw new Error("Network response was not ok");
-        return res.json();
-      })
-      .then(({ pixelId, enabled }) => {
-        setPixelId(pixelId || "");
-        setEnabled(Boolean(enabled));
-      })
-      .catch(() => setStatus("Failed to load settings"));
-  }, []);
+export const loader = () => json(settings);
 
-  async function handleSave(e) {
-    e.preventDefault();
-    setStatus("Saving...");
-    try {
-      const res = await fetch("/app/api/settings/tracking", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pixelId, enabled }),
-      });
-      setStatus(res.ok ? "Settings saved" : "Error saving settings");
-    } catch (err) {
-      console.error(err);
-      setStatus("Error saving settings");
-    }
-  }
+export const action = async ({ request }) => {
+  const form = await request.formData();
+  settings.pixelId = form.get("pixelId") || "";
+  settings.enabled = form.get("enabled") === "on";
+  return json({ success: true });
+};
+
+export default function SettingsRoute() {
+  const { pixelId, enabled } = useLoaderData();
+  const actionData = useActionData();
 
   return (
-    <Page>
+    <Page title="Settings">
       <TitleBar title="Settings" />
       <Layout>
         <Layout.Section>
           <Card sectioned>
-            <form onSubmit={handleSave}>
-              <InlineStack vertical gap="4">
+            {actionData?.success && (
+              <Banner status="success">Settings saved!</Banner>
+            )}
+            <Form method="post">
+              <FormLayout>
                 <TextField
+                  name="pixelId"
                   label="Facebook Pixel ID"
-                  value={pixelId}
-                  onChange={setPixelId}
+                  defaultValue={pixelId}
+                  placeholder="e.g. 1234567890"
                   autoComplete="off"
                 />
-                <Checkbox
-                  label="Enable Tracking"
-                  checked={enabled}
-                  onChange={setEnabled}
-                />
-                <Button submit primary>
-                  Save
-                </Button>
-                {status && <Banner title={status} status="info" />}
-              </InlineStack>
-            </form>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    marginTop: "1rem",
+                  }}
+                >
+                  <Checkbox
+                    name="enabled"
+                    label="Enable Tracking"
+                    defaultChecked={enabled}
+                  />
+                  <div style={{ flexGrow: 1 }} />
+                  <Button submit primary>
+                    Save
+                  </Button>
+                </div>
+              </FormLayout>
+            </Form>
           </Card>
         </Layout.Section>
       </Layout>

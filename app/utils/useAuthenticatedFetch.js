@@ -4,8 +4,8 @@ import { authenticatedFetch } from "@shopify/app-bridge-utils";
 
 /**
  * Returns a fetch function that:
- * 1) Resolves URLs against your app’s origin (leading slash).
- * 2) Injects the Shopify session token into headers.
+ * 1) Always hits your app’s origin (leading slash URLs).
+ * 2) Automatically injects the Shopify session token.
  */
 export function useAuthenticatedFetch() {
   const app = useAppBridge();

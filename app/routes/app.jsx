@@ -3,8 +3,14 @@ import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import translations from "@shopify/polaris/locales/en.json";
 import { authenticate } from "../shopify.server";
-import { Link, Outlet, useLoaderData } from "@remix-run/react";
+import {
+  Link,
+  Outlet,
+  useLoaderData,
+  useRouteError,
+} from "@remix-run/react";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -16,17 +22,29 @@ export const loader = async ({ request }) => {
 export default function App() {
   const { apiKey } = useLoaderData();
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey}>
+    <AppProvider
+      isEmbeddedApp
+      apiKey={apiKey}
+      i18n={translations}
+      // Force SSR to render every media query as “matched” so CSS classes
+      // server-side === client-side and no hydration warnings:
+      ssrMatchMedia={() => true}
+    >
       <NavMenu>
         <Link to="/app" rel="home">Home</Link>
-        <Link to="/app/additional">Additional page</Link>
+        <Link to="/app/additional">Additional</Link>
         <Link to="/app/tracked-items">Tracked Items</Link>
         <Link to="/app/stats">Stats</Link>
-        {/* ← New Settings link */}
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
-      {/* Renders nested <app.* /> routes, including /app/settings */}
       <Outlet />
     </AppProvider>
   );
 }
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+  return boundary.error(error);
+}
+
+export const headers = boundary.headers;
