@@ -3,7 +3,7 @@
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix.app"
 handle = "attribix-app"
-application_url = "https://electoral-halifax-surgeon-oven.trycloudflare.com"
+application_url = "https://playing-bd-some-gateway.trycloudflare.com"
 embedded = true
 
 [build]
@@ -30,7 +30,7 @@ api_version = "2025-04"
 scopes = "write_products"
 
 [auth]
-redirect_urls = ["https://electoral-halifax-surgeon-oven.trycloudflare.com/auth/callback", "https://electoral-halifax-surgeon-oven.trycloudflare.com/auth/shopify/callback", "https://electoral-halifax-surgeon-oven.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://playing-bd-some-gateway.trycloudflare.com/auth/callback", "https://playing-bd-some-gateway.trycloudflare.com/auth/shopify/callback", "https://playing-bd-some-gateway.trycloudflare.com/api/auth/callback"]
 
 [pos]
 embedded = false

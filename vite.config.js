@@ -2,7 +2,7 @@ import { vitePlugin } from "@remix-run/dev";
 import { installGlobals } from "@remix-run/node";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
-import path from "path"; // ✅ Required to use path.resolve
+import path from "path";
 
 installGlobals({ nativeFetch: true });
 
@@ -27,7 +27,7 @@ if (host === "localhost") {
   hmrConfig = {
     protocol: "wss",
     host: host,
-    port: parseInt(process.env.FRONTEND_PORT) || 8002,
+    port: parseInt(process.env.FRONTEND_PORT, 10) || 8002,
     clientPort: 443,
   };
 }
@@ -60,7 +60,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "~": path.resolve(__dirname, "app"), // ✅ Alias fix for ~ to point to your app folder
+      "~": path.resolve(__dirname, "app"),
     },
   },
   build: {
@@ -68,5 +68,9 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ["@shopify/app-bridge-react", "@shopify/polaris"],
+  },
+  // <<< add this block so Polaris is bundled for SSR
+  ssr: {
+    noExternal: ["@shopify/polaris"],
   },
 });

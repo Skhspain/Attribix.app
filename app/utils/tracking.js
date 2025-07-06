@@ -1,20 +1,22 @@
-export function trackEvent(eventName, payload = {}) {
-  const data = {
-    eventName,
-    ...payload,
-    url: window.location.href,
-    utmSource: new URLSearchParams(window.location.search).get('utm_source'),
-    utmMedium: new URLSearchParams(window.location.search).get('utm_medium'),
-    utmCampaign: new URLSearchParams(window.location.search).get('utm_campaign'),
-  };
+// app/routes/api/settings/tracking.jsx
+import { json } from "@remix-run/node";
 
-  fetch('/api/track', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
+// In-memory store for demo purposes.
+// Swap this out for a real database if you like.
+let settings = {
+  pixelId: "",
+  enabled: false,
+};
 
-  if (typeof window.fbq === 'function') {
-    fbq('track', eventName, payload);
-  }
-}
+export const loader = () => {
+  // GET  /api/settings/tracking
+  return json(settings);
+};
+
+export const action = async ({ request }) => {
+  // POST /api/settings/tracking
+  const data = await request.json();
+  settings.pixelId = data.pixelId ?? "";
+  settings.enabled = data.enabled ?? false;
+  return json({ success: true });
+};
