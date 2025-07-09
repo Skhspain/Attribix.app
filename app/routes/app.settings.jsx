@@ -1,4 +1,4 @@
-// File: app/routes/app.settings.jsx
+// app/routes/app.settings.jsx
 import React from "react";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useActionData, Form } from "@remix-run/react";
@@ -13,44 +13,45 @@ import {
   Banner,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { authenticate } from "~/shopify.server";
-import { getSettings, setSettings } from "~/settings.server";
+
+import { sessionStorage, shopify } from "../shopify.server";
+import { getSettings, setSettings } from "../settings.server";
+// namespace import so Vite can see Clients.Rest
 import * as ShopifyAPI from "@shopify/shopify-api";
 
-// Loader enforces authentication and fetches saved settings
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+export const loader = async () => {
   return json(await getSettings());
 };
 
-// Action persists new settings and updates script tags
 export const action = async ({ request }) => {
-  // Authenticate and grab Shopify session
-  const { admin, session } = await authenticate.admin(request);
-
   const form = await request.formData();
   const pixelId = form.get("pixelId") || "";
-  const enabled = form.has("enabled");
+  const enabled = form.get("enabled") === "on";
 
-  // Save settings to your storage
+  // persist your settings
   await setSettings({ pixelId, enabled });
 
-  // Build REST client using session
+  // get the current session
+  const cookieHeader = request.headers.get("Cookie") || "";
+  const session = await sessionStorage.getSession(cookieHeader);
+
+  // build a Rest client
   const restClient = new ShopifyAPI.Clients.Rest(
-    session.shop,
-    session.accessToken
+    session.get("shop"),
+    session.get("accessToken")
   );
+
   const srcUrl = `${process.env.SHOPIFY_APP_URL}/pixel.js`;
 
   if (enabled) {
-    // Register or re-register the pixel loader
+    // register (or re-register) your pixel loader script
     await restClient.post({
       path: "script_tags",
       type: "application/json",
       data: { script_tag: { event: "onload", src: srcUrl } },
     });
   } else {
-    // Remove any existing pixel loader scripts
+    // remove any existing pixel loader scripts
     const existing = await restClient.get({ path: "script_tags" });
     for (const tag of existing.body.script_tags || []) {
       if (tag.src === srcUrl) {
@@ -62,7 +63,6 @@ export const action = async ({ request }) => {
   return redirect("/app/settings");
 };
 
-// Component renders the settings form
 export default function SettingsRoute() {
   const { pixelId, enabled } = useLoaderData();
   const actionData = useActionData();
@@ -83,14 +83,23 @@ export default function SettingsRoute() {
                   placeholder="e.g. 1234567890"
                   autoComplete="off"
                 />
-                <Checkbox
-                  name="enabled"
-                  label="Enable Tracking"
-                  defaultChecked={enabled}
-                />
-                <Button submit primary>
-                  Save
-                </Button>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    marginTop: "1rem",
+                  }}
+                >
+                  <Checkbox
+                    name="enabled"
+                    label="Enable Tracking"
+                    defaultChecked={enabled}
+                  />
+                  <div style={{ flexGrow: 1 }} />
+                  <Button submit primary>
+                    Save
+                  </Button>
+                </div>
               </FormLayout>
             </Form>
           </Card>
