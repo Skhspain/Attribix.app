@@ -13,26 +13,20 @@ import {
   Banner,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import { createRequire } from "module";
 
-import { authenticate } from "~/shopify.server";
+import { shopify, authenticate } from "~/shopify.server";
 import { getSettings, setSettings } from "~/settings.server";
 
-// Use CommonJS require to load Shopify API on the server
-import { shopify } from "~/shopify.server";
-
-// No direct Shopify API import needed; use the configured `shopify` instance
-("@shopify/shopify-api");
-
-// Loader: enforce authentication and load stored settings
+// Loader: enforce auth and fetch stored settings
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
-  return json(await getSettings());
+  const settings = await getSettings();
+  return json(settings);
 };
 
-// Action: persist settings and manage script_tags
+// Action: authenticate, persist settings, and update script_tags
 export const action = async ({ request }) => {
-  // Authenticate and retrieve Shopify session
+  // Authenticate admin and get session
   const { session } = await authenticate.admin(request);
 
   // Parse form data
@@ -43,8 +37,7 @@ export const action = async ({ request }) => {
   // Persist settings
   await setSettings({ pixelId, enabled });
 
-  // Initialize Shopify REST client
-    // Initialize REST client from your `shopify` server config
+  // Build REST client from your Shopify instance
   const client = new shopify.api.clients.Rest(
     session.shop,
     session.accessToken
@@ -52,14 +45,12 @@ export const action = async ({ request }) => {
   const srcUrl = `${process.env.SHOPIFY_APP_URL}/pixel.js`;
 
   if (enabled) {
-    // Register or re-register pixel loader script
     await client.post({
       path: "script_tags",
       type: "application/json",
       data: { script_tag: { event: "onload", src: srcUrl } },
     });
   } else {
-    // Remove any existing pixel loader scripts
     const existing = await client.get({ path: "script_tags" });
     for (const tag of existing.body.script_tags || []) {
       if (tag.src === srcUrl) {
@@ -68,16 +59,14 @@ export const action = async ({ request }) => {
     }
   }
 
-  // Redirect back to settings page
-  return redirect("/app/settings");
+  // Return JSON so UI can display success banner
+  return json({ success: true });
 };
 
-// Component: controlled form for pixel settings
+// React component: controlled form UI
 export default function SettingsRoute() {
-  const { pixelId: initialPixel = "", enabled: initialEnabled = false } =
-    useLoaderData();
+  const { pixelId: initialPixel = "", enabled: initialEnabled = false } = useLoaderData();
   const actionData = useActionData();
-
   const [pixelId, setPixelId] = useState(initialPixel);
   const [enabled, setEnabled] = useState(initialEnabled);
 
@@ -87,7 +76,7 @@ export default function SettingsRoute() {
       <Layout>
         <Layout.Section>
           <Card sectioned>
-            {actionData && <Banner status="success">Settings saved!</Banner>}
+            {actionData?.success && <Banner status="success">Settings saved!</Banner>}
             <Form method="post">
               <FormLayout>
                 <TextField
