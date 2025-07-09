@@ -1,43 +1,57 @@
-// app/routes/app.jsx
+// File: app/routes/app.jsx
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
-import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import translations from "@shopify/polaris/locales/en.json";
-import { authenticate } from "../shopify.server";
+import { authenticate } from "~/shopify.server";
+import { Outlet, useLoaderData, useRouteError, useLocation } from "@remix-run/react";
 import {
-  Link,
-  Outlet,
-  useLoaderData,
-  useRouteError,
-} from "@remix-run/react";
+  Frame,
+  Navigation,
+  AppProvider as PolarisProvider,
+} from "@shopify/polaris";
 
-export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
+export const links = () => [
+  { rel: "stylesheet", href: polarisStyles },
+];
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
-export default function App() {
+export default function AppLayout() {
   const { apiKey } = useLoaderData();
+  const location = useLocation();
+
+  // Sidebar navigation
+  const navigationMarkup = (
+    <Navigation location={location.pathname}>
+      <Navigation.Section
+        title="Attribix.app"
+        items={[
+          { label: "Home", url: `/app${location.search}` },
+          { label: "Additional", url: `/app/additional${location.search}` },
+          { label: "Tracked Items", url: `/app/tracked-items${location.search}` },
+          { label: "Stats", url: `/app/stats${location.search}` },
+          { label: "Settings", url: `/app/settings${location.search}` },
+        ]}
+      />
+    </Navigation>
+  );
+
   return (
     <AppProvider
       isEmbeddedApp
       apiKey={apiKey}
       i18n={translations}
-      // Force SSR to render every media query as “matched” so CSS classes
-      // server-side === client-side and no hydration warnings:
       ssrMatchMedia={() => true}
     >
-      <NavMenu>
-        <Link to="/app" rel="home">Home</Link>
-        <Link to="/app/additional">Additional</Link>
-        <Link to="/app/tracked-items">Tracked Items</Link>
-        <Link to="/app/stats">Stats</Link>
-        <Link to="/app/settings">Settings</Link>
-      </NavMenu>
-      <Outlet />
+      <PolarisProvider i18n={translations}>
+        <Frame navigation={navigationMarkup}>
+          <Outlet />
+        </Frame>
+      </PolarisProvider>
     </AppProvider>
   );
 }

@@ -1,3 +1,4 @@
+// app/shopify.server.ts
 import "@shopify/shopify-app-remix/adapters/node";
 import {
   ApiVersion,
@@ -14,6 +15,7 @@ const shopify = shopifyApp({
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
+  // ← HERE we wire up Prisma-backed session storage
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
   future: {
@@ -27,9 +29,12 @@ const shopify = shopifyApp({
 
 export default shopify;
 export const apiVersion = ApiVersion.January25;
+
+// These are the named exports you can now import elsewhere:
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = shopify.authenticate;
 export const unauthenticated = shopify.unauthenticated;
 export const login = shopify.login;
 export const registerWebhooks = shopify.registerWebhooks;
+// ← this is the sessionStorage you’ll import in your routes:
 export const sessionStorage = shopify.sessionStorage;
