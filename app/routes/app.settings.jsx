@@ -1,7 +1,7 @@
-// app/routes/app.settings.jsx
-import React from "react";
+// File: app/routes/app.settings.jsx
+import React, { useState } from "react";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, useActionData, Form } from "@remix-run/react";
+import { Form, useLoaderData, useActionData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -13,59 +13,70 @@ import {
   Banner,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
+import { createRequire } from "module";
 
-import { sessionStorage, shopify } from "../shopify.server";
-import { getSettings, setSettings } from "../settings.server";
-// namespace import so Vite can see Clients.Rest
-import * as ShopifyAPI from "@shopify/shopify-api";
+import { authenticate } from "~/shopify.server";
+import { getSettings, setSettings } from "~/settings.server";
 
-export const loader = async () => {
+// Use CommonJS require to load Shopify API on the server
+const require = createRequire(import.meta.url);
+const { Shopify } = require("@shopify/shopify-api");
+
+// Loader: enforce authentication and load stored settings
+export const loader = async ({ request }) => {
+  await authenticate.admin(request);
   return json(await getSettings());
 };
 
+// Action: persist settings and manage script_tags
 export const action = async ({ request }) => {
-  const form = await request.formData();
-  const pixelId = form.get("pixelId") || "";
-  const enabled = form.get("enabled") === "on";
+  // Authenticate and get session
+  const { session } = await authenticate.admin(request);
 
-  // persist your settings
+  // Parse form data
+  const form = await request.formData();
+  const pixelId = form.get("pixelId")?.toString() || "";
+  const enabled = form.has("enabled");
+
+  // Save settings
   await setSettings({ pixelId, enabled });
 
-  // get the current session
-  const cookieHeader = request.headers.get("Cookie") || "";
-  const session = await sessionStorage.getSession(cookieHeader);
-
-  // build a Rest client
-  const restClient = new ShopifyAPI.Clients.Rest(
-    session.get("shop"),
-    session.get("accessToken")
+  // Initialize Shopify REST client via CommonJS import
+  const client = new Shopify.Clients.Rest(
+    session.shop,
+    session.accessToken
   );
-
   const srcUrl = `${process.env.SHOPIFY_APP_URL}/pixel.js`;
 
   if (enabled) {
-    // register (or re-register) your pixel loader script
-    await restClient.post({
+    // Register or update script tag
+    await client.post({
       path: "script_tags",
       type: "application/json",
       data: { script_tag: { event: "onload", src: srcUrl } },
     });
   } else {
-    // remove any existing pixel loader scripts
-    const existing = await restClient.get({ path: "script_tags" });
+    // Remove existing script tags matching our URL
+    const existing = await client.get({ path: "script_tags" });
     for (const tag of existing.body.script_tags || []) {
       if (tag.src === srcUrl) {
-        await restClient.delete({ path: `script_tags/${tag.id}` });
+        await client.delete({ path: `script_tags/${tag.id}` });
       }
     }
   }
 
+  // Redirect back to settings UI
   return redirect("/app/settings");
 };
 
+// Component: controlled form for pixel settings
 export default function SettingsRoute() {
-  const { pixelId, enabled } = useLoaderData();
+  const { pixelId: initialPixel = "", enabled: initialEnabled = false } =
+    useLoaderData();
   const actionData = useActionData();
+
+  const [pixelId, setPixelId] = useState(initialPixel);
+  const [enabled, setEnabled] = useState(initialEnabled);
 
   return (
     <Page title="Settings">
@@ -79,27 +90,20 @@ export default function SettingsRoute() {
                 <TextField
                   name="pixelId"
                   label="Facebook Pixel ID"
-                  defaultValue={pixelId}
+                  value={pixelId}
+                  onChange={setPixelId}
                   placeholder="e.g. 1234567890"
                   autoComplete="off"
                 />
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    marginTop: "1rem",
-                  }}
-                >
-                  <Checkbox
-                    name="enabled"
-                    label="Enable Tracking"
-                    defaultChecked={enabled}
-                  />
-                  <div style={{ flexGrow: 1 }} />
-                  <Button submit primary>
-                    Save
-                  </Button>
-                </div>
+                <Checkbox
+                  name="enabled"
+                  label="Enable Tracking"
+                  checked={enabled}
+                  onChange={setEnabled}
+                />
+                <Button submit primary>
+                  Save
+                </Button>
               </FormLayout>
             </Form>
           </Card>
