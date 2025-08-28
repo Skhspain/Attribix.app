@@ -1,6 +1,4 @@
-// app/utils/db.server.js
-import { PrismaClient } from '@prisma/client';
-
-const db = new PrismaClient();
-
-export default db;
+// app/utils/db.server.ts
+import { PrismaClient } from "@prisma/client";
+const prisma = new PrismaClient();
+export default prisma;

@@ -1,0 +1,6 @@
+type: theme
+name: head-injector
+# “embed” into the shop’s <head> tag on every page
+extension_points:
+  - target: head
+    type: theme_app_extension

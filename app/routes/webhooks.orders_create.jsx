@@ -1,12 +1,9 @@
 import { authenticate } from "../shopify.server";
-import { db } from "~/utils/db.server";
+import db from "~/utils/db.server";
 
 export const action = async ({ request }) => {
   const { topic, shop, payload } = await authenticate.webhook(request);
   console.log(`Received ${topic} webhook for ${shop}`);
-  if (process.env.NODE_ENV === "development") {
-    console.log(payload);
-  }
 
   const {
     id: order_id,
@@ -38,7 +35,7 @@ export const action = async ({ request }) => {
 
   const products = Array.isArray(line_items)
     ? line_items
-        .filter((item) => item.title) // Defensive check
+        .filter((item) => item.title)
         .map((item) => ({
           productId: item.product_id ? String(item.product_id) : null,
           productName: item.title,
@@ -71,7 +68,6 @@ export const action = async ({ request }) => {
     });
   } catch (err) {
     console.error("Failed to persist tracked event", err);
-    // Optionally: persist failed webhook for retry
   }
 
   return new Response("OK", { status: 200 });

@@ -1,0 +1,10 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // injected by `flyctl mpg attach`
+}
+
+/* same models as schema.prisma … */

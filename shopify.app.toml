@@ -1,9 +1,9 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
-name = "Attribix.app"
+name = "Attribix"
 handle = "attribix-app"
-application_url = "https://seem-sister-wales-partially.trycloudflare.com"
+application_url = "https://shows-princess-miss-fiction.trycloudflare.com"
 embedded = true
 
 [build]
@@ -13,24 +13,17 @@ include_config_on_deploy = true
 [webhooks]
 api_version = "2025-04"
 
-  [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
-
-  [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
-
-  [[webhooks.subscriptions]]
-  topics = [ "orders/create" ]
-  uri = "/webhooks/orders_create"
-
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products"
+# CLI reads scopes from here (TOML syntax, not env)
+scopes = "read_products,write_products,read_orders,read_customers,read_script_tags,write_script_tags"
 
 [auth]
-redirect_urls = ["https://seem-sister-wales-partially.trycloudflare.com/auth/callback", "https://seem-sister-wales-partially.trycloudflare.com/auth/shopify/callback", "https://seem-sister-wales-partially.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://shows-princess-miss-fiction.trycloudflare.com/auth/callback", "https://shows-princess-miss-fiction.trycloudflare.com/auth/shopify/callback", "https://shows-princess-miss-fiction.trycloudflare.com/api/auth/callback"]
+
+[app_proxy]
+url = "https://shows-princess-miss-fiction.trycloudflare.com/pixel.js"
+subpath = "pixel"
+prefix = "apps"
 
 [pos]
 embedded = false

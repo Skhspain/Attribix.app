@@ -1,6 +1,7 @@
 // File: app/routes/app.settings.jsx
+
 import React, { useState } from "react";
-import { json, redirect } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { Form, useLoaderData, useActionData } from "@remix-run/react";
 import {
   Page,
@@ -11,63 +12,69 @@ import {
   Checkbox,
   Button,
   Banner,
+  Text,
+  Link,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 
-import { shopify, authenticate } from "~/shopify.server";
 import { getSettings, setSettings } from "~/settings.server";
 
-// Loader: enforce auth and fetch stored settings
 export const loader = async ({ request }) => {
+  const { authenticate } = await import("~/shopify.server");
   await authenticate.admin(request);
   const settings = await getSettings();
   return json(settings);
 };
 
-// Action: authenticate, persist settings, and update script_tags
 export const action = async ({ request }) => {
-  // Authenticate admin and get session
-  const { session } = await authenticate.admin(request);
+  const { authenticate } = await import("~/shopify.server");
+  const { session, admin } = await authenticate.admin(request);
 
-  // Parse form data
   const form = await request.formData();
   const pixelId = form.get("pixelId")?.toString() || "";
+  const ga4Id = form.get("ga4Id")?.toString() || "";
+  const adsId = form.get("adsId")?.toString() || "";
+  const requireConsent = form.has("requireConsent");
   const enabled = form.has("enabled");
 
-  // Persist settings
-  await setSettings({ pixelId, enabled });
+  await setSettings({ pixelId, ga4Id, adsId, requireConsent, enabled });
 
-  // Build REST client from your Shopify instance
-  const client = new shopify.api.clients.Rest(
-    session.shop,
-    session.accessToken
-  );
-  const srcUrl = `${process.env.SHOPIFY_APP_URL}/pixel.js`;
+  // Build proxy URL
+  const shop = session.shop;
+  const src = `https://${shop}/apps/attribix-app/pixel?shop=${shop}`;
 
   if (enabled) {
-    await client.post({
+    await admin.rest.post({
       path: "script_tags",
       type: "application/json",
-      data: { script_tag: { event: "onload", src: srcUrl } },
+      data: { script_tag: { event: "onload", src } },
     });
   } else {
-    const existing = await client.get({ path: "script_tags" });
+    const existing = await admin.rest.get({ path: "script_tags" });
     for (const tag of existing.body.script_tags || []) {
-      if (tag.src === srcUrl) {
-        await client.delete({ path: `script_tags/${tag.id}` });
+      if (tag.src === src) {
+        await admin.rest.delete({ path: `script_tags/${tag.id}` });
       }
     }
   }
 
-  // Return JSON so UI can display success banner
   return json({ success: true });
 };
 
-// React component: controlled form UI
 export default function SettingsRoute() {
-  const { pixelId: initialPixel = "", enabled: initialEnabled = false } = useLoaderData();
+  const {
+    pixelId: initialPixel = "",
+    ga4Id: initialGa4 = "",
+    adsId: initialAds = "",
+    requireConsent: initialConsent = false,
+    enabled: initialEnabled = false,
+  } = useLoaderData();
   const actionData = useActionData();
+
   const [pixelId, setPixelId] = useState(initialPixel);
+  const [ga4Id, setGa4Id] = useState(initialGa4);
+  const [adsId, setAdsId] = useState(initialAds);
+  const [requireConsent, setRequireConsent] = useState(initialConsent);
   const [enabled, setEnabled] = useState(initialEnabled);
 
   return (
@@ -76,26 +83,81 @@ export default function SettingsRoute() {
       <Layout>
         <Layout.Section>
           <Card sectioned>
-            {actionData?.success && <Banner status="success">Settings saved!</Banner>}
+            {actionData?.success && (
+              <Banner status="success">Settings saved!</Banner>
+            )}
             <Form method="post">
               <FormLayout>
+
+                {/* Facebook Pixel */}
+                <Text>
+                  <strong>Facebook Pixel</strong><br />
+                  Paste your Pixel ID here (a numeric string).{" "}
+                  <Link external url="https://business.facebook.com/events_manager">
+                    Get it in Facebook Events Manager →
+                  </Link>
+                </Text>
                 <TextField
                   name="pixelId"
-                  label="Facebook Pixel ID"
                   value={pixelId}
                   onChange={setPixelId}
                   placeholder="e.g. 1234567890"
                   autoComplete="off"
                 />
+                <Button submit>Save Pixel ID</Button>
+
+                {/* GA4 */}
+                <Text>
+                  <strong>Google Analytics 4</strong><br />
+                  Your GA4 “Measurement ID” looks like <code>G-XXXXXXXXXX</code>.{" "}
+                  Find it under Admin → Data Streams in your GA4 property.
+                </Text>
+                <TextField
+                  name="ga4Id"
+                  value={ga4Id}
+                  onChange={setGa4Id}
+                  placeholder="G-XXXXXXXXXX"
+                  autoComplete="off"
+                />
+                <Button submit>Save GA4 ID</Button>
+
+                {/* Google Ads */}
+                <Text>
+                  <strong>Google Ads Conversion ID</strong><br />
+                  Use the format <code>AW-123456789/abcdefGhIjK</code>. Get it from Ads → Tools & Settings → Conversions.
+                </Text>
+                <TextField
+                  name="adsId"
+                  value={adsId}
+                  onChange={setAdsId}
+                  placeholder="AW-XXXXXXXXX/xxxxxxx"
+                  autoComplete="off"
+                />
+                <Button submit>Save Ads ID</Button>
+
+                {/* Consent */}
+                <Text>
+                  <strong>Cookie Consent</strong><br />
+                  When enabled, tracking scripts only fire after the customer calls{" "}
+                  <code>acceptTracking()</code> in their theme’s <code>&lt;head&gt;</code>.
+                </Text>
+                <Checkbox
+                  name="requireConsent"
+                  label="Require Customer Cookie Consent"
+                  checked={requireConsent}
+                  onChange={setRequireConsent}
+                />
+                <Button submit>Save Consent Setting</Button>
+
+                {/* Enable/Disable All */}
                 <Checkbox
                   name="enabled"
                   label="Enable Tracking"
                   checked={enabled}
                   onChange={setEnabled}
                 />
-                <Button submit primary>
-                  Save
-                </Button>
+                <Button submit primary>Save All</Button>
+
               </FormLayout>
             </Form>
           </Card>

@@ -1,19 +1,18 @@
+// app/routes/_index.jsx
 import { redirect } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
-import { login } from "../../shopify.server";
+import { login } from "../shopify.server"; // adjust to "../" or "../../" if your file is elsewhere
 import styles from "./styles.module.css";
 
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
-
   if (url.searchParams.get("shop")) {
     throw redirect(`/app?${url.searchParams.toString()}`);
   }
-
   return { showForm: Boolean(login) };
 };
 
-export default function App() {
+export default function Index() {
   const { showForm } = useLoaderData();
 
   return (
@@ -23,6 +22,7 @@ export default function App() {
         <p className={styles.text}>
           A tagline about [your app] that describes your value proposition.
         </p>
+
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
             <label className={styles.label}>
@@ -35,19 +35,11 @@ export default function App() {
             </button>
           </Form>
         )}
+
         <ul className={styles.list}>
-          <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
-          </li>
-          <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
-          </li>
-          <li>
-            <strong>Product feature</strong>. Some detail about your feature and
-            its benefit to your customer.
-          </li>
+          <li><strong>Product feature</strong>. Benefit description.</li>
+          <li><strong>Product feature</strong>. Benefit description.</li>
+          <li><strong>Product feature</strong>. Benefit description.</li>
         </ul>
       </div>
     </div>

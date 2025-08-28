@@ -24,13 +24,13 @@ export default function AppLayout() {
   const { apiKey } = useLoaderData();
   const location = useLocation();
 
-  // Sidebar navigation
   const navigationMarkup = (
     <Navigation location={location.pathname}>
       <Navigation.Section
-        title="Attribix.app"
+        title="Attribix"
         items={[
           { label: "Home", url: `/app${location.search}` },
+          { label: "Analytics", url: `/app/analytics${location.search}` },
           { label: "Additional", url: `/app/additional${location.search}` },
           { label: "Tracked Items", url: `/app/tracked-items${location.search}` },
           { label: "Stats", url: `/app/stats${location.search}` },

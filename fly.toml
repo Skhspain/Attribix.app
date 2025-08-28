@@ -1,0 +1,15 @@
+app = "attribix-app"
+primary_region = "fra"
+
+[env]
+  PORT = "8080"
+  HOST = "0.0.0.0"
+  # Optional but helpful for redirects/webhook registration fallbacks:
+  SHOPIFY_APP_URL = "https://attribix-app.fly.dev"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  auto_stop_machines = true
+  min_machines_running = 0
