@@ -2,17 +2,19 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "jsx": "react-jsx",
     "allowJs": false,
     "strict": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "types": ["node", "react", "react-dom"],
+    "types": ["node", "react", "react-dom", "vite/client"],
     "baseUrl": ".",
-    "paths": { "~/*": ["app/*"] }
+    "paths": {
+      "~/*": ["app/*"]
+    }
   },
   "include": ["remix.env.d.ts", "types", "**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
