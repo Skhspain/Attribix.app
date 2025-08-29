@@ -1,64 +1,40 @@
-# -------------------------
-# Node / build artefacts
-# -------------------------
+# node / build
 node_modules
 build
 dist
 .cache
 .npm
-npm-debug.log*
-*.log
-
-# Lockfiles you don't use in this project
 pnpm-lock.yaml
 yarn.lock
+npm-debug.log*
 
-# -------------------------
-# Tests / tooling
-# -------------------------
+# test / tooling
 coverage
 .husky
-.eslintcache
-*.tsbuildinfo
-.turbo
-.parcel-cache
 
-# -------------------------
-# Local env / secrets
-# -------------------------
+# local env / secrets
 .env
 .env.*
 !.env.example
 
-# -------------------------
-# Editor / OS
-# -------------------------
+# editor / os
 .vscode
 .idea
 .DS_Store
 Thumbs.db
 
-# -------------------------
-# Git / misc
-# -------------------------
+# git / misc
 .git
 .gitignore
-.gitattributes
 
-# -------------------------
-# Fly / Docker meta (don’t ship these)
-# -------------------------
+# fly / docker meta (don’t ship those)
 fly.toml
 docker-compose.yml
 Dockerfile.local
 .dockerignore.local
 
-# -------------------------
-# Prisma dev databases (keep schemas)
-# -------------------------
-prisma/*.db
-prisma/*.db-journal
-prisma/dev.sqlite
-# keep schema files
-!prisma/schema.prisma
-!prisma/schema.prod.prisma
+# logs
+*.log
+
+# TypeScript artifacts (if any generated locally)
+*.tsbuildinfo

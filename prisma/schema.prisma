@@ -1,13 +1,14 @@
+// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"   // <- must be postgresql on Fly
+  url      = env("DATABASE_URL")
 }
 
-/* Shopify Session (unchanged) */
+/* Shopify Session (PRISMA STORAGE) */
 model Session {
   id            String   @id
   shop          String
@@ -15,7 +16,7 @@ model Session {
   isOnline      Boolean  @default(false)
   scope         String?
   expires       DateTime?
-  accessToken   String
+  accessToken   String?        // <-- must be optional for pre-token sessions
   userId        BigInt?
   firstName     String?
   lastName      String?
@@ -24,9 +25,12 @@ model Session {
   locale        String?
   collaborator  Boolean? @default(false)
   emailVerified Boolean? @default(false)
+
+  @@index([shop])
+  @@index([state])
 }
 
-/* Basic App Models */
+/* Basic App Models (yours, unchanged except formatting) */
 model TrackedItem {
   id        Int       @id @default(autoincrement())
   name      String

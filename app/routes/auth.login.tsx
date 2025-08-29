@@ -1,21 +1,16 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { shopify } from "~/shopify.server";
+import shopify from "~/shopify.server";
 
-/**
- * Kicks off OAuth (or redirects to the app if already installed).
- * You can POST to this route from your index page, or just hit it directly.
- */
+// /auth/login starts the OAuth flow
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { redirect } = await shopify.authenticate.public(request);
-  return redirect;
+  return shopify.login(request);
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { redirect } = await shopify.authenticate.public(request);
-  return redirect;
+  return shopify.login(request);
 }
 
-// No UI needed here – the loader/action will redirect.
+// No UI
 export default function AuthLogin() {
   return null;
 }

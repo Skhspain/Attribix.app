@@ -1,6 +1,6 @@
-// app/utils/url.server.ts
 export function getBaseUrl(request: Request) {
-  const proto = request.headers.get("x-forwarded-proto") || "https";
-  const host = request.headers.get("x-forwarded-host") || request.headers.get("host");
-  return `${proto}://${host}`;
+  // Prefer the configured public URL in prod
+  if (process.env.SHOPIFY_APP_URL) return process.env.SHOPIFY_APP_URL;
+  const u = new URL(request.url);
+  return `${u.protocol}//${u.host}`;
 }

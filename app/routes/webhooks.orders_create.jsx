@@ -1,4 +1,4 @@
-import { authenticate } from "../shopify.server";
+import { authenticate } from "~/shopify.server";
 import db from "~/utils/db.server";
 
 export const action = async ({ request }) => {
@@ -6,19 +6,9 @@ export const action = async ({ request }) => {
   console.log(`Received ${topic} webhook for ${shop}`);
 
   const {
-    id: order_id,
-    total_price,
-    currency,
-    landing_site,
-    email,
-    phone,
-    created_at,
-    client_details = {},
-    cart_token,
-    checkout_token,
-    line_items = [],
-  } = payload;
-
+    id: order_id, total_price, currency, landing_site, email, phone,
+    created_at, client_details = {}, cart_token, checkout_token, line_items = [],
+  } = payload || {};
   const { browser_ip: ip, user_agent } = client_details || {};
 
   let utmSource, utmMedium, utmCampaign;
@@ -28,19 +18,15 @@ export const action = async ({ request }) => {
       utmSource = url.searchParams.get("utm_source") || undefined;
       utmMedium = url.searchParams.get("utm_medium") || undefined;
       utmCampaign = url.searchParams.get("utm_campaign") || undefined;
-    } catch (e) {
-      console.error("Failed to parse landing_site", e);
-    }
+    } catch {}
   }
 
   const products = Array.isArray(line_items)
-    ? line_items
-        .filter((item) => item.title)
-        .map((item) => ({
-          productId: item.product_id ? String(item.product_id) : null,
-          productName: item.title,
-          quantity: item.quantity ?? 0,
-        }))
+    ? line_items.filter(i => i?.title).map(i => ({
+        productId: i.product_id ? String(i.product_id) : null,
+        productName: i.title,
+        quantity: i.quantity ?? 0,
+      }))
     : [];
 
   try {
@@ -48,22 +34,14 @@ export const action = async ({ request }) => {
       data: {
         eventName: "Purchase",
         url: landing_site,
-        utmSource,
-        utmMedium,
-        utmCampaign,
+        utmSource, utmMedium, utmCampaign,
         shop,
         orderId: order_id ? String(order_id) : null,
         value: total_price ? parseFloat(total_price) : null,
-        currency,
-        email,
-        phone,
-        ip,
-        userAgent: user_agent,
+        currency, email, phone, ip, userAgent: user_agent,
         sessionId: checkout_token || cart_token || undefined,
         createdAt: created_at ? new Date(created_at) : undefined,
-        products: {
-          create: products,
-        },
+        products: { create: products },
       },
     });
   } catch (err) {

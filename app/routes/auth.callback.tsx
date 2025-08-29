@@ -1,17 +1,9 @@
-import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { shopify } from "~/shopify.server";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import shopify from "~/shopify.server";
 
-/**
- * Handles Shopify's OAuth callback and then redirects into your app.
- */
+// Finishes OAuth
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { redirect } = await shopify.authenticate.callback(request);
-  return redirect;
-}
-
-export async function action({ request }: ActionFunctionArgs) {
-  const { redirect } = await shopify.authenticate.callback(request);
-  return redirect;
+  return shopify.authenticate.admin(request);
 }
 
 export default function AuthCallback() {

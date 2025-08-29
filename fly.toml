@@ -2,14 +2,20 @@ app = "attribix-app"
 primary_region = "fra"
 
 [env]
+  NODE_ENV = "production"
   PORT = "8080"
   HOST = "0.0.0.0"
-  # Optional but helpful for redirects/webhook registration fallbacks:
+  # Must match Shopify Partners → App URL (no trailing slash)
   SHOPIFY_APP_URL = "https://attribix-app.fly.dev"
+
+# Runs once per deploy in the container that has DATABASE_URL
+[deploy]
+  # Use prod schema; don’t generate here (kept light to avoid OOM)
+  release_command = "npx prisma db push --schema=prisma/schema.prod.prisma --skip-generate"
 
 [http_service]
   internal_port = 8080
   force_https = true
   auto_start_machines = true
-  auto_stop_machines = true
-  min_machines_running = 0
+  auto_stop_machines = false     # keep one warm
+  min_machines_running = 1

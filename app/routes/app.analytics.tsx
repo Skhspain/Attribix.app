@@ -16,7 +16,7 @@ type Metrics = {
 
 type RecentPurchase = {
   id: string;
-  createdAt: string;
+  createdAt: string; // ISO string for the client
   totalValue: number;
   currency: string;
 };
@@ -27,19 +27,38 @@ type LoaderData = {
   recentPurchases: RecentPurchase[];
 };
 
+// Internal type for the Prisma select below (pre-serialization)
+type PurchaseRow = {
+  id: string;
+  createdAt: Date;
+  totalValue: number;
+  currency: string;
+};
+
 // ----- Loader (server) -----
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
+
   const start = from ? new Date(from) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const end = to ? new Date(to) : new Date();
 
   const [visits, conversions, revenueAgg, spendAgg, recent] = await Promise.all([
-    db.trackedEvent.count({ where: { eventName: "page_view", createdAt: { gte: start, lte: end } } }),
-    db.purchase.count({ where: { createdAt: { gte: start, lte: end } } }),
-    db.purchase.aggregate({ _sum: { totalValue: true }, where: { createdAt: { gte: start, lte: end } } }),
-    db.adSpendDaily.aggregate({ _sum: { spend: true }, where: { date: { gte: start, lte: end } } }),
+    db.trackedEvent.count({
+      where: { eventName: "page_view", createdAt: { gte: start, lte: end } },
+    }),
+    db.purchase.count({
+      where: { createdAt: { gte: start, lte: end } },
+    }),
+    db.purchase.aggregate({
+      _sum: { totalValue: true },
+      where: { createdAt: { gte: start, lte: end } },
+    }),
+    db.adSpendDaily.aggregate({
+      _sum: { spend: true },
+      where: { date: { gte: start, lte: end } },
+    }),
     db.purchase.findMany({
       where: { createdAt: { gte: start, lte: end } },
       orderBy: { createdAt: "desc" },
@@ -56,7 +75,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const data: LoaderData = {
     range: { from: start.toISOString(), to: end.toISOString() },
     metrics: { visits, conversions, revenue, adspend, roas, cpp },
-    recentPurchases: recent.map((r) => ({
+    recentPurchases: (recent as PurchaseRow[]).map((r): RecentPurchase => ({
       id: r.id,
       createdAt: r.createdAt.toISOString(),
       totalValue: r.totalValue,
@@ -86,6 +105,7 @@ export default function AppAnalytics() {
       currency: "USD",
       maximumFractionDigits: 0,
     });
+
   const when = (iso: string) => new Date(iso).toLocaleString();
 
   return (
@@ -137,7 +157,9 @@ export default function AppAnalytics() {
             <tbody>
               {recentPurchases.length === 0 ? (
                 <tr>
-                  <td colSpan={3} style={{ padding: "14px 6px", color: "#64748b" }}>No purchases in range.</td>
+                  <td colSpan={3} style={{ padding: "14px 6px", color: "#64748b" }}>
+                    No purchases in range.
+                  </td>
                 </tr>
               ) : (
                 recentPurchases.map((p) => (
