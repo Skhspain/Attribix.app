@@ -1,7 +1,8 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { Card, Page } from "@shopify/polaris";
-import prisma from "../db.server";
+import prisma from "~/utils/db.server";
+
 
 export const loader = async () => {
   const events = await prisma.trackedEvent.findMany({

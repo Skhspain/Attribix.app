@@ -1,10 +1,11 @@
+// app/routes/analytics.tsx
 import * as React from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { prisma } from "~/utils/prisma.server";
+import prisma from "~/utils/db.server";
 
-// ---------- types ----------
+
 type LoaderData = {
   range: { from: string; to: string };
   metrics: {
@@ -23,8 +24,7 @@ type LoaderData = {
   }[];
 };
 
-// ---------- helpers ----------
-function getRange(request: Request) {
+function startEndFromRequest(request: Request) {
   const url = new URL(request.url);
   const from = url.searchParams.get("from");
   const to = url.searchParams.get("to");
@@ -33,9 +33,8 @@ function getRange(request: Request) {
   return { start, end };
 }
 
-// ---------- loader ----------
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { start, end } = getRange(request);
+  const { start, end } = startEndFromRequest(request);
 
   const [visits, conversions, revenueAgg, spendAgg, recent] = await Promise.all([
     prisma.trackedEvent.count({
@@ -54,12 +53,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
       where: { createdAt: { gte: start, lte: end } },
       orderBy: { createdAt: "desc" },
       take: 10,
-      select: { id: true, createdAt: true, totalValue: true, currency: true }
-    })
+      select: { id: true, createdAt: true, totalValue: true, currency: true },
+    }),
   ]);
 
-  const revenue = revenueAgg._sum.totalValue ?? 0;
-  const adspend = spendAgg._sum.spend ?? 0;
+  const revenue = revenueAgg._sum.totalValue || 0;
+  const adspend = spendAgg._sum.spend || 0;
   const roas = adspend > 0 ? revenue / adspend : null;
   const cpp = conversions > 0 ? adspend / conversions : null;
 
@@ -70,24 +69,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
       id: r.id,
       createdAt: r.createdAt.toISOString(),
       totalValue: r.totalValue,
-      currency: r.currency
-    }))
+      currency: r.currency,
+    })),
   };
 
   return json(data);
 }
 
-// ---------- small UI bits ----------
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 16, padding: 16, background: "#fff" }}>
+    <div
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: 16,
+        padding: 16,
+        background: "#fff",
+      }}
+    >
       <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>{title}</div>
       <div style={{ fontSize: 28, fontWeight: 600 }}>{children}</div>
     </div>
   );
 }
 
-// ---------- route component ----------
 export default function AnalyticsPage() {
   const { metrics, range, recentPurchases } = useLoaderData<LoaderData>();
 
@@ -97,19 +101,27 @@ export default function AnalyticsPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
-      <div style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div
+        style={{
+          marginBottom: 16,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
         <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Analytics</h1>
         <div style={{ color: "#64748b", fontSize: 12 }}>
           Range: {range.from.slice(0, 10)} → {range.to.slice(0, 10)}
         </div>
       </div>
 
+      {/* KPI grid */}
       <div
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
           gap: 16,
-          marginBottom: 24
+          marginBottom: 24,
         }}
       >
         <Card title="Total Visits">{metrics.visits.toLocaleString()}</Card>
@@ -120,7 +132,15 @@ export default function AnalyticsPage() {
         <Card title="Cost / Purchase">{metrics.cpp == null ? "–" : fmtMoney(metrics.cpp)}</Card>
       </div>
 
-      <div style={{ border: "1px solid #e5e7eb", borderRadius: 16, background: "#fff", padding: 16 }}>
+      {/* Recent Purchases */}
+      <div
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 16,
+          background: "#fff",
+          padding: 16,
+        }}
+      >
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Recent Purchases</div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -134,12 +154,16 @@ export default function AnalyticsPage() {
             <tbody>
               {recentPurchases.length === 0 ? (
                 <tr>
-                  <td colSpan={3} style={{ padding: "14px 6px", color: "#64748b" }}>No purchases in range.</td>
+                  <td colSpan={3} style={{ padding: "14px 6px", color: "#64748b" }}>
+                    No purchases in range.
+                  </td>
                 </tr>
               ) : (
                 recentPurchases.map((p) => (
                   <tr key={p.id}>
-                    <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>{fmtDate(p.createdAt)}</td>
+                    <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>
+                      {fmtDate(p.createdAt)}
+                    </td>
                     <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>{p.id}</td>
                     <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>
                       {fmtMoney(p.totalValue)} {p.currency}

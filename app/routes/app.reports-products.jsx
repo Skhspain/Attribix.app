@@ -1,7 +1,8 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import prisma from "~/utils/db.server";
+
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);

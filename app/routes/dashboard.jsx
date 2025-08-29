@@ -1,6 +1,6 @@
 import { json } from '@remix-run/node';
 import { useLoaderData, useSearchParams } from '@remix-run/react';
-import db from '../db.server';
+import db from '~/utils/db.server';
 
 export async function loader({ request }) {
   const url = new URL(request.url);

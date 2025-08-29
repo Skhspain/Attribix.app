@@ -1,5 +1,21 @@
-.buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+/* app/styles/app.css */
+
+/* Polaris (optional if you’re using Polaris components) */
+@import "@shopify/polaris/build/esm/styles.css";
+
+/* Your global styles */
+:root {
+  --bg: #f8fafc;
+  --ink: #0f172a;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
 }

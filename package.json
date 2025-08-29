@@ -1,73 +1,42 @@
 {
   "name": "attribix-app",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "engines": {
-    "node": "^18.20 || ^20.10 || >=21.0.0"
+    "node": ">=18.17"
   },
   "scripts": {
-    "dev": "shopify app dev",
-    "build": "npm run prisma:generate:prod && remix vite:build",
-    "start": "remix-serve build/server/index.js --host 0.0.0.0 --port 8080",
-    "prisma:generate:local": "prisma generate --schema=prisma/schema.prisma",
-    "db:push:local": "prisma db push --schema=prisma/schema.prisma",
+    "dev": "remix vite:dev",
+    "build": "npm run prisma:generate && remix vite:build",
+    "start": "remix-serve ./build/server/index.js",
+    "typecheck": "tsc --noEmit",
+    "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
     "prisma:generate:prod": "prisma generate --schema=prisma/schema.prod.prisma",
-    "migrate:deploy:prod": "prisma migrate deploy --schema=prisma/schema.prod.prisma",
-    "config:link": "shopify app config link",
-    "config:use": "shopify app config use",
-    "deploy": "shopify app deploy",
-    "env": "shopify app env",
-    "generate": "shopify app generate",
-    "shopify": "shopify",
-    "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
-    "graphql-codegen": "graphql-codegen",
-    "vite": "vite",
-    "typecheck": "tsc --noEmit"
+    "prisma:migrate": "prisma migrate dev --name init"
   },
   "dependencies": {
-    "@prisma/client": "^6.2.1",
-    "@remix-run/dev": "^2.16.8",
-    "@remix-run/fs-routes": "^2.16.1",
-    "@remix-run/node": "^2.16.1",
-    "@remix-run/react": "^2.16.1",
-    "@remix-run/serve": "^2.16.1",
-    "@shopify/app-bridge-react": "^4.1.6",
-    "@shopify/app-bridge-utils": "^3.5.1",
-    "@shopify/polaris": "^12.27.0",
-    "@shopify/shopify-api": "^11.13.0",
-    "@shopify/shopify-app-remix": "^3.7.0",
-    "@shopify/shopify-app-session-storage-prisma": "^6.0.0",
-    "@shopify/storefront-api-client": "^1.0.8",
-    "dotenv": "^16.4.5",
-    "isbot": "^5.1.0",
-    "prisma": "^6.2.1",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "vite-tsconfig-paths": "^5.0.1"
+    "@prisma/client": "^6.10.1",
+    "@remix-run/node": "^2.17.0",
+    "@remix-run/react": "^2.17.0",
+    "@remix-run/serve": "^2.17.0",
+    "@shopify/app-bridge-react": "^4.1.0",
+    "@shopify/polaris": "^13.9.5",
+    "@shopify/shopify-app-remix": "3.8.5",
+    "@shopify/shopify-app-session-storage-prisma": "^6.0.9",
+    "cookie": "^0.6.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "undici": "^6.19.8"
   },
   "devDependencies": {
-    "@remix-run/eslint-config": "^2.16.1",
-    "@remix-run/route-config": "^2.16.1",
-    "@shopify/api-codegen-preset": "^1.1.1",
-    "@types/eslint": "^9.6.1",
-    "@types/node": "^22.2.0",
-    "@types/react": "^18.3.24",
-    "@types/react-dom": "^18.3.7",
-    "eslint": "^8.42.0",
-    "eslint-config-prettier": "^10.0.1",
-    "prettier": "^3.2.4",
-    "typescript": "^5.2.2",
-    "vite": "^6.2.2"
-  },
-  "workspaces": [
-    "extensions/*"
-  ],
-  "trustedDependencies": [
-    "@shopify/plugin-cloudflare"
-  ],
-  "resolutions": {
-    "@graphql-tools/url-loader": "8.0.16",
-    "@graphql-codegen/client-preset": "4.7.0",
-    "@graphql-codegen/typescript-operations": "4.5.0"
+    "@remix-run/dev": "^2.17.0",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "prisma": "^6.10.1",
+    "typescript": "^5.6.2",
+    "vite": "^6.3.5",
+    "vite-tsconfig-paths": "^5.1.4"
   }
 }

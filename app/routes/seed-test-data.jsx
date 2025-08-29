@@ -3,7 +3,7 @@ import { useLoaderData } from "@remix-run/react";
 import { Page, Card, Text } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import prisma from "~/utils/db.server";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);

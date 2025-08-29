@@ -7,7 +7,7 @@ import {
   shopifyApp,
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
-import prisma from "./db.server";
+import prisma from "~/utils/db.server";
 
 // We can import a TS module in Remix; it’s compiled by the build.
 import { getBaseUrl } from "~/utils/url.server";

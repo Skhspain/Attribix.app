@@ -3,19 +3,16 @@ generator client {
 }
 
 datasource db {
-  // dev = sqlite (as you had). For prod you'll use schema.prod.prisma with postgresql.
   provider = "sqlite"
   url      = "file:dev.sqlite"
 }
 
-/* ============================================================
-   Shopify OAuth/session (unchanged)
-============================================================ */
+/* Shopify Session (unchanged) */
 model Session {
-  id            String    @id
+  id            String   @id
   shop          String
   state         String
-  isOnline      Boolean   @default(false)
+  isOnline      Boolean  @default(false)
   scope         String?
   expires       DateTime?
   accessToken   String
@@ -23,15 +20,13 @@ model Session {
   firstName     String?
   lastName      String?
   email         String?
-  accountOwner  Boolean   @default(false)
+  accountOwner  Boolean  @default(false)
   locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  collaborator  Boolean? @default(false)
+  emailVerified Boolean? @default(false)
 }
 
-/* ============================================================
-   Existing app models
-============================================================ */
+/* Basic App Models */
 model TrackedItem {
   id        Int       @id @default(autoincrement())
   name      String
@@ -40,59 +35,44 @@ model TrackedItem {
   updatedAt DateTime? @updatedAt
 }
 
-/**
- * NOTE: `url` is optional here because your /api.track route
- * can send `null` when only `path` is present.
- */
 model TrackedEvent {
   id          Int              @id @default(autoincrement())
-  createdAt   DateTime         @default(now())
-
   eventName   String
   url         String?
-  path        String?
-  referrer    String?
-
-  // Value attribution
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
   value       Float?
   currency    String?
-
-  // Identity / device
   email       String?
   phone       String?
   ip          String?
   userAgent   String?
+  sessionId   String?
+  orderId     String?
+  shop        String?
+  createdAt   DateTime         @default(now())
+  products    TrackedProduct[]
 
-  // UTMs & click ids
-  utmSource   String?
-  utmMedium   String?
-  utmCampaign String?
+  // Optional enrichments
+  path        String?
+  referrer    String?
   gclid       String?
   fbclid      String?
   ttclid      String?
   msclkid     String?
 
-  // Session link (nullable)
-  sessionId   String?
   session     WebSession?      @relation(fields: [sessionId], references: [id])
 
-  // Optional commerce context
-  orderId     String?
-  shop        String?
-
-  // Products attached to event
-  products    TrackedProduct[]
-
   @@index([createdAt])
-  @@index([eventName, createdAt])
+  @@index([eventName])
   @@index([utmSource, utmMedium, utmCampaign])
 }
 
 model TrackedProduct {
   id             Int           @id @default(autoincrement())
-  trackedEventId Int
   trackedEvent   TrackedEvent  @relation(fields: [trackedEventId], references: [id], onDelete: Cascade)
-
+  trackedEventId Int
   productId      String?
   productName    String
   quantity       Int
@@ -104,73 +84,59 @@ model TrackingSettings {
   enabled Boolean @default(false)
 }
 
-/* ============================================================
-   Web sessions (for UTMs, consent, joins)
-============================================================ */
+/* Web Sessions */
 model WebSession {
-  id                 String    @id @default(cuid())
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  // Identifiers
-  anonId             String?
-  clientId           String?
-  ipHash             String?
-  userAgent          String?
+  anonId        String?
+  clientId      String?
+  ipHash        String?
+  userAgent     String?
 
-  // First/last touch
-  firstTouchAt       DateTime?
-  lastTouchAt        DateTime?
+  firstTouchAt  DateTime?
+  lastTouchAt   DateTime?
 
-  // UTMs / click IDs
-  utmSource          String?
-  utmMedium          String?
-  utmCampaign        String?
-  utmContent         String?
-  utmTerm            String?
-  gclid              String?
-  fbclid             String?
-  ttclid             String?
-  msclkid            String?
+  utmSource     String?
+  utmMedium     String?
+  utmCampaign   String?
+  utmContent    String?
+  utmTerm       String?
+  gclid         String?
+  fbclid        String?
+  ttclid        String?
+  msclkid       String?
 
-  // Consent flags
-  consentAdvertising Boolean?  @default(false)
-  consentMarketing   Boolean?  @default(false)
+  consentAdvertising Boolean? @default(false)
+  consentMarketing   Boolean? @default(false)
 
-  // Relations
-  events             TrackedEvent[]
-  purchases          Purchase[]
+  events       TrackedEvent[]
+  purchases    Purchase[]
 
   @@index([createdAt])
   @@index([utmSource, utmMedium, utmCampaign])
 }
 
-/* ============================================================
-   Purchases (denormalized UTM fields for fast group-bys)
-============================================================ */
+/* Purchases */
 model Purchase {
   id                 String      @id @default(cuid())
   createdAt          DateTime    @default(now())
-
-  // If you sync from Shopify, keep this; otherwise remove or drop @unique.
-  shopifyOrderId     String?     @unique
-
+  shopifyOrderId     String      @unique
   totalValue         Float
   currency           String
-  customerEmailHash  String?     // store SHA-256 hash if needed
+  customerEmailHash  String?
 
-  // Denormalized UTM fields
-  utmSource          String?
-  utmMedium          String?
-  utmCampaign        String?
-  gclid              String?
-  fbclid             String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  gclid       String?
+  fbclid      String?
 
-  // Relations
-  items              PurchaseItem[]
+  items       PurchaseItem[]
 
-  sessionId          String?
-  session            WebSession? @relation(fields: [sessionId], references: [id])
+  sessionId   String?
+  session     WebSession? @relation(fields: [sessionId], references: [id])
 
   @@index([createdAt])
   @@index([utmSource, utmMedium, utmCampaign])
@@ -191,13 +157,11 @@ model PurchaseItem {
   @@index([productId])
 }
 
-/* ============================================================
-   Ad spend (daily rollups)
-============================================================ */
+/* Ad spend (daily) */
 model AdSpendDaily {
   id        String   @id @default(cuid())
   date      DateTime
-  platform  String   // 'meta' | 'google' | 'tiktok' | etc.
+  platform  String
   campaign  String?
   adset     String?
   ad        String?

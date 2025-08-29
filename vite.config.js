@@ -1,76 +1,21 @@
-import { vitePlugin } from "@remix-run/dev";
-import { installGlobals } from "@remix-run/node";
+// vite.config.js
 import { defineConfig } from "vite";
+import { vitePlugin as remix } from "@remix-run/dev";
 import tsconfigPaths from "vite-tsconfig-paths";
-import path from "path";
-
-installGlobals({ nativeFetch: true });
-
-if (
-  process.env.HOST &&
-  (!process.env.SHOPIFY_APP_URL ||
-    process.env.SHOPIFY_APP_URL === process.env.HOST)
-) {
-  process.env.SHOPIFY_APP_URL = process.env.HOST;
-  delete process.env.HOST;
-}
-
-const host = new URL(process.env.SHOPIFY_APP_URL || "http://localhost").hostname;
-let hmrConfig;
-
-if (host === "localhost") {
-  hmrConfig = {
-    protocol: "ws",
-    clientPort: 64999,
-  };
-} else {
-  hmrConfig = {
-    protocol: "wss",
-    host: host,
-    port: parseInt(process.env.FRONTEND_PORT, 10) || 8002,
-    clientPort: 443,
-  };
-}
+import path from "node:path";
 
 export default defineConfig({
-  server: {
-    allowedHosts: [host],
-    cors: {
-      preflightContinue: true,
-    },
-    port: Number(process.env.PORT || 3000),
-    hmr: hmrConfig,
-    fs: {
-      allow: ["app", "node_modules"],
-    },
-  },
   plugins: [
-    vitePlugin({
-      ignoredRouteFiles: ["**/.*"],
-      future: {
-        v3_fetcherPersist: true,
-        v3_relativeSplatPath: true,
-        v3_throwAbortReason: true,
-        v3_lazyRouteDiscovery: true,
-        v3_singleFetch: false,
-        v3_routeConfig: true,
-      },
-    }),
+    // makes "~/*" from tsconfig work in both client and SSR
     tsconfigPaths(),
+    remix(),
   ],
   resolve: {
     alias: {
-      "~": path.resolve(__dirname, "app"),
+      "~": path.resolve(process.cwd(), "app"),
     },
   },
-  build: {
-    assetsInlineLimit: 0,
-  },
-  optimizeDeps: {
-    include: ["@shopify/app-bridge-react", "@shopify/polaris"],
-  },
-  // <<< add this block so Polaris is bundled for SSR
-  ssr: {
-    noExternal: ["@shopify/polaris"],
+  server: {
+    hmr: { overlay: true },
   },
 });

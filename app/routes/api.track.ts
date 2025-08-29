@@ -1,8 +1,8 @@
 // app/routes/api.track.ts
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { createCookie } from "@remix-run/node";
-import { prisma } from "~/utils/prisma.server";
-import { withCors, corsHeaders } from "~/utils/http.server";
+import prisma from "~/utils/db.server";
+
 
 const sessionCookie = createCookie("ax_sid", {
   httpOnly: true,
@@ -10,6 +10,21 @@ const sessionCookie = createCookie("ax_sid", {
   path: "/",
   maxAge: 60 * 60 * 24 * 365, // 1 year
 });
+
+// Simple CORS helpers (adjust origin as needed)
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  };
+}
+function withCors(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...corsHeaders() },
+  });
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method === "OPTIONS") {
@@ -50,6 +65,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const now = new Date();
 
+  // Create or update WebSession
   let webSession = sid ? await prisma.webSession.findUnique({ where: { id: sid } }) : null;
 
   if (!webSession) {
@@ -60,8 +76,8 @@ export async function action({ request }: ActionFunctionArgs) {
         anonId,
         clientId,
         userAgent,
-        consentAdvertising: !!consentAdvertising,
-        consentMarketing: !!consentMarketing,
+        consentAdvertising: consentAdvertising ?? false,
+        consentMarketing: consentMarketing ?? false,
         utmSource: utm_source ?? undefined,
         utmMedium: utm_medium ?? undefined,
         utmCampaign: utm_campaign ?? undefined,
@@ -95,6 +111,7 @@ export async function action({ request }: ActionFunctionArgs) {
     });
   }
 
+  // Create TrackedEvent
   await prisma.trackedEvent.create({
     data: {
       eventName,
@@ -112,7 +129,7 @@ export async function action({ request }: ActionFunctionArgs) {
       fbclid: fbclid ?? null,
       ttclid: ttclid ?? null,
       msclkid: msclkid ?? null,
-      sessionId: sid ?? null,
+      sessionId: sid!,
     },
   });
 
