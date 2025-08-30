@@ -1,21 +1,12 @@
-// vite.config.js
+import path from "path";
 import { defineConfig } from "vite";
-import { vitePlugin as remix } from "@remix-run/dev";
-import tsconfigPaths from "vite-tsconfig-paths";
-import path from "node:path";
+import { vitePlugin as remix } from "@remix-run/dev"; // ✅ correct import
 
 export default defineConfig({
-  plugins: [
-    // makes "~/*" from tsconfig work in both client and SSR
-    tsconfigPaths(),
-    remix(),
-  ],
+  plugins: [remix()],
   resolve: {
     alias: {
-      "~": path.resolve(process.cwd(), "app"),
+      "~": path.resolve(__dirname, "app"),
     },
-  },
-  server: {
-    hmr: { overlay: true },
   },
 });

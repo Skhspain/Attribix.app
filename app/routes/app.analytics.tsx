@@ -1,4 +1,5 @@
 // File: app/routes/app.analytics.tsx
+/** @jsxImportSource react */
 import * as React from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";

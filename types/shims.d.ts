@@ -1,13 +1,16 @@
-/* File: types/shims.d.ts */
-/// <reference types="react" />
-
-// Map the root import to the server subpath for TS (doesn't affect runtime)
-declare module "@shopify/shopify-app-remix" {
-  export * from "@shopify/shopify-app-remix/server";
+// Vite "?url" imports
+declare module "*?url" {
+  const url: string;
+  export default url;
 }
 
-// Allow Polaris JSON with import attributes
-declare module "@shopify/polaris/locales/*.json" {
-  const value: Record<string, string>;
-  export default value;
+// Optional: CSS modules
+declare module "*.css" {
+  const classes: Record<string, string>;
+  export default classes;
 }
+
+// Node-style env access
+declare const process: {
+  env: Record<string, string | undefined>;
+};

@@ -1,21 +1,23 @@
 import { PrismaClient } from "@prisma/client";
 
-let db: PrismaClient;
-
+// Reuse a single client in dev (HMR-safe)
 declare global {
   // eslint-disable-next-line no-var
-  var __db: PrismaClient | undefined;
+  var __prisma: PrismaClient | undefined;
 }
 
-if (process.env.NODE_ENV === "production") {
-  db = new PrismaClient();
-  db.$connect();
-} else {
-  if (!global.__db) {
-    global.__db = new PrismaClient();
-    global.__db.$connect();
-  }
-  db = global.__db;
+const prisma =
+  global.__prisma ??
+  new PrismaClient({
+    log:
+      process.env.NODE_ENV === "development"
+        ? ["query", "warn", "error"]
+        : ["error"],
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  global.__prisma = prisma;
 }
 
-export default db;
+export const db = prisma;
+export default prisma;
