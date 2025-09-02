@@ -1,33 +1,8 @@
-// File: app/routes/ga.js
+import { corsHeaders, handleCorsPreflight } from "../settings.server";
 
-import { getSettings } from "~/settings.server";
+export const loader = async ({ request }) => {
+  const pre = handleCorsPreflight(request);
+  if (pre) return pre;
 
-export const loader = async () => {
-  const { gaId, adsId } = await getSettings();
-  if (!gaId && !adsId) {
-    return new Response("", { status: 204 });
-  }
-
-  const consentSnippet = `
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){ dataLayer.push(arguments); }
-    gtag('consent','default', {
-      'analytics_storage': 'denied',
-      'ad_storage': 'denied'
-    });
-    var s = document.createElement('script');
-    s.async = true;
-    s.src = 'https://www.googletagmanager.com/gtag/js?id=${gaId}';
-    document.head.appendChild(s);
-    gtag('js', new Date());
-    gtag('config', '${gaId}', { send_page_view: true });
-    ${adsId ? `gtag('config', '${adsId}');` : ''}
-  `;
-
-  return new Response(consentSnippet, {
-    headers: {
-      "Content-Type": "application/javascript",
-      "Cache-Control": "public, max-age=3600",
-    },
-  });
+  return new Response("", { headers: corsHeaders });
 };

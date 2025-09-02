@@ -1,25 +1,23 @@
-import { authenticate } from "~/shopify.server";
-import db from "~/utils/db.server";
+import { json } from "@remix-run/node";
 
-export const action = async ({ request }) => {
-  const { topic, shop, payload } = await authenticate.webhook(request);
-  console.log(`Received ${topic} webhook for ${shop}`);
+/**
+ * Webhook routes should be UI-less; export only `action` and `default null`.
+ * We dynamically import both `shopify.server` and `db.server` inside the action.
+ */
+export async function action({ request }) {
+  const [{ shopify }, { db }] = await Promise.all([
+    import("../shopify.server"),   // server-only import
+    import("../utils/db.server"),  // server-only import
+  ]);
 
-  try {
-    const { id: customer_id, email, phone, created_at } = payload || {};
-    await db.trackedEvent.create({
-      data: {
-        eventName: "CustomerCreate",
-        shop,
-        email: email || undefined,
-        phone: phone || undefined,
-        orderId: customer_id ? String(customer_id) : null,
-        createdAt: created_at ? new Date(created_at) : undefined,
-      },
-    });
-  } catch (err) {
-    console.error("Failed to persist customers/create webhook", err);
-  }
+  // Let Shopify validate HMAC and dispatch to your registered handlers
+  const response = await shopify.webhooks.process({ request });
 
-  return new Response("OK", { status: 200 });
-};
+  // If you also want to persist data after verification, you can parse the body here:
+  // const payload = await request.json();
+  // await db.customer.upsert({ ...payload... });
+
+  return response ?? json({ ok: true });
+}
+
+export default null;

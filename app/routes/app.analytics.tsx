@@ -1,9 +1,8 @@
-// File: app/routes/app.analytics.tsx
 /** @jsxImportSource react */
 import * as React from "react";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import db from "~/utils/db.server";
+import { db } from "../utils/db.server"; // <- no stray ")"
 
 // ----- Types -----
 type Metrics = {
@@ -28,7 +27,6 @@ type LoaderData = {
   recentPurchases: RecentPurchase[];
 };
 
-// Internal type for the Prisma select below (pre-serialization)
 type PurchaseRow = {
   id: string;
   createdAt: Date;
@@ -101,11 +99,7 @@ export default function AppAnalytics() {
   const { metrics, range, recentPurchases } = useLoaderData<LoaderData>();
 
   const money = (n: number) =>
-    Number(n || 0).toLocaleString(undefined, {
-      style: "currency",
-      currency: "USD",
-      maximumFractionDigits: 0,
-    });
+    Number(n || 0).toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
   const when = (iso: string) => new Date(iso).toLocaleString();
 
@@ -118,15 +112,7 @@ export default function AppAnalytics() {
         </div>
       </div>
 
-      {/* KPI grid */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 16,
-          marginBottom: 24,
-        }}
-      >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 24 }}>
         <Card title="Total Visits">{metrics.visits.toLocaleString()}</Card>
         <Card title="Conversions">{metrics.conversions.toLocaleString()}</Card>
         <Card title="Revenue">{money(metrics.revenue)}</Card>
@@ -135,16 +121,7 @@ export default function AppAnalytics() {
         <Card title="Cost / Purchase">{metrics.cpp == null ? "–" : money(metrics.cpp)}</Card>
       </div>
 
-      {/* Recent purchases */}
-      <div
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 16,
-          background: "#fff",
-          padding: 16,
-          marginBottom: 32,
-        }}
-      >
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 16, background: "#fff", padding: 16, marginBottom: 32 }}>
         <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Recent Purchases</div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -158,18 +135,14 @@ export default function AppAnalytics() {
             <tbody>
               {recentPurchases.length === 0 ? (
                 <tr>
-                  <td colSpan={3} style={{ padding: "14px 6px", color: "#64748b" }}>
-                    No purchases in range.
-                  </td>
+                  <td colSpan={3} style={{ padding: "14px 6px", color: "#64748b" }}>No purchases in range.</td>
                 </tr>
               ) : (
                 recentPurchases.map((p) => (
                   <tr key={p.id}>
                     <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>{when(p.createdAt)}</td>
                     <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>{p.id}</td>
-                    <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>
-                      {money(p.totalValue)} {p.currency}
-                    </td>
+                    <td style={{ padding: "10px 6px", borderBottom: "1px solid #f1f5f9" }}>{money(p.totalValue)} {p.currency}</td>
                   </tr>
                 ))
               )}
@@ -178,15 +151,9 @@ export default function AppAnalytics() {
         </div>
       </div>
 
-      {/* Footer link */}
       <div style={{ textAlign: "center", marginTop: 32, fontSize: 14 }}>
         For more analytics,{" "}
-        <a
-          href="https://attribix.com/login"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#2563eb", fontWeight: 500 }}
-        >
+        <a href="https://attribix.com/login" target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb", fontWeight: 500 }}>
           log in to the website →
         </a>
       </div>

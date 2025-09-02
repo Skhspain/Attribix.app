@@ -1,23 +1,18 @@
-import { PrismaClient } from "@prisma/client";
+// Centralized Prisma client for server code
+import type { PrismaClient as PrismaClientType } from "@prisma/client";
+import pkg from "@prisma/client";
 
-// Reuse a single client in dev (HMR-safe)
-declare global {
-  // eslint-disable-next-line no-var
-  var __prisma: PrismaClient | undefined;
-}
+const { PrismaClient } = pkg;
 
-const prisma =
-  global.__prisma ??
-  new PrismaClient({
-    log:
-      process.env.NODE_ENV === "development"
-        ? ["query", "warn", "error"]
-        : ["error"],
-  });
+const globalForPrisma = globalThis as unknown as {
+  prisma?: PrismaClientType;
+};
+
+export const db: PrismaClientType =
+  globalForPrisma.prisma ?? new PrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
-  global.__prisma = prisma;
+  globalForPrisma.prisma = db;
 }
 
-export const db = prisma;
-export default prisma;
+export default db;

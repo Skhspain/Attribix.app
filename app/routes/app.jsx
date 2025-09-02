@@ -1,64 +1,39 @@
-// File: app/routes/app.jsx
-import { boundary } from "@shopify/shopify-app-remix/server";
+// app/routes/app.jsx
+import { json } from "@remix-run/node";
+import { Outlet, useLoaderData } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
-import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
-import translations from "@shopify/polaris/locales/en.json";
-import { authenticate } from "~/shopify.server";
-import { Outlet, useLoaderData, useRouteError, useLocation } from "@remix-run/react";
-import {
-  Frame,
-  Navigation,
-  AppProvider as PolarisProvider,
-} from "@shopify/polaris";
+import enTranslations from "@shopify/polaris/locales/en.json";
+import React from "react";
 
-export const links = () => [
-  { rel: "stylesheet", href: polarisStyles },
-];
+// ❌ remove this (server-only at module scope):
+// import shopify from "~/shopify.server";
 
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
-};
+export async function loader({ request }) {
+  // ✅ Import server-only code at runtime, on the server
+  //    Use a RELATIVE path and a `.js` extension.
+  const mod = await import("../shopify.server.js");
+  const shopify = mod.default ?? mod.shopify;
+
+  // If you require an authenticated admin session on this route, keep this:
+  if (shopify?.authenticate?.admin) {
+    await shopify.authenticate.admin(request);
+  }
+
+  // Provide API key to the client UI. Prefer env first, fall back to shopify config if present.
+  const apiKey =
+    process.env.SHOPIFY_API_KEY ??
+    shopify?.api?.config?.apiKey ??
+    "";
+
+  return json({ apiKey });
+}
 
 export default function AppLayout() {
   const { apiKey } = useLoaderData();
-  const location = useLocation();
-
-  const navigationMarkup = (
-    <Navigation location={location.pathname}>
-      <Navigation.Section
-        title="Attribix"
-        items={[
-          { label: "Home", url: `/app${location.search}` },
-          { label: "Analytics", url: `/app/analytics${location.search}` },
-          { label: "Additional", url: `/app/additional${location.search}` },
-          { label: "Tracked Items", url: `/app/tracked-items${location.search}` },
-          { label: "Stats", url: `/app/stats${location.search}` },
-          { label: "Settings", url: `/app/settings${location.search}` },
-        ]}
-      />
-    </Navigation>
-  );
 
   return (
-    <AppProvider
-      isEmbeddedApp
-      apiKey={apiKey}
-      i18n={translations}
-      ssrMatchMedia={() => true}
-    >
-      <PolarisProvider i18n={translations}>
-        <Frame navigation={navigationMarkup}>
-          <Outlet />
-        </Frame>
-      </PolarisProvider>
+    <AppProvider isEmbeddedApp apiKey={apiKey} i18n={enTranslations}>
+      <Outlet />
     </AppProvider>
   );
 }
-
-export function ErrorBoundary() {
-  const error = useRouteError();
-  return boundary.error(error);
-}
-
-export const headers = boundary.headers;

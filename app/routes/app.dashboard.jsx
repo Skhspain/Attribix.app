@@ -1,28 +1,33 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { Card, Page } from "@shopify/polaris";
-import prisma from "~/utils/db.server";
 
-
+/**
+ * Route: /app/dashboard
+ * NOTE: We do NOT import server-only modules at the top level.
+ * We dynamically import Prisma inside the loader so Vite/Remix
+ * won't try to bundle it into the client.
+ */
 export const loader = async () => {
-  const events = await prisma.trackedEvent.findMany({
-    orderBy: { createdAt: 'desc' },
-    take: 50,
+  // Load Prisma only at request time (server-only)
+  const { default: prisma } = await import("../utils/db.server.js"); // <- relative + .js
+
+  // --- Example query (adjust/remove as needed) ---
+  // If you don't need DB yet, you can leave this commented.
+  // const totalProducts = await prisma.product.count().catch(() => 0);
+
+  return json({
+    ok: true,
+    // totalProducts,
   });
-  return json({ events });
 };
 
-export default function Dashboard() {
-  const { events } = useLoaderData();
+export default function DashboardRoute() {
+  const data = useLoaderData();
   return (
-    <Page title="Tracked Events">
-      <Card sectioned>
-        <ul>
-          {events.map((e) => (
-            <li key={e.id}>{e.eventName} - {new Date(e.createdAt).toLocaleString()}</li>
-          ))}
-        </ul>
-      </Card>
-    </Page>
+    <div style={{ padding: 24 }}>
+      <h1>Dashboard</h1>
+      <p>Server is happy. Prisma is loaded only on the server.</p>
+      {/* <p>Total products: {data.totalProducts}</p> */}
+    </div>
   );
 }

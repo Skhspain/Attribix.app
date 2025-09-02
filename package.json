@@ -3,27 +3,28 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=18.17"
-  },
+  "engines": { "node": ">=18.17" },
   "scripts": {
     "dev": "remix vite:dev",
-    "build": "npm run prisma:generate && remix vite:build",
+    "build": "remix vite:build",
     "start": "remix-serve ./build/server/index.js",
     "typecheck": "tsc --noEmit",
-    "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
-    "prisma:generate:prod": "prisma generate --schema=prisma/schema.prod.prisma",
-    "prisma:migrate": "prisma migrate dev --name init"
+
+    "prisma:gen:dev": "prisma generate --schema=prisma/schema.prisma",
+    "prisma:migrate:dev": "prisma migrate dev --schema=prisma/schema.prisma --name init",
+
+    "prisma:gen:prod": "prisma generate --schema=prisma/schema.postgres.prisma",
+    "prisma:migrate:deploy": "prisma migrate deploy --schema=prisma/schema.postgres.prisma"
   },
   "dependencies": {
-    "@prisma/client": "6.15.0",
+    "@prisma/client": "^6.15.0",
     "@remix-run/node": "^2.17.0",
     "@remix-run/react": "^2.17.0",
     "@remix-run/serve": "^2.17.0",
     "@shopify/app-bridge-react": "^4.1.0",
     "@shopify/polaris": "^13.9.5",
-    "@shopify/shopify-api": "11.14.1",
-    "@shopify/shopify-app-remix": "3.8.5",
+    "@shopify/shopify-api": "^11.14.1",
+    "@shopify/shopify-app-remix": "^3.8.5",
     "@shopify/shopify-app-session-storage-memory": "^4.0.20",
     "@shopify/shopify-app-session-storage-prisma": "^6.0.9",
     "cookie": "^0.6.0",
@@ -36,7 +37,8 @@
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
-    "prisma": "6.15.0",
+    "arg": "^5.0.2",
+    "prisma": "^6.15.0",
     "typescript": "^5.6.2",
     "vite": "^6.3.5",
     "vite-tsconfig-paths": "^5.1.4"

@@ -1,58 +1,28 @@
+// app/routes/seed-test-data.jsx
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import { Page, Card, Text } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
-import prisma from "~/utils/db.server";
 
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+/**
+ * POST /seed-test-data
+ * This route performs server-only work and returns JSON.
+ * No top-level server imports; we load Prisma at runtime in the action.
+ */
+export const action = async () => {
+  // ✅ Load server-only Prisma *inside* the server handler with a relative path + .js extension
+  const { default: prisma } = await import("../utils/db.server.js");
 
-  // Seed 3 events with 2 products each
-  const createdEvents = await Promise.all(
-    Array.from({ length: 3 }).map((_, i) =>
-      prisma.trackedEvent.create({
-        data: {
-          eventName: "Purchase",
-          utmSource: ["meta", "google", "tiktok"][i % 3],
-          utmMedium: "cpc",
-          utmCampaign: `test-campaign-${i + 1}`,
-          shop: "attribix-com.myshopify.com",
-          orderId: `order_${i + 100}`,
-          value: 49.99 + i * 10,
-          currency: "USD",
-          email: `test${i}@example.com`,
-          createdAt: new Date(),
-          products: {
-            create: [
-              {
-                productId: `prod_${i}a`,
-                productName: `Test Product ${i + 1}A`,
-                quantity: 1 + i,
-              },
-              {
-                productId: `prod_${i}b`,
-                productName: `Test Product ${i + 1}B`,
-                quantity: 2 + i,
-              },
-            ],
-          },
-        },
-      })
-    )
-  );
+  // --- seed your data here ---
+  // Example scaffolding (remove/replace with your real seed):
+  // await prisma.product.create({ data: { shop: "example.myshopify.com", handle: "demo", title: "Demo" } });
 
-  return json({ created: createdEvents.length });
+  return json({ ok: true });
 };
 
-export default function SeedTestData() {
-  const { created } = useLoaderData();
-  return (
-    <Page>
-      <TitleBar title="Seed Test Data" />
-      <Card>
-        <Text as="p">Created {created} full purchase events with products.</Text>
-      </Card>
-    </Page>
-  );
+// If you hit this route via GET, just 200 with a hint
+export const loader = async () => {
+  return json({ message: "POST to this route to seed data." });
+};
+
+// No UI needed; returning null keeps it UI-less
+export default function SeedTestDataRoute() {
+  return null;
 }

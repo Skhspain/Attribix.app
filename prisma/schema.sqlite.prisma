@@ -1,0 +1,183 @@
+// prisma/schema.sqlite.prisma
+generator client {
+  provider      = "prisma-client-js"
+  // For local dev on Windows/macOS/Linux
+  binaryTargets = ["native"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL") // e.g. "file:dev.sqlite"
+}
+
+/* ============================== Shopify Session ============================== */
+model Session {
+  id            String   @id
+  shop          String
+  state         String
+  isOnline      Boolean  @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean  @default(false)
+  locale        String?
+  collaborator  Boolean? @default(false)
+  emailVerified Boolean? @default(false)
+}
+
+/* ============================== Existing app models ============================== */
+model TrackedItem {
+  id        Int       @id @default(autoincrement())
+  name      String
+  status    String    @default("new")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
+}
+
+model TrackedEvent {
+  id          Int              @id @default(autoincrement())
+  eventName   String
+  url         String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  value       Float?
+  currency    String?
+  email       String?
+  phone       String?
+  ip          String?
+  userAgent   String?
+  sessionId   String?
+  orderId     String?
+  shop        String?
+  createdAt   DateTime         @default(now())
+  products    TrackedProduct[]
+
+  // Optional enrichments
+  path        String?
+  referrer    String?
+  gclid       String?
+  fbclid      String?
+  ttclid      String?
+  msclkid     String?
+
+  // Link to WebSession (nullable)
+  session     WebSession?      @relation(fields: [sessionId], references: [id])
+
+  @@index([createdAt])
+  @@index([eventName])
+  @@index([utmSource, utmMedium, utmCampaign])
+}
+
+model TrackedProduct {
+  id             Int           @id @default(autoincrement())
+  trackedEventId Int
+  trackedEvent   TrackedEvent  @relation(fields: [trackedEventId], references: [id], onDelete: Cascade)
+  productId      String?
+  productName    String
+  quantity       Int
+}
+
+model TrackingSettings {
+  shop    String  @id
+  pixelId String
+  enabled Boolean @default(false)
+}
+
+/* ============================== Web sessions ============================== */
+model WebSession {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Identifiers
+  anonId        String?
+  clientId      String?
+  ipHash        String?
+  userAgent     String?
+
+  // First/last touch
+  firstTouchAt  DateTime?
+  lastTouchAt   DateTime?
+
+  // UTMs / click IDs
+  utmSource     String?
+  utmMedium     String?
+  utmCampaign   String?
+  utmContent    String?
+  utmTerm       String?
+  gclid         String?
+  fbclid        String?
+  ttclid        String?
+  msclkid       String?
+
+  // Consent flags
+  consentAdvertising Boolean? @default(false)
+  consentMarketing   Boolean? @default(false)
+
+  // Relations
+  events       TrackedEvent[]
+  purchases    Purchase[]
+
+  @@index([createdAt])
+  @@index([utmSource, utmMedium, utmCampaign])
+}
+
+/* ============================== Purchases ============================== */
+model Purchase {
+  id                 String      @id @default(cuid())
+  createdAt          DateTime    @default(now())
+  shopifyOrderId     String      @unique
+  totalValue         Float
+  currency           String
+  customerEmailHash  String?
+
+  // Denormalized UTM fields
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  gclid       String?
+  fbclid      String?
+
+  // Relations
+  items       PurchaseItem[]
+
+  sessionId   String?
+  session     WebSession? @relation(fields: [sessionId], references: [id])
+
+  @@index([createdAt])
+  @@index([utmSource, utmMedium, utmCampaign])
+}
+
+model PurchaseItem {
+  id           String    @id @default(cuid())
+  purchaseId   String
+  purchase     Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+
+  productId    String
+  productName  String
+  quantity     Int
+  price        Float
+  category     String?
+  brand        String?
+
+  @@index([productId])
+}
+
+/* ============================== Ad spend ============================== */
+model AdSpendDaily {
+  id        String   @id @default(cuid())
+  date      DateTime
+  platform  String
+  campaign  String?
+  adset     String?
+  ad        String?
+  spend     Float    @default(0)
+
+  @@index([date])
+  @@index([platform, date])
+}

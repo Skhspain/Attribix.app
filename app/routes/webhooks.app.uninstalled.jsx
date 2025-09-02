@@ -1,15 +1,10 @@
-import { authenticate } from "~/shopify.server";
-import db from "~/utils/db.server";
+import { json } from "@remix-run/node";
 
-export const action = async ({ request }) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
-  console.log(`Received ${topic} webhook for ${shop}`);
+export async function action({ request }) {
+  const { shopify } = await import("../shopify.server"); // server-only import
+  // Shopify will run your registered APP_UNINSTALLED handler(s)
+  const response = await shopify.webhooks.process({ request });
+  return response ?? json({ ok: true });
+}
 
-  // session may already be gone; delete by shop just in case
-  try {
-    await db.session.deleteMany({ where: { shop } });
-  } catch (e) {
-    console.warn("Session cleanup warning:", e?.message);
-  }
-  return new Response();
-};
+export default null;

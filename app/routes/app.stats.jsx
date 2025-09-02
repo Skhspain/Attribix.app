@@ -1,46 +1,51 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { Page, Card, Text } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
-import prisma from "~/utils/db.server";
-import { authenticate } from "../shopify.server";
+import * as React from "react";
 
-export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+/**
+ * IMPORTANT:
+ * - No server-only imports at module scope.
+ * - We dynamically import ../utils/db.server.js inside the loader.
+ */
+export const loader = async () => {
+  // Server-only dynamic import (note the relative path + .js)
+  const { default: db } = await import("../utils/db.server.js");
 
-  const count = await prisma.trackedEvent.count();
-  const totalValue = await prisma.trackedEvent.aggregate({
-    _sum: { value: true },
-  });
+  // Helper that safely calls .count() if the model exists in your schema
+  async function safeCount(modelName) {
+    const model = db?.[modelName];
+    if (model?.count) {
+      try {
+        return await model.count();
+      } catch {
+        // ignore schema/permission errors and fall back to 0
+      }
+    }
+    return 0;
+  }
 
-  const bySource = await prisma.trackedEvent.groupBy({
-    by: ["utmSource"],
-    _count: true,
-  });
+  const totals = {
+    products: await safeCount("product"),
+    orders: await safeCount("order"),
+    customers: await safeCount("customer"),
+    trackedItems: await safeCount("trackedItem"),
+  };
 
-  return json({
-    count,
-    totalValue: totalValue._sum.value || 0,
-    bySource,
-  });
+  return json({ totals });
 };
 
-export default function StatsPage() {
-  const { count, totalValue, bySource } = useLoaderData();
+export default function AppStats() {
+  const { totals } = useLoaderData();
 
   return (
-    <Page>
-      <TitleBar title="Stats Overview" />
-      <Card>
-        <Text as="p">🛒 Total events: {count}</Text>
-        <Text as="p">💰 Total value: ${totalValue.toFixed(2)}</Text>
-        <Text as="p">📊 Events by UTM Source:</Text>
-        {bySource.map((s) => (
-          <Text key={s.utmSource} as="p">
-            • {s.utmSource}: {s._count}
-          </Text>
-        ))}
-      </Card>
-    </Page>
+    <div style={{ padding: 24 }}>
+      <h1>Stats</h1>
+      <ul>
+        <li>Products: {totals.products}</li>
+        <li>Orders: {totals.orders}</li>
+        <li>Customers: {totals.customers}</li>
+        <li>Tracked Items: {totals.trackedItems}</li>
+      </ul>
+    </div>
   );
 }

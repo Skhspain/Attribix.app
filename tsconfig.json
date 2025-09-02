@@ -1,20 +1,26 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "lib": ["ES2022", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "jsx": "react-jsx",
-    "jsxImportSource": "react",
-    "allowJs": false,
-    "strict": true,
-    "resolveJsonModule": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "types": ["node", "vite/client", "react", "react-dom"],
     "baseUrl": ".",
-    "paths": { "~/*": ["app/*"] }
+    "paths": {
+      "~/*": ["app/*"]
+    },
+    "types": ["node", "vite/client"],
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "include": ["remix.env.d.ts", "types", "**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules"]
+  "include": [
+    "remix.env.d.ts",
+    "vite.config.ts",
+    "vite.config.js",
+    "app/**/*.ts",
+    "app/**/*.tsx"
+  ],
+  "exclude": ["node_modules", "build"]
 }

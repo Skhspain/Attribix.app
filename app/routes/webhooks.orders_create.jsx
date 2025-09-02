@@ -1,52 +1,9 @@
-import { authenticate } from "~/shopify.server";
-import db from "~/utils/db.server";
+import { json } from "@remix-run/node";
 
-export const action = async ({ request }) => {
-  const { topic, shop, payload } = await authenticate.webhook(request);
-  console.log(`Received ${topic} webhook for ${shop}`);
+export async function action({ request }) {
+  const { shopify } = await import("../shopify.server"); // server-only import
+  const response = await shopify.webhooks.process({ request });
+  return response ?? json({ ok: true });
+}
 
-  const {
-    id: order_id, total_price, currency, landing_site, email, phone,
-    created_at, client_details = {}, cart_token, checkout_token, line_items = [],
-  } = payload || {};
-  const { browser_ip: ip, user_agent } = client_details || {};
-
-  let utmSource, utmMedium, utmCampaign;
-  if (landing_site) {
-    try {
-      const url = new URL(landing_site, "https://example.com");
-      utmSource = url.searchParams.get("utm_source") || undefined;
-      utmMedium = url.searchParams.get("utm_medium") || undefined;
-      utmCampaign = url.searchParams.get("utm_campaign") || undefined;
-    } catch {}
-  }
-
-  const products = Array.isArray(line_items)
-    ? line_items.filter(i => i?.title).map(i => ({
-        productId: i.product_id ? String(i.product_id) : null,
-        productName: i.title,
-        quantity: i.quantity ?? 0,
-      }))
-    : [];
-
-  try {
-    await db.trackedEvent.create({
-      data: {
-        eventName: "Purchase",
-        url: landing_site,
-        utmSource, utmMedium, utmCampaign,
-        shop,
-        orderId: order_id ? String(order_id) : null,
-        value: total_price ? parseFloat(total_price) : null,
-        currency, email, phone, ip, userAgent: user_agent,
-        sessionId: checkout_token || cart_token || undefined,
-        createdAt: created_at ? new Date(created_at) : undefined,
-        products: { create: products },
-      },
-    });
-  } catch (err) {
-    console.error("Failed to persist tracked event", err);
-  }
-
-  return new Response("OK", { status: 200 });
-};
+export default null;

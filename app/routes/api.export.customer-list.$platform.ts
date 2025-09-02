@@ -1,5 +1,5 @@
 import { LoaderFunctionArgs } from "@remix-run/node";
-import { prisma } from "~/utils/prisma.server";
+import { db as prisma } from "~/utils/db.server";
 import { assertApiKey, corsHeaders } from "~/utils/http.server";
 
 // Minimal: export email hashes only, one per line per platform requirements.

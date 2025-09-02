@@ -4,13 +4,13 @@ declare module "*?url" {
   export default url;
 }
 
-// Optional: CSS modules
+// Optional CSS modules
 declare module "*.css" {
   const classes: Record<string, string>;
   export default classes;
 }
 
-// Node-style env access
+// Node-style env for Remix builds
 declare const process: {
   env: Record<string, string | undefined>;
 };
