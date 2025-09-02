@@ -8,8 +8,8 @@ primary_region = "fra"
   NODE_ENV = "production"
 
 [deploy]
-  # ✅ Use --schema instead of prefixing an env var
-  release_command = "npx prisma migrate deploy --schema=prisma/schema.postgres.prisma"
+  # No migrations folder -> use db push
+  release_command = "npx prisma db push --schema=prisma/schema.postgres.prisma"
 
 [[vm]]
   memory = "512mb"
