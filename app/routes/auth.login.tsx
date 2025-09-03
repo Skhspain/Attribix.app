@@ -1,27 +1,68 @@
 // app/routes/auth.login.tsx
-import type { ActionFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
+import { Form, useActionData } from "@remix-run/react";
 
-/**
- * Receives POST from the plain <form> on "/" and immediately
- * redirects to /auth?shop=... so @shopify/app kicks off OAuth.
- */
-export async function action({ request }: ActionFunctionArgs) {
-  const form = await request.formData();
-  let shop = (form.get("shop") ?? "").toString().trim();
-
-  if (!shop) {
-    return json({ error: "Missing shop" }, { status: 400 });
-  }
+/** Normalize + validate a shop input into example.myshopify.com */
+function normalizeShop(input: string): string | null {
+  let shop = (input || "").trim().toLowerCase();
+  if (!shop) return null;
+  // Ensure *.myshopify.com
   if (!shop.endsWith(".myshopify.com")) {
-    shop = `${shop}.myshopify.com`;
+    shop = `${shop.replace(/\.myshopify\.com$/, "")}.myshopify.com`;
   }
-
-  // Hand over to the existing /auth route (your app already has it)
-  return redirect(`/auth?shop=${encodeURIComponent(shop)}`);
+  // Basic allowlist
+  if (!/^[a-z0-9-]+\.myshopify\.com$/.test(shop)) return null;
+  return shop;
 }
 
-// No UI for this route (POST only)
+/** Handle GET /auth/login?shop=... — redirect straight into OAuth begin */
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const shopParam = url.searchParams.get("shop");
+  const shop = normalizeShop(shopParam || "");
+  if (shop) {
+    return redirect(`/auth?shop=${shop}`);
+  }
+  // No shop? render the form UI below
+  return json({});
+}
+
+/** Handle POST from the form */
+export async function action({ request }: ActionFunctionArgs) {
+  const form = await request.formData();
+  const shop = normalizeShop(String(form.get("shop") || ""));
+  if (!shop) {
+    return json({ error: "Please enter a valid shop domain" }, { status: 400 });
+  }
+  return redirect(`/auth?shop=${shop}`);
+}
+
+/** Minimal login form (used when GET has no ?shop=) */
 export default function AuthLogin() {
-  return null;
+  const data = useActionData<typeof action>();
+  return (
+    <main style={{ padding: 24, maxWidth: 520 }}>
+      <h1 style={{ marginBottom: 12 }}>Log in to Attribix</h1>
+      <p style={{ marginBottom: 16, opacity: 0.8 }}>
+        Enter your Shopify shop domain to continue:
+      </p>
+      <Form method="post">
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            name="shop"
+            placeholder="attribix-com.myshopify.com"
+            defaultValue=""
+            style={{ flex: 1, padding: 8 }}
+          />
+          <button type="submit" style={{ padding: "8px 14px" }}>
+            Continue
+          </button>
+        </div>
+        {data?.error ? (
+          <p style={{ color: "crimson", marginTop: 8 }}>{data.error}</p>
+        ) : null}
+      </Form>
+    </main>
+  );
 }
