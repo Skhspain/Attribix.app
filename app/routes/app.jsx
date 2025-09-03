@@ -1,7 +1,7 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { shopify } from "~/shopify.server";
+import { shopify } from "../shopify.server";
 
 /**
  * Server: authenticate the admin request and fetch a few bits
