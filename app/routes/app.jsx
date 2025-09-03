@@ -1,74 +1,66 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { shopify } from "../shopify.server"; // NOTE: relative path (no "~")
+import { authenticate } from "../shopify.server";
+import shopify from "../shopify.server";
 
-export async function loader({ request }) {
-  const { session } = await shopify.authenticate.admin(request);
-  const rest = new shopify.api.clients.Rest({ session });
+export const loader = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  const rest = new shopify.api.clients.Rest({ session: admin.session });
 
-  // Helper so a failed call never crashes the page
-  async function tryGet(path, query) {
+  async function count(path, key = "count") {
     try {
-      const res = await rest.get({ path, query });
-      return res?.body ?? null;
+      const resp = await rest.get({ path });               // e.g. 'products/count.json'
+      const body = resp?.data ?? resp?.body ?? {};
+      const value = body?.[key] ?? body?.count ?? 0;
+      return typeof value === "number" ? value : 0;
     } catch (err) {
-      console.error(`[app.jsx] REST ${path} failed`, err);
-      return null;
+      console.error(`REST ${path} failed`, err);
+      return 0;
     }
   }
 
-  const [shopRes, customersCountRes, ordersCountRes, productsCountRes] =
-    await Promise.all([
-      tryGet("shop"),              // -> { shop: {...} }
-      tryGet("customers/count"),   // -> { count: number }
-      tryGet("orders/count"),      // -> { count: number }
-      tryGet("products/count"),    // -> { count: number }
-    ]);
+  const [productCount, orderCount, customerCount] = await Promise.all([
+    count("products/count.json"),
+    count("orders/count.json"),
+    count("customers/count.json"),
+  ]);
 
-  const shop = shopRes?.shop ?? null;
-  const counts = {
-    customers:
-      typeof customersCountRes?.count === "number"
-        ? customersCountRes.count
-        : null,
-    orders:
-      typeof ordersCountRes?.count === "number" ? ordersCountRes.count : null,
-    products:
-      typeof productsCountRes?.count === "number" ? productsCountRes.count : null,
-  };
+  return json({ productCount, orderCount, customerCount });
+};
 
-  return json({ shop, counts });
-}
-
-export default function AppRoute() {
-  const { shop, counts } = useLoaderData();
+export default function AppPage() {
+  const { productCount, orderCount, customerCount } = useLoaderData();
 
   return (
-    <div style={{ padding: 16 }}>
-      <h1 style={{ marginBottom: 8 }}>{shop?.name ?? "Your shop"}</h1>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 12,
-        }}
-      >
-        <StatCard title="Products" value={counts.products} />
-        <StatCard title="Orders" value={counts.orders} />
-        <StatCard title="Customers" value={counts.customers} />
+    <main style={{ padding: 24 }}>
+      <h1>Attribix – Overview</h1>
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(3, 1fr)", maxWidth: 900 }}>
+        <Card title="Products" value={productCount} />
+        <Card title="Orders" value={orderCount} />
+        <Card title="Customers" value={customerCount} />
       </div>
+      <p style={{ marginTop: 24 }}>
+        If these show 0, check app scopes and that the REST Admin API is enabled.
+      </p>
+    </main>
+  );
+}
+
+function Card({ title, value }) {
+  return (
+    <div style={{ border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}>
+      <div style={{ color: "#666", marginBottom: 8 }}>{title}</div>
+      <div style={{ fontSize: 32, fontWeight: 700 }}>{value}</div>
     </div>
   );
 }
 
-function StatCard({ title, value }) {
+export function ErrorBoundary({ error }) {
+  console.error(error);
   return (
-    <div
-      style={{ border: "1px solid #e1e3e5", borderRadius: 8, padding: 12 }}
-    >
-      <div style={{ fontSize: 12, color: "#6b7280" }}>{title}</div>
-      <div style={{ fontSize: 24, fontWeight: 600 }}>{value ?? "—"}</div>
-    </div>
+    <main style={{ padding: 24 }}>
+      <h1>App Error</h1>
+      <pre style={{ whiteSpace: "pre-wrap", background: "#fee", padding: 12 }}>{String(error)}</pre>
+    </main>
   );
 }

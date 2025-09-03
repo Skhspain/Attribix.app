@@ -1,42 +1,40 @@
 import { json } from "@remix-run/node";
+import { Form, useActionData, useNavigation } from "@remix-run/react";
 
-// Shopify sometimes prefetches route data; this prevents 400s.
-export async function loader() {
-  return json({ ok: true });
-}
+export const loader = () => json({ ok: true });
+
+export const action = async ({ request }) => {
+  const form = await request.formData();
+  const shop = (form.get("shop") || "").trim();
+  if (!shop) return json({ error: "Enter your .myshopify.com domain" }, { status: 400 });
+  // Hand off to our login route which starts OAuth
+  return new Response(null, {
+    status: 302,
+    headers: { Location: `/auth/login?shop=${encodeURIComponent(shop)}` },
+  });
+};
 
 export default function Index() {
+  const data = useActionData();
+  const nav = useNavigation();
+  const busy = nav.state !== "idle";
+
   return (
-    <div style={{ padding: 16, maxWidth: 420 }}>
-      <form method="post" action="/auth/login">
+    <main style={{ padding: 24 }}>
+      <h1>Attribix</h1>
+      <p>Enter your shop domain to log in:</p>
+      <Form method="post" replace>
         <input
           name="shop"
-          placeholder="your-store.myshopify.com"
           defaultValue="attribix-com.myshopify.com"
-          style={{
-            width: "100%",
-            padding: 10,
-            borderRadius: 6,
-            border: "1px solid #e1e3e5",
-          }}
+          placeholder="your-shop.myshopify.com"
+          style={{ padding: 8, width: 320 }}
         />
-        <button
-          type="submit"
-          style={{
-            marginTop: 10,
-            padding: "10px 16px",
-            borderRadius: 6,
-            border: "1px solid #111827",
-          }}
-        >
-          Log in
+        <button type="submit" disabled={busy} style={{ marginLeft: 8, padding: "8px 14px" }}>
+          {busy ? "Starting…" : "Log in"}
         </button>
-      </form>
-
-      {/* optional friendly message area */}
-      <p style={{ color: "#dc2626", marginTop: 8 }}>
-        {/* this stays empty unless /auth/login returns an error param */}
-      </p>
-    </div>
+      </Form>
+      {data?.error ? <p style={{ color: "crimson" }}>{data.error}</p> : null}
+    </main>
   );
 }
