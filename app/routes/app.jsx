@@ -2,7 +2,7 @@
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { Page, Layout, Card, Text, BlockStack, InlineGrid } from "@shopify/polaris";
-import { authenticate, shopify } from "~/shopify.server";
+import { authenticate, shopify } from "../shopify.server";
 
 export async function loader({ request }) {
   const { admin, session } = await authenticate.admin(request);
