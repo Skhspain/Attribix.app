@@ -1,24 +1,41 @@
-// app/routes/_index.jsx
+import { json } from "@remix-run/node";
+
+// Shopify sometimes prefetches route data; this prevents 400s.
+export async function loader() {
+  return json({ ok: true });
+}
+
 export default function Index() {
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
-      <h1>Attribix</h1>
-
-      {/* Plain HTML form -> real POST -> server redirect (no fetcher) */}
-      <form method="post" action="/auth/login" style={{ display: "flex", gap: 8 }}>
+    <div style={{ padding: 16, maxWidth: 420 }}>
+      <form method="post" action="/auth/login">
         <input
-          type="text"
           name="shop"
+          placeholder="your-store.myshopify.com"
           defaultValue="attribix-com.myshopify.com"
-          placeholder="my-shop.myshopify.com"
-          style={{ padding: 8, width: 280 }}
-          required
+          style={{
+            width: "100%",
+            padding: 10,
+            borderRadius: 6,
+            border: "1px solid #e1e3e5",
+          }}
         />
-        <button type="submit" style={{ padding: "8px 14px" }}>Log in</button>
+        <button
+          type="submit"
+          style={{
+            marginTop: 10,
+            padding: "10px 16px",
+            borderRadius: 6,
+            border: "1px solid #111827",
+          }}
+        >
+          Log in
+        </button>
       </form>
 
-      <p style={{ color: "#b00", marginTop: 8 }}>
-        {/* This line will only show if you wire an ?err= param; safe to leave */}
+      {/* optional friendly message area */}
+      <p style={{ color: "#dc2626", marginTop: 8 }}>
+        {/* this stays empty unless /auth/login returns an error param */}
       </p>
     </div>
   );
