@@ -1,38 +1,52 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { Form, useActionData } from "@remix-run/react";
+import { redirect } from "@remix-run/node";
 
-export async function action({ request }: ActionFunctionArgs) {
-  const form = await request.formData();
-  let shop = (form.get("shop") ?? "").toString().trim();
-
-  if (!shop) {
-    return json({ error: "Please enter your shop domain" }, { status: 400 });
-  }
-  // Allow entering either "mystore" or "mystore.myshopify.com"
-  if (!shop.includes(".")) shop = `${shop}.myshopify.com`;
-
-  return redirect(`/auth?shop=${encodeURIComponent(shop)}`);
+function extractShopFromFormData(fd: FormData): string {
+  return String(fd.get("shop") ?? "").trim();
 }
 
-export default function Login() {
-  const data = useActionData<typeof action>();
-  return (
-    <div style={{ padding: 24 }}>
-      <h1>Log in to Attribix</h1>
-      <Form method="post" style={{ display: "flex", gap: 8 }}>
-        <input
-          type="text"
-          name="shop"
-          placeholder="your-store.myshopify.com"
-          style={{ padding: 8, minWidth: 320 }}
-          aria-label="Shop domain"
-        />
-        <button type="submit">Log in</button>
-      </Form>
-      {data?.error ? (
-        <p style={{ color: "crimson", marginTop: 8 }}>{data.error}</p>
-      ) : null}
-    </div>
-  );
+function isValidShopDomain(s: string) {
+  return /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(s);
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  let shop = "";
+
+  // Try formData first (works for application/x-www-form-urlencoded & multipart)
+  try {
+    const fd = await request.formData();
+    shop = extractShopFromFormData(fd);
+  } catch {
+    // As a fallback, try parsing raw text (in case something odd posts text)
+    const raw = await request.text().catch(() => "");
+    if (raw && !shop) {
+      const params = new URLSearchParams(raw);
+      shop = String(params.get("shop") ?? "").trim();
+    }
+  }
+
+  if (!shop || !isValidShopDomain(shop)) {
+    return new Response("Missing or invalid shop", { status: 400 });
+  }
+
+  const redirectTo = `/auth?shop=${encodeURIComponent(shop)}`;
+
+  // Always set the header so Remix fetchers can read it
+  const headers = new Headers({ "X-Redirect": redirectTo });
+
+  // For normal document POSTs, do a regular HTTP redirect
+  // For Remix fetcher/data requests, return 204 + X-Redirect header
+  const isDataRequest =
+    new URL(request.url).searchParams.has("_data") ||
+    request.headers.get("X-Remix-Fetch") === "true";
+
+  if (isDataRequest) {
+    return new Response(null, { status: 204, headers });
+  }
+  return redirect(redirectTo, { headers });
+}
+
+// Render nothing at this route
+export default function AuthLogin() {
+  return null;
 }
