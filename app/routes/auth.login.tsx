@@ -1,52 +1,27 @@
+// app/routes/auth.login.tsx
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import { json, redirect } from "@remix-run/node";
 
-function extractShopFromFormData(fd: FormData): string {
-  return String(fd.get("shop") ?? "").trim();
-}
-
-function isValidShopDomain(s: string) {
-  return /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(s);
-}
-
+/**
+ * Receives POST from the plain <form> on "/" and immediately
+ * redirects to /auth?shop=... so @shopify/app kicks off OAuth.
+ */
 export async function action({ request }: ActionFunctionArgs) {
-  let shop = "";
+  const form = await request.formData();
+  let shop = (form.get("shop") ?? "").toString().trim();
 
-  // Try formData first (works for application/x-www-form-urlencoded & multipart)
-  try {
-    const fd = await request.formData();
-    shop = extractShopFromFormData(fd);
-  } catch {
-    // As a fallback, try parsing raw text (in case something odd posts text)
-    const raw = await request.text().catch(() => "");
-    if (raw && !shop) {
-      const params = new URLSearchParams(raw);
-      shop = String(params.get("shop") ?? "").trim();
-    }
+  if (!shop) {
+    return json({ error: "Missing shop" }, { status: 400 });
+  }
+  if (!shop.endsWith(".myshopify.com")) {
+    shop = `${shop}.myshopify.com`;
   }
 
-  if (!shop || !isValidShopDomain(shop)) {
-    return new Response("Missing or invalid shop", { status: 400 });
-  }
-
-  const redirectTo = `/auth?shop=${encodeURIComponent(shop)}`;
-
-  // Always set the header so Remix fetchers can read it
-  const headers = new Headers({ "X-Redirect": redirectTo });
-
-  // For normal document POSTs, do a regular HTTP redirect
-  // For Remix fetcher/data requests, return 204 + X-Redirect header
-  const isDataRequest =
-    new URL(request.url).searchParams.has("_data") ||
-    request.headers.get("X-Remix-Fetch") === "true";
-
-  if (isDataRequest) {
-    return new Response(null, { status: 204, headers });
-  }
-  return redirect(redirectTo, { headers });
+  // Hand over to the existing /auth route (your app already has it)
+  return redirect(`/auth?shop=${encodeURIComponent(shop)}`);
 }
 
-// Render nothing at this route
+// No UI for this route (POST only)
 export default function AuthLogin() {
   return null;
 }
