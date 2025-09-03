@@ -1,96 +1,105 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { Page, Layout, Card, Text, BlockStack, InlineGrid } from "@shopify/polaris";
-import { authenticate, shopify } from "../shopify.server";
+import { shopify } from "~/shopify.server";
 
+/**
+ * Server: authenticate the admin request and fetch a few bits
+ * of data via the REST client under shopify.api.clients.
+ */
 export async function loader({ request }) {
-  const { admin, session } = await authenticate.admin(request);
+  // Get a valid admin session
+  const { session } = await shopify.auth.authenticate.admin(request);
 
-  // Basic shop info from GraphQL
-  const gqlRes = await admin.graphql(`
-    query ShopInfo {
-      shop {
-        name
-        myshopifyDomain
-        email
-        primaryDomain { url }
-        plan { displayName partnerDevelopment }
-      }
-    }
-  `);
-  const { data } = await gqlRes.json();
+  // ✅ Correct location of the REST client
+  const rest = new shopify.api.clients.Rest({ session });
 
-  // Counts via REST
-  const rest = new shopify.clients.Rest({ session });
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-
-  const [productsCount, customersCount, ordersWeek] = await Promise.all([
-    rest.get({ path: "products/count.json" }).then(r => r.body?.count ?? 0).catch(() => 0),
-    rest.get({ path: "customers/count.json" }).then(r => r.body?.count ?? 0).catch(() => 0),
-    rest.get({
-      path: "orders/count.json",
-      query: { status: "any", created_at_min: sevenDaysAgo },
-    }).then(r => r.body?.count ?? 0).catch(() => 0),
+  // Fetch shop info and some quick counts in parallel
+  const [shopRes, productsRes, customersRes, ordersRes] = await Promise.all([
+    rest.get({ path: "shop" }),
+    rest.get({ path: "products/count" }),
+    rest.get({ path: "customers/count" }),
+    rest.get({ path: "orders/count" }),
   ]);
 
+  const shop = shopRes.body?.shop ?? null;
+
   return json({
-    shop: {
-      name: data?.shop?.name ?? session.shop,
-      domain: data?.shop?.primaryDomain?.url ?? `https://${session.shop}`,
-      myshopifyDomain: data?.shop?.myshopifyDomain ?? session.shop,
-      email: data?.shop?.email ?? null,
-      plan: data?.shop?.plan?.displayName ?? null,
+    shop: shop
+      ? {
+          name: shop.name,
+          myshopifyDomain: shop.myshopify_domain,
+          email: shop.email,
+          plan: shop.plan_display_name,
+          currency: shop.currency,
+          country: shop.country_name,
+        }
+      : null,
+    counts: {
+      products: productsRes.body?.count ?? 0,
+      customers: customersRes.body?.count ?? 0,
+      orders: ordersRes.body?.count ?? 0,
     },
-    metrics: { productsCount, customersCount, ordersWeek },
   });
 }
 
+/**
+ * Client: render a simple dashboard. Keep it minimal to avoid
+ * Polaris/import churn while we’re stabilizing.
+ */
 export default function AppDashboard() {
-  const { shop, metrics } = useLoaderData();
+  const { shop, counts } = useLoaderData();
 
   return (
-    <Page title="Attribix">
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingLg">Welcome, {shop.name}</Text>
-              <Text as="p" variant="bodyMd">
-                Store: {shop.myshopifyDomain} • Plan: {shop.plan ?? "—"} • Email: {shop.email ?? "—"}
-              </Text>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
+    <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
+      <h1 style={{ marginBottom: 8 }}>Attribix</h1>
 
-        <Layout.Section>
-          <InlineGrid columns={{ xs: 1, sm: 3 }} gap="300">
-            <Stat title="Products" value={metrics.productsCount} />
-            <Stat title="Customers" value={metrics.customersCount} />
-            <Stat title="Orders (7d)" value={metrics.ordersWeek} />
-          </InlineGrid>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingMd">Next steps</Text>
-              <Text as="p">This is a starter dashboard. Add your KPIs or actions here.</Text>
-            </BlockStack>
+      {shop ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          <Card title="Shop">
+            <div><strong>{shop.name}</strong></div>
+            <div>{shop.myshopifyDomain}</div>
+            <div>{shop.country}</div>
+            <div>Plan: {shop.plan}</div>
+            <div>Email: {shop.email}</div>
+            <div>Currency: {shop.currency}</div>
           </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
+
+          <Card title="Products">
+            <BigNumber value={counts.products} />
+          </Card>
+
+          <Card title="Customers">
+            <BigNumber value={counts.customers} />
+          </Card>
+
+          <Card title="Orders">
+            <BigNumber value={counts.orders} />
+          </Card>
+        </div>
+      ) : (
+        <div style={{ color: "#b00" }}>Couldn’t load shop info.</div>
+      )}
+    </div>
   );
 }
 
-function Stat({ title, value }) {
+function Card({ title, children }) {
   return (
-    <Card>
-      <BlockStack gap="100">
-        <Text as="p" variant="bodySm" tone="subdued">{title}</Text>
-        <Text as="h3" variant="heading2xl">{value}</Text>
-      </BlockStack>
-    </Card>
+    <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 14, background: "#fff" }}>
+      <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.8, marginBottom: 8 }}>{title}</div>
+      {children}
+    </div>
   );
+}
+
+function BigNumber({ value }) {
+  return <div style={{ fontSize: 32, fontWeight: 700 }}>{value}</div>;
 }
