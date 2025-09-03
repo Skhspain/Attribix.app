@@ -2,38 +2,43 @@
 
 datasource db {
   provider  = "postgresql"
-  // Runtime (through PgBouncer on 5432)
-  url       = env("DATABASE_URL")
-  // Direct connection for migrations/db push on 5433
-  directUrl = env("DIRECT_URL")
+  url       = env("DATABASE_URL")   // PgBouncer on 5432 (runtime)
+  directUrl = env("DIRECT_URL")     // Direct Postgres on 5433 (migrations/db push)
 }
 
 generator client {
   provider      = "prisma-client-js"
-  // ship linux openssl binary for Fly's slim image
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 /**
- * Minimal Shopify session table compatible with PrismaSessionStorage.
- * Field set is intentionally broad to accommodate common adapters.
- * If your app expects extra fields, add them and re-deploy.
+ * Shopify session storage table expected by
+ * @shopify/shopify-app-session-storage-prisma
  */
 model Session {
-  id          String    @id          // session id from Shopify
-  shop        String                    // shop fqdn
-  state       String?                   // oauth state
-  isOnline    Boolean   @default(false) // online/offline session
-  scope       String?                   // granted scopes
-  expires     DateTime?                 // optional expiry
-  accessToken String?                   // token for offline/online session
-  userId      BigInt?                   // for online sessions (optional)
-  firstParty  Boolean   @default(false)
+  // Core session fields
+  id          String   @id @db.VarChar(255)
+  shop        String   @db.VarChar(255)
+  state       String?  @db.VarChar(255)
+  isOnline    Boolean
+  scope       String?  @db.VarChar(255)
+  expires     DateTime?
+  accessToken String?  @db.Text
+  userId      BigInt?
+  firstParty  Boolean?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  // Associated user fields for ONLINE tokens (required by storage – optional here)
+  firstName     String?  @db.VarChar(255)
+  lastName      String?  @db.VarChar(255)
+  email         String?  @db.VarChar(255)
+  accountOwner  Boolean?
+  locale        String?  @db.VarChar(64)
+  collaborator  Boolean?
+  emailVerified Boolean?
 
-  @@index([shop])
-  @@index([state])
-  @@index([expires])
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("Session")
 }
