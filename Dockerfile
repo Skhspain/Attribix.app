@@ -1,45 +1,60 @@
-# ---- deps ----
+# ---------- deps: install all deps (including dev) ----------
 FROM node:20-bookworm AS deps
 WORKDIR /app
+
 COPY package*.json ./
-# Full dev deps for building
 RUN npm ci
 
-# ---- builder ----
+# ---------- builder: compile the app & generate Prisma client ----------
 FROM node:20-bookworm AS builder
 WORKDIR /app
+
+# Bring in node_modules from deps
 COPY --from=deps /app/node_modules ./node_modules
+
+# Copy the rest of the source
 COPY . .
-# Generate Prisma client for Linux/OpenSSL 3.0
-RUN npx prisma generate --schema=prisma/schema.postgres.prisma
-# Build Remix
+
+# Prisma needs envs at *build time* just to run "generate".
+# These are DUMMIES for build only; real values come from Fly secrets at runtime.
+ENV DATABASE_URL="postgresql://user:pass@localhost:5432/dummy?sslmode=disable&pgbouncer=true&connection_limit=1"
+ENV DIRECT_URL="postgresql://user:pass@localhost:5432/dummy?sslmode=disable"
+
+# Tell Prisma which schema to use (helps avoid picking up a different schema by accident)
+ENV PRISMA_SCHEMA="prisma/schema.postgres.prisma"
+
+# Generate Prisma client and build the Remix app
+RUN npx prisma generate --schema=$PRISMA_SCHEMA
 RUN npm run build
 
-# ---- runner ----
+# ---------- runner: minimal image to run the server ----------
 FROM node:20-bookworm-slim AS runner
 WORKDIR /app
+
+# Helpful system certs
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends ca-certificates openssl \
+  && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production
 ENV PORT=8080
+ENV HOST=0.0.0.0
 
-# ✅ Install OpenSSL for Prisma on slim image
-RUN apt-get update -y \
- && apt-get install -y --no-install-recommends openssl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
-
-# Install *prod* deps only
+# Only prod deps
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-# Copy built app and Prisma artifacts
+# Copy the built app & prisma bits
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/prisma ./prisma
-# Copy generated Prisma client + engines
+
+# Prisma engine binaries + client (keep these copies — they matter in slim images)
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
-# (optional but you had these — harmless to keep)
+# Some frameworks (Remix/Shopify) resolve packages at runtime; keep these vendor dirs
 COPY --from=builder /app/node_modules/@remix-run ./node_modules/@remix-run
 COPY --from=builder /app/node_modules/@shopify ./node_modules/@shopify
 
-EXPOSE 8080
+# Your server start command (Remix)
 CMD ["npm", "run", "start"]

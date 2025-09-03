@@ -1,16 +1,39 @@
+// prisma/schema.postgres.prisma
+
+datasource db {
+  provider  = "postgresql"
+  // Runtime (through PgBouncer on 5432)
+  url       = env("DATABASE_URL")
+  // Direct connection for migrations/db push on 5433
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  // ship linux openssl binary for Fly's slim image
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+/**
+ * Minimal Shopify session table compatible with PrismaSessionStorage.
+ * Field set is intentionally broad to accommodate common adapters.
+ * If your app expects extra fields, add them and re-deploy.
+ */
 model Session {
-  id               String   @id
-  shop             String
-  state            String?
-  isOnline         Boolean
-  scope            String?
-  accessToken      String?
-  expires          DateTime?
-  onlineAccessInfo Json?
-  userId           BigInt?
-  content          Json?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id          String    @id          // session id from Shopify
+  shop        String                    // shop fqdn
+  state       String?                   // oauth state
+  isOnline    Boolean   @default(false) // online/offline session
+  scope       String?                   // granted scopes
+  expires     DateTime?                 // optional expiry
+  accessToken String?                   // token for offline/online session
+  userId      BigInt?                   // for online sessions (optional)
+  firstParty  Boolean   @default(false)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([shop])
+  @@index([state])
+  @@index([expires])
 }
