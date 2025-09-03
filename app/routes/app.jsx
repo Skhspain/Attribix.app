@@ -1,39 +1,26 @@
 // app/routes/app.jsx
-import { json } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
-import { AppProvider } from "@shopify/shopify-app-remix/react";
-import enTranslations from "@shopify/polaris/locales/en.json";
-import React from "react";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData } from "@remix-run/react";
+import { Page, Layout, Card, Text } from "@shopify/polaris";
+import { authenticate } from "~/shopify.server";
 
-// ❌ remove this (server-only at module scope):
-// import shopify from "~/shopify.server";
-
+// Loader ensures an Admin session; if missing, it triggers the proper top-level OAuth dance.
 export async function loader({ request }) {
-  // ✅ Import server-only code at runtime, on the server
-  //    Use a RELATIVE path and a `.js` extension.
-  const mod = await import("../shopify.server.js");
-  const shopify = mod.default ?? mod.shopify;
-
-  // If you require an authenticated admin session on this route, keep this:
-  if (shopify?.authenticate?.admin) {
-    await shopify.authenticate.admin(request);
-  }
-
-  // Provide API key to the client UI. Prefer env first, fall back to shopify config if present.
-  const apiKey =
-    process.env.SHOPIFY_API_KEY ??
-    shopify?.api?.config?.apiKey ??
-    "";
-
-  return json({ apiKey });
+  await authenticate.admin(request);
+  return json({ ok: true });
 }
 
-export default function AppLayout() {
-  const { apiKey } = useLoaderData();
-
+export default function AppRoute() {
+  useLoaderData(); // just to hook loader errors
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey} i18n={enTranslations}>
-      <Outlet />
-    </AppProvider>
+    <Page title="Attribix">
+      <Layout>
+        <Layout.Section>
+          <Card>
+            <Text as="p">✅ App is embedded and authenticated.</Text>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
   );
 }
