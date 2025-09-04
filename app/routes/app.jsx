@@ -1,66 +1,85 @@
+// app/routes/app.jsx
 import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import { authenticate } from "../shopify.server";
-import shopify from "../shopify.server";
+import {
+  useLoaderData,
+  useRouteError,
+  isRouteErrorResponse,
+} from "@remix-run/react";
+import { authenticate } from "~/shopify.server";
 
-export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
-  const rest = new shopify.api.clients.Rest({ session: admin.session });
+export async function loader({ request }) {
+  const { admin, session, redirect } = await authenticate.admin(request);
+  if (redirect) return redirect; // continue Shopify auth flow if needed
 
-  async function count(path, key = "count") {
-    try {
-      const resp = await rest.get({ path });               // e.g. 'products/count.json'
-      const body = resp?.data ?? resp?.body ?? {};
-      const value = body?.[key] ?? body?.count ?? 0;
-      return typeof value === "number" ? value : 0;
-    } catch (err) {
-      console.error(`REST ${path} failed`, err);
-      return 0;
-    }
+  try {
+    // Shopify REST counts (requires read_products & read_orders scopes)
+    const productsRes = await admin.rest.get({ path: "products/count" });
+    const ordersRes = await admin.rest.get({ path: "orders/count" });
+
+    const productsCount =
+      productsRes?.body?.count ?? productsRes?.data?.count ?? 0;
+    const ordersCount =
+      ordersRes?.body?.count ?? ordersRes?.data?.count ?? 0;
+
+    return json({
+      shop: session.shop,
+      productsCount,
+      ordersCount,
+    });
+  } catch (err) {
+    console.error("Loader /app failed:", err);
+    const message =
+      err?.message ?? (typeof err === "string" ? err : JSON.stringify(err));
+    // Throw a Response so ErrorBoundary can show real info
+    throw new Response(message || "App loader failed", { status: 500 });
   }
+}
 
-  const [productCount, orderCount, customerCount] = await Promise.all([
-    count("products/count.json"),
-    count("orders/count.json"),
-    count("customers/count.json"),
-  ]);
-
-  return json({ productCount, orderCount, customerCount });
-};
-
-export default function AppPage() {
-  const { productCount, orderCount, customerCount } = useLoaderData();
-
+export default function AppRoute() {
+  const data = useLoaderData(); // <-- no generic in .jsx
   return (
     <main style={{ padding: 24 }}>
-      <h1>Attribix – Overview</h1>
-      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(3, 1fr)", maxWidth: 900 }}>
-        <Card title="Products" value={productCount} />
-        <Card title="Orders" value={orderCount} />
-        <Card title="Customers" value={customerCount} />
-      </div>
-      <p style={{ marginTop: 24 }}>
-        If these show 0, check app scopes and that the REST Admin API is enabled.
-      </p>
+      <h1>Attribix</h1>
+      <p>Shop: {data.shop}</p>
+      <p>Products: {data.productsCount}</p>
+      <p>Orders: {data.ordersCount}</p>
     </main>
   );
 }
 
-function Card({ title, value }) {
-  return (
-    <div style={{ border: "1px solid #e5e5e5", borderRadius: 12, padding: 16 }}>
-      <div style={{ color: "#666", marginBottom: 8 }}>{title}</div>
-      <div style={{ fontSize: 32, fontWeight: 700 }}>{value}</div>
-    </div>
-  );
-}
+export function ErrorBoundary() {
+  const error = useRouteError();
+  console.error("Remix ErrorBoundary (/app):", error);
 
-export function ErrorBoundary({ error }) {
-  console.error(error);
+  if (isRouteErrorResponse(error)) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h2>App Error</h2>
+        <p>
+          {error.status} {error.statusText}
+        </p>
+        <pre>
+          {typeof error.data === "string"
+            ? error.data
+            : JSON.stringify(error.data)}
+        </pre>
+      </main>
+    );
+  }
+
+  if (error instanceof Error) {
+    return (
+      <main style={{ padding: 24 }}>
+        <h2>App Error</h2>
+        <pre>{error.message}</pre>
+      </main>
+    );
+  }
+
   return (
     <main style={{ padding: 24 }}>
-      <h1>App Error</h1>
-      <pre style={{ whiteSpace: "pre-wrap", background: "#fee", padding: 12 }}>{String(error)}</pre>
+      <h2>App Error</h2>
+      <pre>Unknown error</pre>
     </main>
   );
 }
