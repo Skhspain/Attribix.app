@@ -4,10 +4,10 @@ import { Form, useActionData, useNavigation } from "@remix-run/react";
 export const loader = () => json({ ok: true });
 
 export const action = async ({ request }) => {
-  const form = await request.formData();
-  const shop = (form.get("shop") || "").trim();
+  const fd = await request.formData();
+  const shop = (fd.get("shop") || "").trim();
   if (!shop) return json({ error: "Enter your .myshopify.com domain" }, { status: 400 });
-  // Hand off to our login route which starts OAuth
+
   return new Response(null, {
     status: 302,
     headers: { Location: `/auth/login?shop=${encodeURIComponent(shop)}` },
