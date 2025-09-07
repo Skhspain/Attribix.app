@@ -1,8 +1,31 @@
-import { corsHeaders, handleCorsPreflight } from "../settings.server";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
-export const loader = async ({ request }) => {
-  const pre = handleCorsPreflight(request);
-  if (pre) return pre;
+/** @type {import('@remix-run/node').LoaderFunction} */
+export async function loader() {
+  try {
+    const filePath = join(
+      process.cwd(),
+      "extensions",
+      "attribix-pixel",
+      "dist",
+      "main.js"
+    );
 
-  return new Response("", { headers: corsHeaders });
-};
+    const code = await readFile(filePath, "utf8");
+    return new Response(code, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "public, max-age=300, s-maxage=300",
+      },
+    });
+  } catch (err) {
+    return new Response(
+      `// Pixel bundle not found.\n// ${String(
+        err && err.message ? err.message : err
+      )}`,
+      { status: 404, headers: { "Content-Type": "application/javascript" } }
+    );
+  }
+}

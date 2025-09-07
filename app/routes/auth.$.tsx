@@ -1,16 +1,13 @@
+// app/routes/auth.$.tsx
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
+import shopify from "~/shopify.server";
 
-// Handles /auth and any /auth/* (including /auth/callback)
+// Handles the OAuth callback + any follow-up requests.
+// Export both in case Shopify calls POST.
 export async function loader({ request }: LoaderFunctionArgs) {
-  // This will begin OAuth when needed OR handle the callback when Shopify calls back
-  return authenticate.admin(request);
+  return shopify.authenticate.admin(request);
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  return authenticate.admin(request);
-}
-
-export default function AuthBoundary() {
-  return null;
+  return shopify.authenticate.admin(request);
 }

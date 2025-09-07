@@ -1,29 +1,12 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+name = "Attribix Pixel"
+type = "web_pixel_extension"
 
-client_id = "e56855f068d35fe1fc96e73bf90ae937"
-name = "Attribix"
-handle = "attribix-app"
-application_url = "https://shows-princess-miss-fiction.trycloudflare.com"
-embedded = true
+# Match your app's handle
+extension_points = ["customer_events"]
 
 [build]
-automatically_update_urls_on_dev = true
-include_config_on_deploy = true
+command = "npm run build"
+path = "dist"
 
-[webhooks]
-api_version = "2025-04"
-
-[access_scopes]
-# CLI reads scopes from here (TOML syntax, not env)
-scopes = "read_products,write_products,read_orders,read_customers,read_script_tags,write_script_tags"
-
-[auth]
-redirect_urls = ["https://shows-princess-miss-fiction.trycloudflare.com/auth/callback", "https://shows-princess-miss-fiction.trycloudflare.com/auth/shopify/callback", "https://shows-princess-miss-fiction.trycloudflare.com/api/auth/callback"]
-
-[app_proxy]
-url = "https://shows-princess-miss-fiction.trycloudflare.com/pixel.js"
-subpath = "pixel"
-prefix = "apps"
-
-[pos]
-embedded = false
+[metadata]
+# optional

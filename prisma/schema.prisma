@@ -3,12 +3,12 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite" // local dev
-  url      = env("DATABASE_URL") // "file:dev.sqlite"
+  provider = "sqlite"            // local dev only
+  url      = env("DATABASE_URL") // set to file:./dev.sqlite if you use this
 }
 
 model Session {
-  id            String    @id
+  id            String   @id
   shop          String
   state         String
   isOnline      Boolean   @default(false)

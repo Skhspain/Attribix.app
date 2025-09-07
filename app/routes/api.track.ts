@@ -1,145 +1,195 @@
 // app/routes/api.track.ts
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { createCookie } from "@remix-run/node";
-import prisma from "~/utils/db.server";
+import { json } from "@remix-run/node";
+import crypto from "node:crypto";
 
+type PixelEvent = {
+  event: string; // purchase, add_to_cart, product_viewed, page_viewed, ...
+  occurred_at?: string;
+  shop_domain?: string; // web pixel should send this
+  customer?: { email?: string; id?: string };
+  order?: { id?: string; number?: string; currency?: string; value?: number };
+  items?: Array<{ id?: string; sku?: string; title?: string; quantity?: number; price?: number }>;
+  page?: { url?: string; referrer?: string };
+};
 
-const sessionCookie = createCookie("ax_sid", {
-  httpOnly: true,
-  sameSite: "lax",
-  path: "/",
-  maxAge: 60 * 60 * 24 * 365, // 1 year
-});
-
-// Simple CORS helpers (adjust origin as needed)
-function corsHeaders() {
-  return {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  };
+function sha256Fallback(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return String(hash);
 }
-function withCors(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json", ...corsHeaders() },
+
+function hashEmailForMeta(email?: string) {
+  if (!email) return undefined;
+  const norm = email.trim().toLowerCase();
+  return crypto.createHash("sha256").update(norm).digest("hex");
+}
+
+async function sendToGA4(
+  e: PixelEvent,
+  ga4Id?: string | null,
+  ga4Secret?: string | null,
+  userAgent?: string
+) {
+  if (!ga4Id || !ga4Secret) return;
+
+  const params = new URLSearchParams({
+    measurement_id: ga4Id,
+    api_secret: ga4Secret,
   });
+
+  const clientId =
+    (e.customer?.id && `shopify_${e.customer.id}`) ||
+    sha256Fallback(`${e.shop_domain}:${e.customer?.email || "anon"}`);
+
+  const gaEventName =
+    e.event === "purchase"
+      ? "purchase"
+      : e.event === "add_to_cart"
+      ? "add_to_cart"
+      : e.event === "product_viewed"
+      ? "view_item"
+      : "page_view";
+
+  const items = (e.items || []).map((it, idx) => ({
+    item_id: it.sku || it.id || `item_${idx}`,
+    item_name: it.title,
+    quantity: it.quantity || 1,
+    price: it.price,
+  }));
+
+  const body = {
+    client_id: clientId,
+    user_agent: userAgent,
+    timestamp_micros: Date.now() * 1000,
+    events: [
+      {
+        name: gaEventName,
+        params: {
+          currency: e.order?.currency || "USD",
+          value: e.order?.value,
+          page_location: e.page?.url,
+          page_referrer: e.page?.referrer,
+          items,
+        },
+      },
+    ],
+  };
+
+  await fetch(`https://www.google-analytics.com/mp/collect?${params.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+}
+
+async function sendToMeta(
+  e: PixelEvent,
+  fbPixelId?: string | null,
+  fbToken?: string | null,
+  userAgent?: string,
+  sourceIp?: string
+) {
+  if (!fbPixelId || !fbToken) return;
+
+  const metaEventName =
+    e.event === "purchase"
+      ? "Purchase"
+      : e.event === "add_to_cart"
+      ? "AddToCart"
+      : e.event === "product_viewed"
+      ? "ViewContent"
+      : "PageView";
+
+  const contents = (e.items || []).map((it) => ({
+    id: it.sku || it.id,
+    quantity: it.quantity || 1,
+    item_price: it.price,
+  }));
+
+  const payload = {
+    data: [
+      {
+        event_name: metaEventName,
+        event_time: Math.floor(Date.now() / 1000),
+        event_source_url: e.page?.url,
+        action_source: "website",
+        user_data: {
+          em: e.customer?.email ? [hashEmailForMeta(e.customer.email)] : undefined,
+          client_user_agent: userAgent,
+          client_ip_address: sourceIp,
+        },
+        custom_data: {
+          currency: e.order?.currency || "USD",
+          value: e.order?.value,
+          contents,
+          content_type: "product",
+        },
+      },
+    ],
+    access_token: fbToken,
+  };
+
+  await fetch(`https://graph.facebook.com/v18.0/${fbPixelId}/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  // CORS preflight
   if (request.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders() });
-  }
-  if (request.method !== "POST") {
-    return withCors(405, { error: "Method not allowed" });
-  }
-
-  const body = await request.json().catch(() => ({} as any));
-
-  const {
-    eventName = "page_view",
-    url,
-    path,
-    referrer,
-    value,
-    currency,
-    anonId,
-    clientId,
-    userAgent,
-    ip,
-    utm_source,
-    utm_medium,
-    utm_campaign,
-    utm_content,
-    utm_term,
-    gclid,
-    fbclid,
-    ttclid,
-    msclkid,
-    consentAdvertising,
-    consentMarketing,
-  } = body || {};
-
-  const cookies = request.headers.get("cookie") || "";
-  let sid = (await sessionCookie.parse(cookies)) as string | undefined;
-
-  const now = new Date();
-
-  // Create or update WebSession
-  let webSession = sid ? await prisma.webSession.findUnique({ where: { id: sid } }) : null;
-
-  if (!webSession) {
-    webSession = await prisma.webSession.create({
-      data: {
-        firstTouchAt: now,
-        lastTouchAt: now,
-        anonId,
-        clientId,
-        userAgent,
-        consentAdvertising: consentAdvertising ?? false,
-        consentMarketing: consentMarketing ?? false,
-        utmSource: utm_source ?? undefined,
-        utmMedium: utm_medium ?? undefined,
-        utmCampaign: utm_campaign ?? undefined,
-        utmContent: utm_content ?? undefined,
-        utmTerm: utm_term ?? undefined,
-        gclid: gclid ?? undefined,
-        fbclid: fbclid ?? undefined,
-        ttclid: ttclid ?? undefined,
-        msclkid: msclkid ?? undefined,
-      },
-    });
-    sid = webSession.id;
-  } else {
-    await prisma.webSession.update({
-      where: { id: webSession.id },
-      data: {
-        lastTouchAt: now,
-        userAgent: userAgent ?? webSession.userAgent,
-        consentAdvertising: consentAdvertising ?? webSession.consentAdvertising,
-        consentMarketing: consentMarketing ?? webSession.consentMarketing,
-        utmSource: utm_source ?? webSession.utmSource,
-        utmMedium: utm_medium ?? webSession.utmMedium,
-        utmCampaign: utm_campaign ?? webSession.utmCampaign,
-        utmContent: utm_content ?? webSession.utmContent,
-        utmTerm: utm_term ?? webSession.utmTerm,
-        gclid: gclid ?? webSession.gclid,
-        fbclid: fbclid ?? webSession.fbclid,
-        ttclid: ttclid ?? webSession.ttclid,
-        msclkid: msclkid ?? webSession.msclkid,
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
       },
     });
   }
 
-  // Create TrackedEvent
-  await prisma.trackedEvent.create({
-    data: {
-      eventName,
-      url: url ?? path ?? null,
-      path: path ?? null,
-      referrer: referrer ?? null,
-      value: value ?? null,
-      currency: currency ?? null,
-      ip: ip ?? null,
-      userAgent: userAgent ?? null,
-      utmSource: utm_source ?? null,
-      utmMedium: utm_medium ?? null,
-      utmCampaign: utm_campaign ?? null,
-      gclid: gclid ?? null,
-      fbclid: fbclid ?? null,
-      ttclid: ttclid ?? null,
-      msclkid: msclkid ?? null,
-      sessionId: sid!,
-    },
-  });
+  const ua = request.headers.get("user-agent") || undefined;
+  const ip =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("fly-client-ip") ||
+    undefined;
 
-  const headers = {
-    ...corsHeaders(),
-    "Set-Cookie": await sessionCookie.serialize(sid!),
-  };
-  return new Response(JSON.stringify({ ok: true, sid }), { status: 200, headers });
+  let event: PixelEvent | undefined;
+  try {
+    event = await request.json();
+  } catch {
+    return json({ ok: false, error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (!event?.event) {
+    return json({ ok: false, error: "Missing event" }, { status: 400 });
+  }
+
+  const shop =
+    event.shop_domain ||
+    new URL(request.url).searchParams.get("shop") ||
+    ""; // fallback if you post with ?shop=
+
+  if (!shop) {
+    return json({ ok: false, error: "Missing shop_domain" }, { status: 400 });
+  }
+
+  const { getTrackingSettings } = await import("~/models/trackingSettings.server");
+  const s = await getTrackingSettings(shop);
+
+  await Promise.all([
+    sendToGA4(event, s?.ga4Id, s?.ga4Secret, ua),
+    sendToMeta(event, s?.fbPixelId, s?.fbToken, ua, ip),
+  ]);
+
+  return json({ ok: true });
 }
 
 export function loader() {
-  return withCors(405, { error: "Method not allowed" });
+  return new Response("Not found", { status: 404 });
 }

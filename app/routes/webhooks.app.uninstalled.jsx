@@ -1,10 +1,8 @@
-import { json } from "@remix-run/node";
+// app/routes/webhooks.app.uninstalled.jsx
+import shopify from "../shopify.server";
 
-export async function action({ request }) {
-  const { shopify } = await import("../shopify.server"); // server-only import
-  // Shopify will run your registered APP_UNINSTALLED handler(s)
-  const response = await shopify.webhooks.process({ request });
-  return response ?? json({ ok: true });
-}
-
-export default null;
+export const action = async ({ request }) => {
+  const { shop /*, payload */ } = await shopify.authenticate.webhook(request);
+  // TODO: clean up sessions/data for `shop` if desired
+  return new Response(null, { status: 200 });
+};

@@ -1,44 +1,62 @@
 // prisma/schema.postgres.prisma
+generator client {
+  provider = "prisma-client-js"
+}
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")   // PgBouncer on 5432 (runtime)
-  directUrl = env("DIRECT_URL")     // Direct Postgres on 5433 (migrations/db push)
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-generator client {
-  provider      = "prisma-client-js"
-  binaryTargets = ["native", "debian-openssl-3.0.x"]
-}
-
-/**
- * Shopify session storage table expected by
- * @shopify/shopify-app-session-storage-prisma
- */
 model Session {
-  // Core session fields
-  id          String   @id @db.VarChar(255)
-  shop        String   @db.VarChar(255)
-  state       String?  @db.VarChar(255)
-  isOnline    Boolean
-  scope       String?  @db.VarChar(255)
-  expires     DateTime?
-  accessToken String?  @db.Text
-  userId      BigInt?
-  firstParty  Boolean?
-
-  // Associated user fields for ONLINE tokens (required by storage – optional here)
-  firstName     String?  @db.VarChar(255)
-  lastName      String?  @db.VarChar(255)
-  email         String?  @db.VarChar(255)
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
   accountOwner  Boolean?
-  locale        String?  @db.VarChar(64)
+  locale        String?
   collaborator  Boolean?
   emailVerified Boolean?
+}
 
-  // Timestamps
+model TrackedEvent {
+  id        String   @id @default(cuid())
+  eventName String
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  source    String?
+  sessionId String?
+}
 
-  @@map("Session")
+model Purchase {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now())
+  totalValue Float
+  currency   String   @default("USD")
+}
+
+model AdSpendDaily {
+  id    String   @id @default(cuid())
+  date  DateTime
+  spend Float
+}
+
+model TrackingSettings {
+  id         String   @id @default(cuid())
+  shop       String   @unique
+  // GA4
+  ga4Id      String?   // e.g. G-XXXX
+  ga4Secret  String?   // GA4 Measurement Protocol API Secret
+  // Meta (Facebook)
+  fbPixelId  String?
+  fbToken    String?   // System User Access Token (ads_management)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }

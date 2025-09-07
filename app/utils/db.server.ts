@@ -1,18 +1,21 @@
-// Centralized Prisma client for server code
-import type { PrismaClient as PrismaClientType } from "@prisma/client";
-import pkg from "@prisma/client";
+// app/utils/db.server.ts
+import { PrismaClient } from "@prisma/client";
 
-const { PrismaClient } = pkg;
-
-const globalForPrisma = globalThis as unknown as {
-  prisma?: PrismaClientType;
-};
-
-export const db: PrismaClientType =
-  globalForPrisma.prisma ?? new PrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = db;
+declare global {
+  // eslint-disable-next-line no-var
+  var __db: PrismaClient | undefined;
 }
 
-export default db;
+let prisma: PrismaClient;
+
+if (process.env.NODE_ENV === "production") {
+  prisma = new PrismaClient();
+} else {
+  if (!global.__db) {
+    global.__db = new PrismaClient();
+  }
+  prisma = global.__db;
+}
+
+export const db = prisma;
+export default prisma;

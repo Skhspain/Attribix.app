@@ -1,7 +1,6 @@
 # node / build
 node_modules
 build
-dist
 .cache
 .npm
 pnpm-lock.yaml

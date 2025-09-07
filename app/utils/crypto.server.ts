@@ -1,12 +1,10 @@
-import crypto from "crypto";
+// app/utils/crypto.server.ts
+import crypto from "node:crypto";
 
-export function sha256(input: string) {
-  return crypto.createHash("sha256").update(input.trim().toLowerCase()).digest("hex");
+export function sha256Hex(input: string) {
+  return crypto.createHash("sha256").update(input, "utf8").digest("hex");
 }
 
-// Normalize E.164-ish then hash
-export function hashPhone(phone?: string | null) {
-  if (!phone) return null;
-  const justDigits = phone.replace(/[^\d]/g, "");
-  return sha256(justDigits);
+export function hmacSHA256Hex(secret: string, payload: string) {
+  return crypto.createHmac("sha256", secret).update(payload, "utf8").digest("hex");
 }
