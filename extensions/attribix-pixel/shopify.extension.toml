@@ -1,0 +1,7 @@
+
+uid = "fb1381aa-6659-44e8-abae-64b497a8b04d"
+type = "web_pixel_extension"
+name = "Attribix Pixel"
+handle = "attribix-pixel"
+runtime_context = "storefront"
+main = "dist/main.js"

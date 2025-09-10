@@ -1,12 +1,31 @@
-name = "Attribix Pixel"
-type = "web_pixel_extension"
+# Learn more: https://shopify.dev/docs/apps/tools/cli/configuration
 
-# Match your app's handle
-extension_points = ["customer_events"]
+client_id = "e56855f068d35fe1fc96e73bf90ae937"
+name = "Attribix"
+application_url = "https://attribix-app.fly.dev/app"
+embedded = true
+handle = "attribix-app"
 
-[build]
-command = "npm run build"
-path = "dist"
+[webhooks]
+api_version = "2025-04"
 
-[metadata]
-# optional
+[access_scopes]
+# IMPORTANT: pixels scopes are required
+scopes = "read_customers,read_orders,read_products,read_script_tags,write_products,write_script_tags,read_pixels,write_pixels"
+
+[auth]
+redirect_urls = [
+  "https://attribix-app.fly.dev/auth/callback",
+  "https://attribix-app.fly.dev/auth/login",
+  "https://attribix-app.fly.dev/auth"
+]
+
+# You can keep app_proxy if you really need it, but it's not required for the pixel
+# Remove it if you don't use it:
+# [app_proxy]
+# url = "https://shows-princess-miss-fiction.trycloudflare.com/pixel.js"
+# subpath = "pixel"
+# prefix = "apps"
+
+[pos]
+embedded = false
