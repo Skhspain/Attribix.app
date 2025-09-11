@@ -1,7 +1,21 @@
-﻿# extensions/attribix-pixel/shopify.extension.toml
 
+uid = "77b198ce-4e81-22f0-f159-bf1370ad31c1c6bae5df"
 type = "web_pixel_extension"
 name = "Attribix Pixel"
-handle = "attribix-pixel-v2"
-runtime_context = "storefront"
-main = "dist/main.js"
+handle = "attribix-pixel-v4"
+runtime_context = "strict"
+
+[customer_privacy]
+analytics = true
+marketing = true
+preferences = false
+sale_of_data = "enabled"
+
+[settings]
+type = "object"
+
+[settings.fields.accountID]
+name = "Account ID"
+description = "Account ID used by Attribix"
+type = "single_line_text_field"
+validations = [{ name = "min", value = "1" }]

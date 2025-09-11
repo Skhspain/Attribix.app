@@ -1,45 +1,52 @@
-import express from 'express';
-import { MongoClient } from 'mongodb';
+import { register } from '@shopify/web-pixels-extension';
 
-const app = express();
-const port = process.env.PORT || 3000;
-let db;
+const ENDPOINT = 'https://attribix-app.fly.dev/api/track';
 
-// Middleware to parse JSON
-app.use(express.json());
+type PixelSettings = {
+  accountID?: string;
+};
 
-// MongoDB connection URI (includes your username, password, and cluster info)
-const uri = 'mongodb+srv://attribix1:DVTFMmPwXTTf472V@my-project-backend.smfmrhid.mongodb.net/?retryWrites=true&w=majority&appName=My-project-backend';
+register(({ analytics, browser, settings }) => {
+  const accountID = (settings as PixelSettings)?.accountID;
 
-// Connect to MongoDB and start the server
-async function startServer() {
-  try {
-    const client = new MongoClient(uri);
-    await client.connect();
-    db = client.db('attribix');  // You can change 'attribix' to your preferred database name
-    console.log('✅ Connected to MongoDB');
+  const send = (type: string, data: any) => {
+    const body = { type, accountID, timestamp: Date.now(), data };
+    const json = JSON.stringify(body);
 
-    app.listen(port, () => {
-      console.log(`🚀 Server running on http://localhost:${port}`);
-    });
-  } catch (err) {
-    console.error('❌ MongoDB connection error:', err);
-  }
-}
+    // Shopify pixel runtime: string payload for sendBeacon
+    try {
+      if (browser && typeof (browser as any).sendBeacon === 'function') {
+        (browser as any).sendBeacon(ENDPOINT, json);
+        return;
+      }
+    } catch { /* ignore */ }
 
-startServer();
+    // Fallbacks for safety
+    try {
+      if (typeof navigator !== 'undefined' && 'sendBeacon' in navigator) {
+        (navigator as any).sendBeacon(
+          ENDPOINT,
+          new Blob([json], { type: 'application/json' })
+        );
+      } else {
+        // Best-effort fetch
+        fetch(ENDPOINT, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: json,
+          keepalive: true,
+          mode: 'cors',
+          credentials: 'omit',
+        }).catch(() => {});
+      }
+    } catch { /* ignore */ }
+  };
 
-// Basic test route
-app.get('/hello', (req, res) => {
-  res.send('Hello, world!');
-});
-
-// Optional: test DB connection route
-app.get('/test-db', async (req, res) => {
-  try {
-    const collections = await db.listCollections().toArray();
-    res.json({ collections });
-  } catch (error) {
-    res.status(500).json({ error: 'Database error', details: error.message });
-  }
+  // Subscribe to events you care about
+  analytics.subscribe('page_viewed',              (e) => send('page_viewed', e));
+  analytics.subscribe('product_viewed',           (e) => send('product_viewed', e));
+  analytics.subscribe('search_submitted',         (e) => send('search_submitted', e));
+  analytics.subscribe('product_added_to_cart',    (e) => send('product_added_to_cart', e));
+  analytics.subscribe('checkout_started',         (e) => send('checkout_started', e));
+  analytics.subscribe('checkout_completed',       (e) => send('checkout_completed', e));
 });

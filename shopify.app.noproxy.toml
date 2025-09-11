@@ -20,10 +20,5 @@ redirect_urls = [
   "https://attribix-app.fly.dev/auth"
 ]
 
-[app_proxy]
-url = "https://shows-princess-miss-fiction.trycloudflare.com/pixel.js"
-subpath = "pixel"
-prefix = "apps"
-
 [pos]
 embedded = false
