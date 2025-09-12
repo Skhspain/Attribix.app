@@ -18,7 +18,11 @@ export async function action({ request }: ActionFunctionArgs) {
     const buf = await request.arrayBuffer();
     const text = new TextDecoder("utf-8").decode(buf);
     let data: any = null;
-    try { data = JSON.parse(text); } catch { /* ignore */ }
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // ignore – will fail validation below
+    }
 
     if (!data || typeof data !== "object") {
       console.error("[/api/track] invalid json:", text);
@@ -26,10 +30,12 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const type = typeof data.type === "string" ? data.type : "unknown";
+    const accountID = data.accountID ?? null;
     const event = data.event ?? null;
-    console.log("[/api/track]", { type, event });
 
-    // TODO: persist if you want (e.g., DB). For now just acknowledge.
+    // 🔧 place to persist / queue / forward if you want
+    console.log("[/api/track]", { type, accountID, hasEvent: !!event });
+
     return new Response(null, { status: 204, headers: CORS });
   } catch (err) {
     console.error("[/api/track] error:", err);

@@ -1,14 +1,16 @@
-
+# Save this file as UTF-8 **without BOM**
 uid = "77b198ce-4e81-22f0-f159-bf1370ad31c1c6bae5df"
 type = "web_pixel_extension"
 name = "Attribix Pixel"
 handle = "attribix-pixel-v4"
 runtime_context = "strict"
+main = "dist/main.js"
 
 [customer_privacy]
 analytics = true
 marketing = true
 preferences = false
+# must be one of: "enabled" | "disabled" | "ldu"
 sale_of_data = "enabled"
 
 [settings]

@@ -1,24 +1,58 @@
 import { register } from "@shopify/web-pixels-extension";
 
-export default register(({ analytics }) => {
-  const ENDPOINT = "https://attribix-app.fly.dev/api/track";
+/**
+ * Minimal Attribix pixel
+ * - Uses the current register(api) signature (no id string)
+ * - Pulls accountID from extension settings
+ * - Sends Shopify pixel events to your Remix endpoint
+ * - Uses navigator.sendBeacon when available, fetch() otherwise
+ */
 
-  const post = async (type: string, event: unknown) => {
+type Settings = {
+  accountID?: string;
+};
+
+export default register(({ analytics, settings }) => {
+  const { accountID } = (settings as Settings) ?? {};
+
+  function post(type: string, ev: any) {
+    // SDK event objects expose the payload at ev.data
+    const payload = ev?.data ?? ev ?? null;
+
+    const body = JSON.stringify({
+      type,
+      accountID,
+      event: payload,
+    });
+
+    const url = "https://attribix-app.fly.dev/api/track";
+
+    // Try sendBeacon first (non-blocking even on unload)
     try {
-      await fetch(ENDPOINT, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type, event }),
-      });
+      if ("sendBeacon" in navigator) {
+        const blob = new Blob([body], { type: "application/json" });
+        (navigator as any).sendBeacon(url, blob);
+        return;
+      }
     } catch {
-      // ignore client-side network errors
+      // fall through to fetch
     }
-  };
 
-  // Forward full event objects (avoids typing mismatches)
-  analytics.subscribe("page_viewed",      (event) => post("page_viewed", event));
-  analytics.subscribe("product_viewed",   (event) => post("product_viewed", event));
-  analytics.subscribe("collection_viewed",(event) => post("collection_viewed", event));
-  analytics.subscribe("search_submitted", (event) => post("search_submitted", event));
-  analytics.subscribe("checkout_started", (event) => post("checkout_started", event));
+    // Fallback to fetch; keepalive lets it run during page unload
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => {
+      /* swallow network errors in pixel */
+    });
+  }
+
+  // Subscribe to a few common events (you can add more as needed)
+  analytics.subscribe("page_viewed",       (e) => post("page_viewed", e));
+  analytics.subscribe("product_viewed",    (e) => post("product_viewed", e));
+  analytics.subscribe("collection_viewed", (e) => post("collection_viewed", e));
+  analytics.subscribe("search_submitted",  (e) => post("search_submitted", e));
+  analytics.subscribe("checkout_started",  (e) => post("checkout_started", e));
 });
