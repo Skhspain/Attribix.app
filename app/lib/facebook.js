@@ -1,118 +1,47 @@
-import { createHash } from 'crypto';
-import { fileURLToPath } from 'url';
+// app/lib/facebook.js
+// No node-fetch needed. Uses global fetch available in Node 18+.
+// Guarded by FB_ENABLED so you can safely deploy with it off.
 
-const { FB_PIXEL_ID, FB_ACCESS_TOKEN } = process.env;
+const FB_ENDPOINT = "https://graph.facebook.com/v19.0"; // or latest you use
 
-/**
- * Send an event to the Facebook Conversion API
- * @param {Object} params
- * @param {string} params.eventName
- * @param {Date|string|number} params.eventTime
- * @param {string} [params.email]
- * @param {string} [params.phone]
- * @param {number} [params.value]
- * @param {string} [params.currency]
- * @param {string} [params.clientIp]
- * @param {string} [params.userAgent]
- * @param {string} [params.url]
- */
-export async function sendFacebookEvent({
-  eventName,
-  eventTime,
-  email,
-  phone,
-  value,
-  currency,
-  clientIp,
-  userAgent,
-  url,
-}) {
-  if (!FB_PIXEL_ID || !FB_ACCESS_TOKEN) {
-    console.warn('FB_PIXEL_ID or FB_ACCESS_TOKEN missing');
-    return;
-  }
+export async function sendFacebookEvent({ pixelId, accessToken, event, data }) {
+  const enabled = String(process.env.FB_ENABLED || "0") === "1";
+  const PIXEL = pixelId || process.env.FB_PIXEL_ID;
+  const TOKEN = accessToken || process.env.FB_ACCESS_TOKEN;
 
-  let fetchFn = globalThis.fetch;
-  if (!fetchFn) {
-    const mod = await import('node-fetch');
-    fetchFn = mod.default;
-  }
-
-  const hash = (str) =>
-    createHash('sha256').update(str.trim().toLowerCase()).digest('hex');
-
-  const user_data = {};
-  if (email) user_data.em = hash(email);
-  if (phone) user_data.ph = hash(phone);
-  if (clientIp) user_data.client_ip_address = clientIp;
-  if (userAgent) user_data.client_user_agent = userAgent;
-
-  const eventPayload = {
-    event_name: eventName,
-    event_time: Math.floor(new Date(eventTime).getTime() / 1000),
-    action_source: 'website',
-    user_data,
-  };
-
-  if (process.env.NODE_ENV === 'development') {
-    console.log(
-      'Sending FB CAPI event:',
-      JSON.stringify({ data: [eventPayload] }, null, 2)
-    );
-  }
-
-  if (url) eventPayload.event_source_url = url;
-  const customData = {};
-  if (value !== undefined) customData.value = value;
-  if (currency) customData.currency = currency;
-  if (Object.keys(customData).length > 0) {
-    eventPayload.custom_data = customData;
+  if (!enabled || !PIXEL || !TOKEN) {
+    return { ok: true, skipped: "facebook_disabled_or_no_creds" };
   }
 
   try {
-    const res = await fetchFn(
-      `https://graph.facebook.com/v17.0/${FB_PIXEL_ID}/events`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          access_token: FB_ACCESS_TOKEN,
-          data: [eventPayload],
-        }),
-      }
-    );
+    const body = {
+      data: [
+        {
+          event_name: event || "CustomEvent",
+          event_time: Math.floor(Date.now() / 1000),
+          event_source_url: data?.event_source_url || undefined,
+          custom_data: data || {},
+          action_source: data?.action_source || "website",
+        },
+      ],
+      access_token: TOKEN,
+    };
 
-    const responseText = await res.text();
+    const url = `${FB_ENDPOINT}/${encodeURIComponent(PIXEL)}/events`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
     if (!res.ok) {
-      console.error('Facebook CAPI error:', res.status, responseText);
-    } else if (process.env.NODE_ENV === 'development') {
-      console.log('Facebook CAPI response:', responseText);
+      const text = await res.text();
+      return { ok: false, status: res.status, error: text };
     }
-    return { ok: res.ok, status: res.status };
+
+    const json = await res.json();
+    return { ok: true, response: json };
   } catch (err) {
-    console.error('Failed to send Facebook event:', err);
-    return { ok: false, status: 500 };
+    return { ok: false, error: String(err) };
   }
-}
-
-async function testSendFacebookEvent() {
-  const result = await sendFacebookEvent({
-    eventName: 'TestEvent',
-    eventTime: new Date(),
-    email: 'test@example.com',
-    phone: '+1234567890',
-    value: 1,
-    currency: 'USD',
-    clientIp: '127.0.0.1',
-    userAgent: 'Mozilla/5.0',
-    url: 'https://example.com/test',
-  });
-  console.log('Test result:', result);
-}
-
-if (
-  process.env.NODE_ENV === 'development' &&
-  process.argv[1] === fileURLToPath(import.meta.url)
-) {
-  testSendFacebookEvent();
 }

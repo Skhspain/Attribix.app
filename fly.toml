@@ -1,44 +1,29 @@
-Set-Content -Path .\fly.toml -NoNewline -Value @"
+﻿Set-Content -Path .\fly.toml -Encoding UTF8 -NoNewline -Value @'
 app = "attribix-app"
 primary_region = "ams"
 
 [build]
   dockerfile = "Dockerfile"
 
-[deploy]
-  # Apply Prisma schema to your Fly Postgres before starting
-  release_command = "npx prisma db push --accept-data-loss"
-
 [env]
   NODE_ENV = "production"
   PORT = "3000"
+  HOST = "0.0.0.0"
 
 [[services]]
-  internal_port = 3000
   protocol = "tcp"
-  processes = ["app"]
-
-  [services.concurrency]
-    hard_limit = 25
-    soft_limit = 20
-    type = "connections"
+  internal_port = 3000
 
   [[services.ports]]
-    handlers = ["http"]
     port = 80
+    handlers = ["http"]
 
   [[services.ports]]
-    handlers = ["tls", "http"]
     port = 443
+    handlers = ["tls", "http"]
 
   [[services.tcp_checks]]
-    # simple TCP check so we don't fail on a wrong HTTP path
-    interval = "15s"
+    interval = "10s"
     timeout = "2s"
-
-  [[services.http_checks]]
-    path = "/"
-    interval = "30s"
-    timeout = "5s"
-    method = "get"
-"@
+    grace_period = "30s"
+'@

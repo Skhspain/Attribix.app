@@ -1,26 +1,32 @@
-node_modules
-.DS_Store
+# Dependencies & builds
+node_modules/
+build/
+dist/
+.vite/
+.app/
+.public/build/
+public/_dev/
+app/public/build/
 
-/.cache
-/build
-/app/build
-/public/build/
-/public/_dev
-/app/public/build
-/prisma/dev.sqlite
-/prisma/dev.sqlite-journal
+# Local DBs
+prisma/dev.sqlite
+prisma/dev.sqlite-journal
 database.sqlite
 
+# OS & editor
+.DS_Store
+
+# Env
 .env
 .env.*
 !.env.example
 
+# Remix cache
+.cache/
 
-
-
-
-/extensions/*/dist
-
-# Ignore shopify files created during app dev
-.shopify/*
+# VS Code shopify dev artifacts
+.shopify/
 .shopify.lock
+
+# extension output
+/extensions/*/dist

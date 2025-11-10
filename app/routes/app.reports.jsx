@@ -12,13 +12,13 @@ import {
   Text,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
-import prisma from "../db.server";
+import db from "~/utils/db.server";
 import {
   normalizeCampaign,
   startOfDay,
   endOfDay,
   groupEventsByDate,
-} from "../utils/report-utils";
+} from "~/utils/report-utils";
 import {
   BarChart,
   Bar,
@@ -54,7 +54,7 @@ export const loader = async ({ request }) => {
     },
   };
 
-  const grouped = await prisma.trackedEvent.groupBy({
+  const grouped = await db.TrackedEvent.groupBy({
     by: ["utmCampaign"],
     where,
     _sum: { value: true },
@@ -70,7 +70,7 @@ export const loader = async ({ request }) => {
     }))
     .sort((a, b) => b.totalRevenue - a.totalRevenue);
 
-  const events = await prisma.trackedEvent.findMany({
+  const events = await db.TrackedEvent.findMany({
     where,
     select: { createdAt: true, value: true },
   });
@@ -142,12 +142,39 @@ export default function Reports() {
           <Card padding="400">
             <Form method="get">
               <InlineStack gap="400" wrap={false} align="start">
-                <TextField label="utm_campaign" name="utm_campaign" autoComplete="off" defaultValue={filters.utmCampaign} />
-                <TextField label="utm_source" name="utm_source" autoComplete="off" defaultValue={filters.utmSource} />
-                <TextField label="Event" name="eventName" autoComplete="off" defaultValue={filters.eventName} />
-                <TextField label="Start" name="start" type="date" defaultValue={filters.start} />
-                <TextField label="End" name="end" type="date" defaultValue={filters.end} />
-                <Button submit primary>Filter</Button>
+                <TextField
+                  label="utm_campaign"
+                  name="utm_campaign"
+                  autoComplete="off"
+                  defaultValue={filters.utmCampaign}
+                />
+                <TextField
+                  label="utm_source"
+                  name="utm_source"
+                  autoComplete="off"
+                  defaultValue={filters.utmSource}
+                />
+                <TextField
+                  label="Event"
+                  name="eventName"
+                  autoComplete="off"
+                  defaultValue={filters.eventName}
+                />
+                <TextField
+                  label="Start"
+                  name="start"
+                  type="date"
+                  defaultValue={filters.start}
+                />
+                <TextField
+                  label="End"
+                  name="end"
+                  type="date"
+                  defaultValue={filters.end}
+                />
+                <Button submit primary>
+                  Filter
+                </Button>
               </InlineStack>
             </Form>
           </Card>
@@ -160,7 +187,9 @@ export default function Reports() {
               totals={[
                 "",
                 totalEvents,
-                <Text as="span" fontWeight="medium">{currencyFormatter.format(totalRevenue)}</Text>,
+                <Text as="span" fontWeight="medium">
+                  {currencyFormatter.format(totalRevenue)}
+                </Text>,
               ]}
               showTotalsInFooter
               sortable={[true, true, true]}
@@ -178,7 +207,10 @@ export default function Reports() {
           <Card padding="400" title="Revenue by Campaign">
             <div style={{ width: "100%", height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                <BarChart
+                  data={chartData}
+                  margin={{ top: 20, right: 30, left: 0, bottom: 5 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
@@ -192,7 +224,10 @@ export default function Reports() {
           <Card padding="400" title="Revenue Over Time">
             <div style={{ width: "100%", height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={revenueSeries} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
+                <LineChart
+                  data={revenueSeries}
+                  margin={{ top: 20, right: 30, left: 0, bottom: 5 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" />
                   <YAxis />

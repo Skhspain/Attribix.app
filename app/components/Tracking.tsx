@@ -1,23 +1,12 @@
+// app/components/Tracking.tsx
 import { useEffect } from "react";
+import { trigger } from "../utils/tracking";
 
-const Tracking = {
-  trigger: async (eventName: string, data: Record<string, unknown> = {}) => {
-    try {
-      await fetch("/api/track", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          event: eventName,
-          data,
-          timestamp: Date.now(),
-        }),
-      });
-    } catch (err) {
-      console.error("Tracking error:", err);
-    }
-  },
-};
+export default function TrackingInit() {
+  useEffect(() => {
+    // Fire a simple event on mount so you can verify tracking is working
+    trigger("app_loaded");
+  }, []);
 
-export default Tracking;
+  return null;
+}

@@ -13,3 +13,4 @@ CREATE TABLE "TrackedEvent" (
   "ip" TEXT,
   "userAgent" TEXT,
   "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

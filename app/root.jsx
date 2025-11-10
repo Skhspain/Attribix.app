@@ -1,17 +1,11 @@
-import {
-  Links,
-  Meta,
-  Outlet,
-  Scripts,
-  ScrollRestoration
-} from "@remix-run/react";
-import "@shopify/polaris/build/esm/styles.css";
-import { AppProvider } from "@shopify/polaris";
-import enTranslations from "@shopify/polaris/locales/en.json";
+// app/root.jsx
+import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "@remix-run/react";
+
+export const links = () => [];
 
 export default function Root() {
   return (
-    <html>
+    <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -19,9 +13,7 @@ export default function Root() {
         <Links />
       </head>
       <body>
-        <AppProvider i18n={enTranslations}>
-          <Outlet />
-        </AppProvider>
+        <Outlet />
         <ScrollRestoration />
         <Scripts />
       </body>
