@@ -72,5 +72,3 @@ export const loader = async ({ request }) => {
     },
   });
 };
-export default function Route(){ return null }
-

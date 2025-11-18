@@ -74,5 +74,3 @@ export const action = async ({ request }) => {
 
   return new Response("OK", { status: 200 });
 };
-export default function Route(){ return null }
-

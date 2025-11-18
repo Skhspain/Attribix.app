@@ -1,19 +1,36 @@
-// app/root.jsx
-import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "@remix-run/react";
+﻿// app/root.jsx
+import { json } from "@remix-run/node";
+import {
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+  useLoaderData,
+} from "@remix-run/react";
+import { AppProvider } from "@shopify/shopify-app-remix/react";
 
-export const links = () => [];
+// Root loader just exposes the API key for the embedded app.
+export async function loader() {
+  return json({
+    apiKey: process.env.SHOPIFY_API_KEY,
+  });
+}
 
-export default function Root() {
+export default function App() {
+  const { apiKey } = useLoaderData();
+
   return (
-    <html lang="en">
+    <html>
       <head>
-        <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width,initial-scale=1" />
         <Meta />
         <Links />
       </head>
       <body>
-        <Outlet />
+        <AppProvider apiKey={apiKey} isEmbeddedApp>
+          <Outlet />
+        </AppProvider>
+
         <ScrollRestoration />
         <Scripts />
       </body>

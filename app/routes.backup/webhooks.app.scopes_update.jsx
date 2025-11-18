@@ -20,6 +20,3 @@ export const action = async ({ request }) => {
 
   return new Response();
 };
-
-export default function Route(){ return null }
-

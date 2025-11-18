@@ -1,17 +1,53 @@
-datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DATABASE_DIRECT_URL")
+// prisma/schema.prisma
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
-generator client {
-  provider = "prisma-client-js"
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Event {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  name      String
-  payload   Json
-  source    String?  // e.g. "api" / "facebook"
+  id           String   @id @default(cuid())
+  shopifyOrder String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  source       String?
+  campaign     String?
+  medium       String?
+  content      String?
+  term         String?
+  eventId      String?
+  eventType    String?
+  total        Float?
+  items        EventItem[]
+}
+
+model EventItem {
+  id            String   @id @default(cuid())
+  eventId       String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  shopifyId     String?
+  price         Float?
+  quantity      Int?
+  title         String?
+  sku           String?
+  compareAt     Float?
+  productType   String?
+  productVendor String?
+  event         Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+model TrackingSettings {
+  id                    String   @id @default(cuid())
+  shopDomain            String   @unique
+  metaPixelId           String?
+  googleAdsConversionId String?
+  ga4MeasurementId      String?
+  enableServerSide      Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }

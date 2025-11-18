@@ -1,11 +1,28 @@
-// app/components/Tracking.tsx
 import { useEffect } from "react";
-import { trigger } from "../utils/tracking";
 
-export default function TrackingInit() {
+type Payload = {
+  event: string;
+  path: string;
+  href: string;
+  ts: string; // send as string for URLSearchParams
+};
+
+export default function Tracking() {
   useEffect(() => {
-    // Fire a simple event on mount so you can verify tracking is working
-    trigger("app_loaded");
+    const payload: Payload = {
+      event: "page_view",
+      path: window.location.pathname + window.location.search,
+      href: window.location.href,
+      ts: String(Date.now()),
+    };
+
+    // Fire-and-forget; don’t block navigation
+    fetch("/api/track", {
+      method: "POST",
+      body: new URLSearchParams(payload as Record<string, string>),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      keepalive: true,
+    }).catch(() => {});
   }, []);
 
   return null;

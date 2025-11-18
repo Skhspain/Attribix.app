@@ -5,6 +5,3 @@ export const loader = async ({ request }) => {
 
   return null;
 };
-
-export default function Route(){ return null }
-
