@@ -21,6 +21,14 @@ primary_region = "ams"
     port = 443
     handlers = ["tls", "http"]
 
+  [[services.http_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/"
+    protocol = "http"
+
   [[services.tcp_checks]]
     interval = "10s"
     timeout = "2s"

@@ -1,4 +1,5 @@
 // app/shopify.server.js
+
 import "@shopify/shopify-app-remix/adapters/node";
 import {
   ApiVersion,
@@ -12,20 +13,31 @@ const shopify = shopifyApp({
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
   apiVersion: ApiVersion.January25,
   scopes: process.env.SCOPES?.split(","),
-  appUrl: process.env.SHOPIFY_APP_URL || "",
+
+  // IMPORTANT: ensure this is an https URL in your Fly env:
+  // SHOPIFY_APP_URL=https://attribix-app.fly.dev
+  appUrl: process.env.SHOPIFY_APP_URL,
+
   authPathPrefix: "/auth",
+
+  // FIX: make sure Shopify treats this as an embedded app (prevents http redirect issues behind proxies)
+  isEmbeddedApp: true,
+
   sessionStorage: new MemorySessionStorage(),
   distribution: AppDistribution.AppStore,
+
   future: {
     unstable_newEmbeddedAuthStrategy: true,
     removeRest: true,
   },
+
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }
     : {}),
 });
 
 export default shopify;
+
 export const apiVersion = ApiVersion.January25;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = shopify.authenticate;

@@ -1,45 +1,95 @@
-﻿// app/routes/app.jsx
-import { json } from "@remix-run/node";
-import { useLoaderData, Outlet } from "@remix-run/react";
+﻿import { json, redirect } from "@remix-run/node";
+import { useLoaderData } from "@remix-run/react";
+import { Page, Layout, Text, Card, BlockStack } from "@shopify/polaris";
+import { authenticate } from "../shopify.server";
 
-import enTranslations from "@shopify/polaris/locales/en.json";
-import { AppProvider as PolarisAppProvider } from "@shopify/polaris";
+function toHost(shop) {
+  // Shopify "host" is base64 of `${shop}/admin`
+  return Buffer.from(`${shop}/admin`).toString("base64");
+}
 
-import {
-  AppProvider as ShopifyAppProvider,
-} from "@shopify/shopify-app-remix/react";
+/**
+ * Ensure redirects use the public URL (Fly/Proxy) not the internal URL.
+ * This prevents Location: http://... when the real public URL is https://...
+ */
+function getPublicUrl(request) {
+  const url = new URL(request.url);
 
-import shopify from "~/shopify.server";
+  const xfProto = request.headers.get("x-forwarded-proto");
+  const xfHost = request.headers.get("x-forwarded-host");
+
+  const proto = xfProto?.split(",")[0]?.trim();
+  const host = xfHost?.split(",")[0]?.trim();
+
+  if (proto) url.protocol = `${proto}:`;
+  if (host) url.host = host;
+
+  return url;
+}
 
 export const loader = async ({ request }) => {
-  const { session } = await shopify.authenticate.admin(request);
+  const url = getPublicUrl(request);
 
-  const url = new URL(request.url);
+  const shop = url.searchParams.get("shop");
   const host = url.searchParams.get("host");
 
-  if (!host) {
-    throw new Response("Missing host parameter", { status: 400 });
+  // If Shopify hits /app?shop=... without host, generate it and redirect back.
+  if (shop && !host) {
+    url.searchParams.set("host", toHost(shop));
+    throw redirect(url.toString());
   }
 
-  return json({
-    apiKey: process.env.SHOPIFY_API_KEY,
-    host,
-    shop: session.shop,
-  });
+  // Still require shop param
+  if (!shop) {
+    return json(
+      {
+        ok: false,
+        error: "Missing `shop` parameter.",
+        hint: "Open from Shopify Admin so the URL includes ?shop=...&host=...",
+      },
+      { status: 400 }
+    );
+  }
+
+  // Still require host after the patch (embedded auth expects it)
+  if (!url.searchParams.get("host")) {
+    return json(
+      {
+        ok: false,
+        error: "Missing `host` parameter.",
+        hint:
+          "Open from Shopify Admin, or include host=base64(`${shop}/admin`) in the URL.",
+      },
+      { status: 400 }
+    );
+  }
+
+  const { session } = await authenticate.admin(request);
+
+  return json({ shop: session.shop });
 };
 
 export default function App() {
-  const { apiKey, host } = useLoaderData();
+  const { shop } = useLoaderData();
 
   return (
-    <ShopifyAppProvider
-      apiKey={apiKey}
-      host={host}
-      isEmbeddedApp={true}
-    >
-      <PolarisAppProvider i18n={enTranslations}>
-        <Outlet />
-      </PolarisAppProvider>
-    </ShopifyAppProvider>
+    <Page>
+      <BlockStack gap="500">
+        <Layout>
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">
+                  App template
+                </Text>
+                <Text as="p" variant="bodyMd">
+                  Shop: {shop}
+                </Text>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        </Layout>
+      </BlockStack>
+    </Page>
   );
 }

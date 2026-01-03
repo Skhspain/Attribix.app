@@ -6,315 +6,312 @@ import type {
 } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import {
+  Form,
   useActionData,
   useLoaderData,
   useNavigation,
-  Form as RemixForm,
 } from "@remix-run/react";
 import {
   Page,
   Layout,
   Card,
   BlockStack,
-  Text,
-  InlineGrid,
+  Box,
   TextField,
   Checkbox,
+  Text,
   InlineStack,
-  Banner,
-  Box,
-  Divider,
   Button,
+  Banner,
+  Divider,
 } from "@shopify/polaris";
 
+import { authenticate } from "~/shopify.server";
+import {
+  getShopSettings,
+  upsertShopSettings,
+  type ShopSettingsValues,
+} from "~/utils/shop-settings.server";
+
 type LoaderData = {
-  host: string;
-  shop: string;
-  metaPixelId: string;
-  googleAdsId: string;
-  serverEndpoint: string;
-  debugMode: boolean;
-  lastSavedAt: string | null;
+  shopDomain: string;
+  settings: ShopSettingsValues;
 };
 
 type ActionData = {
   ok: boolean;
   error?: string;
-  values?: {
-    metaPixelId: string;
-    googleAdsId: string;
-    serverEndpoint: string;
-    debugMode: boolean;
-  };
 };
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const url = new URL(request.url);
-  const host = url.searchParams.get("host") ?? "";
-  const shop = url.searchParams.get("shop") ?? "";
+  const { session } = await authenticate.admin(request);
+  const shopDomain = session.shop;
 
-  // Later this will come from Prisma (StoreSettings)
-  const metaPixelId = "";
-  const googleAdsId = "";
-  const serverEndpoint = "";
-  const debugMode = false;
-  const lastSavedAt = null;
+  const settings = await getShopSettings(shopDomain);
 
   return json<LoaderData>({
-    host,
-    shop,
-    metaPixelId,
-    googleAdsId,
-    serverEndpoint,
-    debugMode,
-    lastSavedAt,
+    shopDomain,
+    settings,
   });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const { session } = await authenticate.admin(request);
+  const shopDomain = session.shop;
+
   const formData = await request.formData();
 
-  const metaPixelId = (formData.get("metaPixelId") ?? "").toString().trim();
-  const googleAdsId = (formData.get("googleAdsId") ?? "").toString().trim();
-  const serverEndpoint = (formData.get("serverEndpoint") ?? "")
+  const metaPixelId = (formData.get("metaPixelId") || "").toString().trim();
+  const googleAdsId = (formData.get("googleAdsId") || "").toString().trim();
+  const googleAdsConversionId = (formData.get("googleAdsConversionId") || "")
     .toString()
     .trim();
+  const ga4MeasurementId = (formData.get("ga4MeasurementId") || "")
+    .toString()
+    .trim();
+  const serverEndpoint = (formData.get("serverEndpoint") || "")
+    .toString()
+    .trim();
+
   const debugMode = formData.get("debugMode") === "on";
+  const enableServerSide = formData.get("enableServerSide") === "on";
 
-  // Later: validate + store in Prisma (StoreSettings)
-  // For now we just echo values back to show the banner + preview.
-  const hasAnyValue =
-    metaPixelId.length > 0 ||
-    googleAdsId.length > 0 ||
-    serverEndpoint.length > 0 ||
-    debugMode;
+  try {
+    await upsertShopSettings(shopDomain, {
+      metaPixelId,
+      googleAdsId,
+      googleAdsConversionId,
+      ga4MeasurementId,
+      serverEndpoint,
+      debugMode,
+      enableServerSide,
+    });
 
-  if (!hasAnyValue) {
+    return json<ActionData>({ ok: true });
+  } catch (err) {
+    console.error("Failed to save ShopSettings", err);
     return json<ActionData>(
       {
         ok: false,
-        error:
-          "Add at least one tracking value (Meta pixel, Google Ads ID or advanced setting) before saving.",
+        error: "Could not save settings. Please try again.",
       },
-      { status: 400 },
+      { status: 500 },
     );
   }
-
-  // Placeholder: pretend we saved successfully
-  console.log("Saved tracking settings", {
-    metaPixelId,
-    googleAdsId,
-    serverEndpoint,
-    debugMode,
-  });
-
-  return json<ActionData>({
-    ok: true,
-    values: {
-      metaPixelId,
-      googleAdsId,
-      serverEndpoint,
-      debugMode,
-    },
-  });
 }
 
 export default function AppSettingsPage() {
-  const loaderData = useLoaderData<typeof loader>();
+  const { shopDomain, settings } = useLoaderData<typeof loader>();
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
-
-  const [metaPixelId, setMetaPixelId] = React.useState(
-    loaderData.metaPixelId ?? "",
-  );
-  const [googleAdsId, setGoogleAdsId] = React.useState(
-    loaderData.googleAdsId ?? "",
-  );
-  const [serverEndpoint, setServerEndpoint] = React.useState(
-    loaderData.serverEndpoint ?? "",
-  );
-  const [debugMode, setDebugMode] = React.useState<boolean>(
-    loaderData.debugMode ?? false,
-  );
-
   const isSubmitting = navigation.state === "submitting";
 
-  const hasChanges =
-    loaderData.metaPixelId !== metaPixelId ||
-    loaderData.googleAdsId !== googleAdsId ||
-    (loaderData.serverEndpoint ?? "") !== serverEndpoint ||
-    loaderData.debugMode !== debugMode;
+  const [metaPixelId, setMetaPixelId] = React.useState(settings.metaPixelId);
+  const [googleAdsId, setGoogleAdsId] = React.useState(settings.googleAdsId);
+  const [googleAdsConversionId, setGoogleAdsConversionId] = React.useState(
+    settings.googleAdsConversionId,
+  );
+  const [ga4MeasurementId, setGa4MeasurementId] = React.useState(
+    settings.ga4MeasurementId,
+  );
+  const [serverEndpoint, setServerEndpoint] = React.useState(
+    settings.serverEndpoint,
+  );
+  const [debugMode, setDebugMode] = React.useState(settings.debugMode);
+  const [enableServerSide, setEnableServerSide] = React.useState(
+    settings.enableServerSide,
+  );
+
+  const showSuccess = actionData && actionData.ok;
+  const showError = actionData && !actionData.ok && actionData.error;
+
+  const previewPayload = {
+    shopDomain,
+    metaPixelId,
+    googleAdsId,
+    googleAdsConversionId,
+    ga4MeasurementId,
+    serverEndpoint,
+    debugMode,
+    enableServerSide,
+  };
 
   return (
-    <Page title="Attribix settings">
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <Box padding="400">
-              <RemixForm method="post">
+    <Page
+      title="Tracking settings"
+      subtitle="Configure Attribix tracking and server-side events for this shop."
+    >
+      <Form method="post">
+        <BlockStack gap="400">
+          {/* Top toolbar row */}
+          <Box paddingBlockEnd="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                {shopDomain}
+              </Text>
+              <Button
+                submit
+                variant="primary"
+                loading={isSubmitting}
+                disabled={isSubmitting}
+              >
+                Save settings
+              </Button>
+            </InlineStack>
+          </Box>
+
+          {showSuccess && (
+            <Banner tone="success" title="Settings saved">
+              <Text as="p" variant="bodySm">
+                Your tracking configuration has been updated and will be used
+                for new events.
+              </Text>
+            </Banner>
+          )}
+
+          {showError && (
+            <Banner tone="critical" title="Could not save settings">
+              <Text as="p" variant="bodySm">
+                {actionData?.error}
+              </Text>
+            </Banner>
+          )}
+
+          <Layout>
+            <Layout.Section>
+              <Card>
                 <BlockStack gap="400">
-                  {/* Header + top save button */}
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="100">
-                      <Text as="h1" variant="headingLg">
-                        Tracking &amp; integration
-                      </Text>
-                      <Text as="p" variant="bodyMd" tone="subdued">
-                        Connect your Meta and Google pixels to unlock full
-                        attribution in Attribix.
-                      </Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        These settings apply to all events that Attribix tracks
-                        from your storefront and server.
-                      </Text>
-                    </BlockStack>
+                  <Text as="h2" variant="headingSm">
+                    Meta & Google
+                  </Text>
 
-                    <BlockStack gap="100" align="end">
-                      {loaderData.lastSavedAt && (
-                        <Text as="span" variant="bodySm" tone="subdued">
-                          Last saved: {loaderData.lastSavedAt}
-                        </Text>
-                      )}
+                  <BlockStack gap="300">
+                    <TextField
+                      label="Meta Pixel ID"
+                      helpText="Your Meta / Facebook Pixel ID, for example: 1234567890."
+                      autoComplete="off"
+                      name="metaPixelId"
+                      value={metaPixelId}
+                      onChange={setMetaPixelId}
+                    />
 
-                      <Button
-                        variant="primary"
-                        submit
-                        loading={isSubmitting}
-                        disabled={isSubmitting || !hasChanges}
-                      >
-                        {isSubmitting
-                          ? "Saving…"
-                          : hasChanges
-                          ? "Save settings"
-                          : "Saved"}
-                      </Button>
-                    </BlockStack>
-                  </InlineStack>
+                    <TextField
+                      label="Google Ads ID"
+                      helpText='Main Google Ads ID, for example: "AW-123456789".'
+                      autoComplete="off"
+                      name="googleAdsId"
+                      value={googleAdsId}
+                      onChange={setGoogleAdsId}
+                    />
 
-                  {/* Flash messages */}
-                  {actionData?.ok && (
-                    <Banner title="Settings saved">
-                      <Text as="p" variant="bodySm">
-                        Your tracking settings are now active. New events will
-                        use the updated configuration.
-                      </Text>
-                    </Banner>
-                  )}
+                    <TextField
+                      label="Google Ads conversion ID (optional)"
+                      helpText="Optional conversion ID if you use a separate key for conversions."
+                      autoComplete="off"
+                      name="googleAdsConversionId"
+                      value={googleAdsConversionId}
+                      onChange={setGoogleAdsConversionId}
+                    />
 
-                  {actionData?.error && (
-                    <Banner title="Could not save settings">
-                      <Text as="p" variant="bodySm" tone="critical">
-                        {actionData.error}
-                      </Text>
-                    </Banner>
-                  )}
+                    <TextField
+                      label="GA4 measurement ID (optional)"
+                      helpText='Your GA4 measurement ID, for example: "G-XXXXXXX".'
+                      autoComplete="off"
+                      name="ga4MeasurementId"
+                      value={ga4MeasurementId}
+                      onChange={setGa4MeasurementId}
+                    />
+                  </BlockStack>
+                </BlockStack>
+              </Card>
 
-                  <Divider />
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingSm">
+                    Server-side & debugging
+                  </Text>
 
-                  {/* Main form fields */}
-                  <Box paddingBlockStart="400" paddingBlockEnd="400">
-                    <InlineGrid columns={{ xs: 1, sm: 2 }} gap="400">
-                      {/* Meta + Google column */}
-                      <BlockStack gap="400">
-                        <BlockStack gap="200">
-                          <Text as="h2" variant="headingMd">
-                            Meta &amp; Google IDs
-                          </Text>
-                          <Text as="p" tone="subdued" variant="bodySm">
-                            Paste the IDs from your ad platforms. Attribix will
-                            handle event mapping and server-side forwarding.
-                          </Text>
-                        </BlockStack>
+                  <BlockStack gap="300">
+                    <TextField
+                      label="Attribix server endpoint"
+                      helpText="URL where your pixel sends events. Leave blank to use the default Attribix endpoint."
+                      autoComplete="off"
+                      name="serverEndpoint"
+                      value={serverEndpoint}
+                      onChange={setServerEndpoint}
+                    />
 
-                        <TextField
-                          label="Meta Pixel ID"
-                          helpText="Example: 123456789012345. Used for server-side and client-side Meta tracking."
-                          autoComplete="off"
-                          name="metaPixelId"
-                          value={metaPixelId}
-                          onChange={(value) => setMetaPixelId(value)}
-                        />
+                    <Checkbox
+                      label="Enable server-side tracking"
+                      name="enableServerSide"
+                      checked={enableServerSide}
+                      onChange={setEnableServerSide}
+                    />
 
-                        <TextField
-                          label="Google Ads Conversion ID"
-                          helpText="Example: AW-123456789. Used for server-side and client-side Google Ads tracking."
-                          autoComplete="off"
-                          name="googleAdsId"
-                          value={googleAdsId}
-                          onChange={(value) => setGoogleAdsId(value)}
-                        />
-                      </BlockStack>
+                    <Checkbox
+                      label="Enable debug mode"
+                      helpText="When enabled, Attribix will include extra logging for this shop."
+                      name="debugMode"
+                      checked={debugMode}
+                      onChange={setDebugMode}
+                    />
+                  </BlockStack>
+                </BlockStack>
+              </Card>
+            </Layout.Section>
 
-                      {/* Advanced column */}
-                      <BlockStack gap="400">
-                        <BlockStack gap="200">
-                          <Text as="h2" variant="headingMd">
-                            Advanced tracking
-                          </Text>
-                          <Text as="p" tone="subdued" variant="bodySm">
-                            For power users and developers. Most stores can
-                            leave these settings as they are.
-                          </Text>
-                        </BlockStack>
-
-                        <TextField
-                          label="Custom server endpoint (optional)"
-                          helpText="Override the default tracking endpoint if you proxy events through your own API."
-                          autoComplete="off"
-                          name="serverEndpoint"
-                          value={serverEndpoint}
-                          onChange={(value) => setServerEndpoint(value)}
-                        />
-
-                        <Checkbox
-                          label="Enable debug logging"
-                          helpText="Log extra debugging information to help validate event delivery."
-                          name="debugMode"
-                          checked={debugMode}
-                          onChange={(checked) => setDebugMode(checked)}
-                        />
-                      </BlockStack>
-                    </InlineGrid>
-                  </Box>
+            {/* 🔧 NOTE: removed `secondary` prop here */}
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingSm">
+                    Pixel payload preview
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    This is an example of the configuration Attribix will use
+                    when sending events to Meta, Google, and your server-side
+                    endpoint.
+                  </Text>
 
                   <Divider />
 
-                  {/* Live preview */}
-                  <Box paddingBlockStart="400">
-                    <BlockStack gap="200">
-                      <Text as="h3" variant="headingSm">
-                        Live preview
-                      </Text>
-
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        This is what Attribix will send when a purchase event
-                        fires from your storefront:
-                      </Text>
-
-                      <Box padding="400" borderRadius="300">
-                        <pre>
-                          {JSON.stringify(
-                            {
-                              shop: loaderData.shop,
-                              metaPixelId,
-                              googleAdsId,
-                              serverEndpoint:
-                                serverEndpoint || "default",
-                              debugMode,
-                            },
-                            null,
-                            2,
-                          )}
-                        </pre>
-                      </Box>
-                    </BlockStack>
+                  <Box
+                    background="bg-surface-secondary"
+                    padding="300"
+                    borderRadius="300"
+                    overflowX="scroll"
+                  >
+                    <pre
+                      style={{
+                        margin: 0,
+                        fontFamily: "monospace",
+                        fontSize: 12,
+                        whiteSpace: "pre",
+                      }}
+                    >
+                      {JSON.stringify(previewPayload, null, 2)}
+                    </pre>
                   </Box>
                 </BlockStack>
-              </RemixForm>
-            </Box>
-          </Card>
-        </Layout.Section>
-      </Layout>
+              </Card>
+            </Layout.Section>
+          </Layout>
+
+          {/* Bottom Save button (backup + for long pages) */}
+          <Box paddingBlockStart="300">
+            <InlineStack align="end">
+              <Button
+                submit
+                variant="primary"
+                loading={isSubmitting}
+                disabled={isSubmitting}
+              >
+                Save settings
+              </Button>
+            </InlineStack>
+          </Box>
+        </BlockStack>
+      </Form>
     </Page>
   );
 }

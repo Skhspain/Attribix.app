@@ -1,53 +1,167 @@
 // prisma/schema.prisma
+
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_DIRECT_URL")
 }
 
-model Event {
+// Hovedtabell for alle tracked events (pageviews, purchases, osv.)
+model TrackedEvent {
+  id          String   @id @default(cuid())
+  eventName   String
+
+  // URL + UTM
+  url         String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+
+  // Shop / ordre
+  shop        String?
+  orderId     String?
+
+  // Verdi
+  value       Float?
+  currency    String?
+  email       String?
+  phone       String?
+
+  // Tekniske felter
+  ip          String?
+  userAgent   String?
+  sessionId   String?
+
+  // Tidsstempler (timestamp brukes i /dashboard)
+  timestamp   DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  products    TrackedProduct[]
+}
+
+// Produkter koblet til ett event (brukes for kjøp/attribution)
+model TrackedProduct {
+  id          String   @id @default(cuid())
+  eventId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  productId   String?
+  productName String?
+  quantity    Int?
+
+  event       TrackedEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+// Per-shop settings (Meta, Google, GA4, server endpoint, osv.)
+model ShopSettings {
+  id                     String   @id @default(cuid())
+  shopDomain             String   @unique
+
+  // Meta / Facebook
+  metaPixelId            String?
+
+  // Google Ads
+  googleAdsId            String?
+  googleAdsConversionId  String?
+
+  // GA4
+  ga4MeasurementId       String?
+
+  // General tracking
+  serverEndpoint         String?
+  debugMode              Boolean  @default(false)
+  enableServerSide       Boolean  @default(true)
+
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+// ---------------------------------------------
+// Ad platform enums & models
+// ---------------------------------------------
+
+enum AdPlatform {
+  META
+  GOOGLE
+  TIKTOK
+}
+
+model AdPlatformConnection {
+  id           String      @id @default(cuid())
+  shopId       String
+  platform     AdPlatform
+  accountId    String      // e.g. "1234567890"
+  accessToken  String      // long-lived token for now
+  refreshToken String?
+  tokenType    String?     // e.g. "Bearer"
+  expiresAt    DateTime?
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([shopId, platform])
+  @@index([platform, accountId])
+}
+
+model AdDailyStat {
+  id          String      @id @default(cuid())
+  shopId      String
+  platform    AdPlatform
+  accountId   String
+  campaignId  String
+  adsetId     String?
+  adId        String?
+  date        DateTime
+
+  impressions Int          @default(0)
+  clicks      Int          @default(0)
+  spend       Float        @default(0)
+  conversions Int          @default(0)
+  revenue     Float?       // attributed revenue if/when you push back
+
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([shopId, platform, date])
+  @@index([platform, accountId, date])
+  @@unique([shopId, platform, accountId, campaignId, adId, date])
+}
+
+// ---------------------------------------------
+// Facebook OAuth connection storage
+// ---------------------------------------------
+model FacebookConnection {
   id           String   @id @default(cuid())
-  shopifyOrder String?  @unique
+  accessToken  String
+  accountsJson Json?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  source       String?
-  campaign     String?
-  medium       String?
-  content      String?
-  term         String?
-  eventId      String?
-  eventType    String?
-  total        Float?
-  items        EventItem[]
 }
 
-model EventItem {
-  id            String   @id @default(cuid())
-  eventId       String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  shopifyId     String?
-  price         Float?
-  quantity      Int?
-  title         String?
-  sku           String?
-  compareAt     Float?
-  productType   String?
-  productVendor String?
-  event         Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-}
+// ---------------------------------------------
+// Storefront Pixel events (App Proxy -> DB)
+// ---------------------------------------------
+model PixelEvent {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
 
-model TrackingSettings {
-  id                    String   @id @default(cuid())
-  shopDomain            String   @unique
-  metaPixelId           String?
-  googleAdsConversionId String?
-  ga4MeasurementId      String?
-  enableServerSide      Boolean  @default(true)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  shop      String?
+  event     String
+  url       String?
+  referrer  String?
+  ua        String?
+
+  // Raw payload (keeps it flexible while you iterate)
+  payload   Json?
+
+  // Optional: basic attribution fields if you send them later
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
 }

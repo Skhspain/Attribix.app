@@ -1,26 +1,28 @@
 import { useEffect } from "react";
 
-type Payload = {
+type TrackPayload = {
   event: string;
-  path: string;
-  href: string;
-  ts: string; // send as string for URLSearchParams
+  payload: Record<string, unknown>;
 };
 
 export default function Tracking() {
   useEffect(() => {
-    const payload: Payload = {
+    const body: TrackPayload = {
       event: "page_view",
-      path: window.location.pathname + window.location.search,
-      href: window.location.href,
-      ts: String(Date.now()),
+      payload: {
+        url: window.location.href,
+        path: window.location.pathname + window.location.search,
+        href: window.location.href,
+        userAgent: window.navigator.userAgent,
+        timestamp: Date.now(),
+      },
     };
 
-    // Fire-and-forget; don’t block navigation
+    // Fire-and-forget; blokker ikke navigasjon
     fetch("/api/track", {
       method: "POST",
-      body: new URLSearchParams(payload as Record<string, string>),
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
       keepalive: true,
     }).catch(() => {});
   }, []);

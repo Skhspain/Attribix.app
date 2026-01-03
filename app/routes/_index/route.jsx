@@ -3,10 +3,19 @@ import { Form, useLoaderData } from "@remix-run/react";
 import { login } from "../../shopify.server";
 import styles from "./styles.module.css";
 
+function toHost(shop) {
+  return Buffer.from(`${shop}/admin`).toString("base64");
+}
+
 export const loader = async ({ request }) => {
   const url = new URL(request.url);
 
-  if (url.searchParams.get("shop")) {
+  const shop = url.searchParams.get("shop");
+  const host = url.searchParams.get("host");
+
+  if (shop) {
+    // If host is missing, add it so /app doesn't fail / bounce.
+    if (!host) url.searchParams.set("host", toHost(shop));
     throw redirect(`/app?${url.searchParams.toString()}`);
   }
 
@@ -23,6 +32,7 @@ export default function App() {
         <p className={styles.text}>
           A tagline about [your app] that describes your value proposition.
         </p>
+
         {showForm && (
           <Form className={styles.form} method="post" action="/auth/login">
             <label className={styles.label}>
@@ -35,6 +45,7 @@ export default function App() {
             </button>
           </Form>
         )}
+
         <ul className={styles.list}>
           <li>
             <strong>Product feature</strong>. Some detail about your feature and

@@ -1,21 +1,25 @@
+// app/entry.server.jsx
+
+import "./polyfills.server.js"; // 👈 MUST be first
+
 import { PassThrough } from "stream";
 import { renderToPipeableStream } from "react-dom/server";
 import { RemixServer } from "@remix-run/react";
 import { createReadableStreamFromReadable } from "@remix-run/node";
 import { isbot } from "isbot";
-// You can remove this import if you’re not using anything else from shopify.server
-// import * as shopify from "./shopify.server";
 
 export const streamTimeout = 5000;
 
-export default async function handleRequest(
+export default function handleRequest(
   request,
   responseStatusCode,
   responseHeaders,
   remixContext
 ) {
   const userAgent = request.headers.get("user-agent");
-  const callbackName = isbot(userAgent ?? "") ? "onAllReady" : "onShellReady";
+  const callbackName = isbot(userAgent ?? "")
+    ? "onAllReady"
+    : "onShellReady";
 
   return new Promise((resolve, reject) => {
     const { pipe, abort } = renderToPipeableStream(
@@ -26,18 +30,21 @@ export default async function handleRequest(
           const stream = createReadableStreamFromReadable(body);
 
           responseHeaders.set("Content-Type", "text/html");
+
           resolve(
             new Response(stream, {
-              headers: responseHeaders,
               status: responseStatusCode,
+              headers: responseHeaders,
             })
           );
+
           pipe(body);
         },
         onShellError(error) {
           reject(error);
         },
         onError(error) {
+          console.error(error);
           responseStatusCode = 500;
         },
       }

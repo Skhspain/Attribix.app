@@ -2,20 +2,16 @@
 
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix"
-application_url = "https://attribix-app.fly.dev"
-embedded = true
 handle = "attribix-app"
 
+application_url = "https://attribix-app.fly.dev/app"
+embedded = true
+
 [build]
-# We don't want Shopify CLI to overwrite URLs with trycloudflare tunnels anymore
 automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2025-04"
-
-  [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
-  uri = "/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
@@ -25,8 +21,11 @@ api_version = "2025-04"
   topics = [ "orders/create" ]
   uri = "/webhooks/orders_create"
 
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_customers,read_orders,read_products,read_script_tags,write_pixels,write_products,write_script_tags"
 
 [auth]
@@ -37,7 +36,6 @@ redirect_urls = [
 ]
 
 [app_proxy]
-# Point proxy to Fly instead of an old trycloudflare tunnel
 url = "https://attribix-app.fly.dev/pixel.js"
 subpath = "pixel"
 prefix = "apps"
