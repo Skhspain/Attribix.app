@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # --- dependencies
 node_modules
 
@@ -24,10 +25,22 @@ Desktop.ini
 database.sqlite
 
 # --- env files (keep example)
+=======
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# --- Env / secrets ---
+>>>>>>> e75cd57 (chore: restore proper gitignore)
 .env
 .env.*
 !.env.example
 
+<<<<<<< HEAD
 # --- Google Drive temp junk (causes huge untracked lists)
 **/.tmp.driveupload/**
 **/.tmp.drivedownload/**
@@ -42,3 +55,35 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+=======
+# --- Node ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# --- Build artifacts ---
+build/
+dist/
+.vite/
+.vite-cache/
+.cache/
+coverage/
+
+# --- Shopify / Remix ---
+.shopify/dev-bundle/
+.shopify/
+*.local
+
+# --- Temporary / uploads ---
+.tmp.driveupload/
+tmp/
+temp/
+
+# --- Prisma local db files ---
+prisma/prisma/dev.db
+prisma/prisma/*.db
+prisma/prisma/*.db-journal
+>>>>>>> e75cd57 (chore: restore proper gitignore)
