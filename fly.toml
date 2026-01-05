@@ -1,45 +1,51 @@
-# fly.toml
-app = "attribix-app"
-primary_region = "fra"
-
-[build]
-  # Use the Dockerfile in the repo root
-  dockerfile = "Dockerfile"
-
-[env]
-  # Public, non-secret base URL of your app (Shopify uses this for redirects)
-  APP_URL = "https://attribix-app.fly.dev"
-  NODE_ENV = "production"
-  PORT = "8080"
-
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
-  processes = ["app"]
-
-  [http_service.concurrency]
-    type = "requests"
-    soft_limit = 50
-    hard_limit = 100
-
-[checks]
-  [checks.health]
-    port = 8080
-    type = "http"
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "5s"
-    method = "get"
-    path = "/health"
-
-[deploy]
-  # Force apply schema even if it drops columns / alters PKs
-  release_command = "npx prisma db push --schema=prisma/schema.postgres.prisma --accept-data-loss"
-
-[vm]
-  memory = "1024MB"
-  cpu_kind = "shared"
-  cpus = 1
+{
+  "name": "attribix-app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.18 <21"
+  },
+  "scripts": {
+    "dev": "remix vite:dev",
+    "build": "remix vite:build",
+    "start": "./node_modules/.bin/remix-serve ./build/server/index.js --host 0.0.0.0 --port ${PORT:-8080}",
+    "typecheck": "tsc --noEmit",
+    "prisma:gen:dev": "prisma generate --schema=prisma/schema.prisma",
+    "prisma:migrate:dev": "prisma migrate dev --schema=prisma/schema.prisma --name init",
+    "prisma:gen:prod": "prisma generate --schema=prisma/schema.postgres.prisma",
+    "prisma:migrate:deploy": "prisma migrate deploy --schema=prisma/schema.postgres.prisma",
+    "build:pixel": "esbuild extensions/attribix-pixel/src/index.ts --bundle --format=esm --outfile=extensions/attribix-pixel/dist/main.js",
+    "build:all": "npm run build:pixel && npm run build",
+    "clean:win": "powershell -NoProfile -Command \"if (Test-Path node_modules) { Remove-Item -Recurse -Force node_modules }; if (Test-Path package-lock.json) { Remove-Item -Force package-lock.json }\""
+  },
+  "dependencies": {
+    "@prisma/client": "^6.15.0",
+    "@remix-run/node": "^2.17.0",
+    "@remix-run/react": "^2.17.0",
+    "@remix-run/serve": "^2.17.0",
+    "@shopify/app-bridge-react": "^4.1.0",
+    "@shopify/polaris": "^13.9.5",
+    "@shopify/shopify-api": "^11.14.1",
+    "@shopify/shopify-app-remix": "^3.8.5",
+    "@shopify/shopify-app-session-storage-memory": "^4.0.20",
+    "@shopify/shopify-app-session-storage-prisma": "^6.0.9",
+    "@shopify/web-pixels-extension": "^2.18.0",
+    "cookie": "^0.6.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "undici": "^6.19.8"
+  },
+  "devDependencies": {
+    "@remix-run/dev": "^2.17.0",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "arg": "^5.0.2",
+    "esbuild": "^0.21.5",
+    "prisma": "^6.15.0",
+    "typescript": "^5.6.2",
+    "vite": "^6.3.5",
+    "vite-tsconfig-paths": "^5.1.4"
+  }
+}
