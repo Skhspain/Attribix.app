@@ -9,9 +9,7 @@
   "scripts": {
     "dev": "remix vite:dev",
     "build": "remix vite:build",
-
     "start": "node ./node_modules/@remix-run/serve/dist/cli.js ./build/server/index.js --host 0.0.0.0 --port $PORT",
-
     "typecheck": "tsc --noEmit",
     "prisma:gen:dev": "prisma generate --schema=prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev --schema=prisma/schema.prisma --name init",
