@@ -28,9 +28,9 @@ primary_region = "fra"
     type = "http"
     interval = "15s"
     timeout = "2s"
-    grace_period = "10s"
+    grace_period = "20s"
     method = "get"
-    path = "/"
+    path = "/health"
 
 [deploy]
   release_command = "npx prisma db push --schema=prisma/schema.postgres.prisma --accept-data-loss"
