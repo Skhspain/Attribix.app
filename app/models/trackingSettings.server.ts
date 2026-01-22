@@ -1,6 +1,6 @@
 // app/models/trackingSettings.server.ts
 
-import prisma from "~/utils/db.server";
+import prisma from "~/db.server";
 
 export async function getTrackingSettings(shop: string) {
   return prisma.trackingSettings.findUnique({
@@ -18,3 +18,5 @@ export async function updateTrackingSettings(shop: string, data: any) {
     },
   });
 }
+
+export const upsertTrackingSettings = updateTrackingSettings;

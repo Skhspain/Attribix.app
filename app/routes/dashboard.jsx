@@ -2,12 +2,12 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useSearchParams } from "@remix-run/react";
 import * as React from "react";
 
-// ❌ remove this (server-only at module scope):
-// import db from "~/utils/db.server";
+// ❌ remove this (server-only at module scope)
 
 export async function loader({ request }) {
   // ✅ server-only import at runtime (works in dev/build, no client bundle)
-  const { default: db } = await import("../utils/db.server.js");
+  const { db } = await import("~/db.server");
+
 
   const url = new URL(request.url);
   const eventName = url.searchParams.get("event") || undefined;

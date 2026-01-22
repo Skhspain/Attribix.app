@@ -2,16 +2,19 @@
 
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix"
-application_url = "https://attribix-app.fly.dev/app"
+application_url = "https://attribix-app.fly.dev"
 embedded = true
 handle = "attribix-app"
+
+[build]
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2025-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customers,read_orders,read_products,read_script_tags,write_products,write_script_tags"
+scopes = "read_customer_events,read_customers,read_orders,read_products,read_script_tags,write_app_proxy,write_pixels,write_products,write_script_tags"
 
 [auth]
 redirect_urls = [
@@ -19,6 +22,11 @@ redirect_urls = [
   "https://attribix-app.fly.dev/auth/login",
   "https://attribix-app.fly.dev/auth"
 ]
+
+[app_proxy]
+url = "https://attribix-app.fly.dev/app-proxy"
+subpath = "pixel"
+prefix = "apps"
 
 [pos]
 embedded = false

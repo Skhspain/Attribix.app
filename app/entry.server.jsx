@@ -1,48 +1,14 @@
-import { PassThrough } from "stream";
-import { renderToPipeableStream } from "react-dom/server";
+// app/entry.server.jsx
 import { RemixServer } from "@remix-run/react";
-import { createReadableStreamFromReadable } from "@remix-run/node";
-import { isbot } from "isbot";
-// You can remove this import if you’re not using anything else from shopify.server
-// import * as shopify from "./shopify.server";
+import { renderToString } from "react-dom/server";
 
-export const streamTimeout = 5000;
+export default function handleRequest(request, responseStatusCode, responseHeaders, remixContext) {
+  const markup = renderToString(<RemixServer context={remixContext} url={request.url} />);
 
-export default async function handleRequest(
-  request,
-  responseStatusCode,
-  responseHeaders,
-  remixContext
-) {
-  const userAgent = request.headers.get("user-agent");
-  const callbackName = isbot(userAgent ?? "") ? "onAllReady" : "onShellReady";
+  responseHeaders.set("Content-Type", "text/html");
 
-  return new Promise((resolve, reject) => {
-    const { pipe, abort } = renderToPipeableStream(
-      <RemixServer context={remixContext} url={request.url} />,
-      {
-        [callbackName]: () => {
-          const body = new PassThrough();
-          const stream = createReadableStreamFromReadable(body);
-
-          responseHeaders.set("Content-Type", "text/html");
-          resolve(
-            new Response(stream, {
-              headers: responseHeaders,
-              status: responseStatusCode,
-            })
-          );
-          pipe(body);
-        },
-        onShellError(error) {
-          reject(error);
-        },
-        onError(error) {
-          responseStatusCode = 500;
-        },
-      }
-    );
-
-    setTimeout(abort, streamTimeout);
+  return new Response("<!DOCTYPE html>" + markup, {
+    status: responseStatusCode,
+    headers: responseHeaders,
   });
 }

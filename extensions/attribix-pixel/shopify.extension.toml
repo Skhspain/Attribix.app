@@ -1,8 +1,11 @@
-# Save this file as UTF-8 **without BOM**
-uid = "77b198ce-4e81-22f0-f159-bf1370ad31c1c6bae5df"
+# extensions/attribix-pixel/shopify.extension.toml
+# Save as UTF-8 (no BOM)
+
+uid = "356f193c-8815-1a5d-666e-d9022b395b1d31aabf26"
 type = "web_pixel_extension"
+
 name = "Attribix Pixel"
-handle = "attribix-pixel-v4"
+handle = "attribix-pixel"
 runtime_context = "strict"
 main = "dist/main.js"
 
@@ -10,14 +13,14 @@ main = "dist/main.js"
 analytics = true
 marketing = true
 preferences = false
-# must be one of: "enabled" | "disabled" | "ldu"
 sale_of_data = "enabled"
 
 [settings]
 type = "object"
 
 [settings.fields.accountID]
-name = "Account ID"
+# IMPORTANT: name must match the key used in settings -> settings.accountID
+name = "accountID"
 description = "Account ID used by Attribix"
 type = "single_line_text_field"
 validations = [{ name = "min", value = "1" }]

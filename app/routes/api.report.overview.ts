@@ -1,7 +1,7 @@
 // app/routes/api.report.overview.ts
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import db from "~/utils/db.server";
+import db from "~/db.server";
 
 export async function loader({}: LoaderFunctionArgs) {
   // Minimal stub; fill from Prisma later.

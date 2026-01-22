@@ -1,15 +1,15 @@
 // app/routes/_index.jsx
-import { json } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
 
-export async function loader() {
-  return json({ ok: true });
+export async function loader({ request }) {
+  // Keep Shopify query params (shop, host, etc.)
+  const url = new URL(request.url);
+  const qs = url.search ? url.search : "";
+
+  // Always send embedded entrypoint to /app
+  return redirect(`/app${qs}`);
 }
 
-export default function IndexRoute() {
-  return (
-    <main style={{ padding: 16 }}>
-      <h1>Attribix App</h1>
-      <p>Open the embedded app from Shopify Admin.</p>
-    </main>
-  );
+export default function Index() {
+  return null;
 }

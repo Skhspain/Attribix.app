@@ -1,22 +1,56 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
-import {
-  Outlet,
-  useLoaderData,
-  useNavigation,
-  Link,
-} from "@remix-run/react";
-// ⬇️ change named import -> default import
-import shopify from "../shopify.server";
+import { Outlet } from "@remix-run/react";
+import { Page, Card, BlockStack, Text } from "@shopify/polaris";
+import { authenticate } from "~/shopify.server";
+import { ensureAttribixWebPixel } from "~/services/webPixel.server";
 
-// ALWAYS return JSON or a redirect so useLoaderData() is never null
 export async function loader({ request }) {
-  await shopify.authenticate.admin(request); // ensures embedded Admin auth
+  const result = await authenticate.admin(request);
+  if (result instanceof Response) return result;
   return json({ ok: true });
 }
 
-export default function App() {
-  const data = useLoaderData();
-  // ...rest of your component; `data.ok` is available if you need it
-  return <Outlet />;
+export async function action({ request }) {
+  console.log("[webPixel] ACTION START");
+
+  const result = await authenticate.admin(request);
+  if (result instanceof Response) return result;
+
+  const { admin, session } = result;
+
+  const form = await request.formData();
+  const accountID = String(form.get("accountID") || "");
+
+  console.log("[webPixel] FORM DATA", { shop: session.shop, accountID });
+
+  try {
+    const res = await ensureAttribixWebPixel(admin, accountID);
+    console.log("[webPixel] ENSURE OK");
+    return json({ ok: true, res });
+  } catch (e) {
+    console.log("[webPixel] ENSURE ERROR", e);
+    return json({ ok: false, error: String(e) }, { status: 500 });
+  }
+}
+
+export default function AppLayout() {
+  return (
+    <Page>
+      <BlockStack gap="400">
+        <Card>
+          <BlockStack gap="100">
+            <Text as="h2" variant="headingMd">
+              Attribix App
+            </Text>
+            <Text as="p" tone="subdued">
+              Shell loaded. Use routes like <code>/app/analytics</code>.
+            </Text>
+          </BlockStack>
+        </Card>
+
+        <Outlet />
+      </BlockStack>
+    </Page>
+  );
 }

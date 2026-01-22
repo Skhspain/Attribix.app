@@ -1,7 +1,7 @@
 // app/routes/api.export.customer-list.$platform.ts
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { corsHeaders, assertApiKey, corsPreflight } from "~/utils/http.server";
-import { db as prisma } from "~/utils/db.server";
+import { db as prisma } from "~/db.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const pre = corsPreflight(request);

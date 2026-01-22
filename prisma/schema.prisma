@@ -1,17 +1,18 @@
+// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"            // local dev only
-  url      = env("DATABASE_URL") // set to file:./dev.sqlite if you use this
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 model Session {
   id            String   @id
   shop          String
   state         String
-  isOnline      Boolean   @default(false)
+  isOnline      Boolean  @default(false)
   scope         String?
   expires       DateTime?
   accessToken   String
@@ -19,29 +20,69 @@ model Session {
   firstName     String?
   lastName      String?
   email         String?
-  accountOwner  Boolean?
+  accountOwner  Boolean  @default(false)
   locale        String?
-  collaborator  Boolean?
-  emailVerified Boolean?
+  collaborator  Boolean? @default(false)
+  emailVerified Boolean? @default(false)
 }
 
 model TrackedEvent {
-  id        String   @id @default(cuid())
-  eventName String
-  createdAt DateTime @default(now())
-  source    String?
-  sessionId String?
-}
-
-model Purchase {
   id         String   @id @default(cuid())
+  eventName  String
   createdAt  DateTime @default(now())
-  totalValue Float
-  currency   String   @default("USD")
+
+  // Context
+  url        String?
+  ip         String?
+  userAgent  String?
+
+  // Attribution
+  source      String?
+  sessionId   String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
 }
 
-model AdSpendDaily {
-  id    String   @id @default(cuid())
-  date  DateTime
-  spend Float
+model TrackingSettings {
+  id        String   @id @default(cuid())
+  shop      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Connection + destinations
+  fbPixelId  String?
+  fbToken    String?
+  ga4Id      String?
+  ga4Secret  String?
+}
+
+model MetaConnection {
+  id          String   @id @default(cuid())
+  shop        String   @unique
+  accessToken String
+  tokenType   String?  // "bearer"
+  expiresAt   DateTime?
+  adAccountId String?  // e.g. "act_1234567890"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MetaCampaignDailyInsight {
+  id          String   @id @default(cuid())
+  shop        String
+  date        DateTime
+  adAccountId String
+  campaignId  String
+  campaignName String?
+  spend       Float    @default(0)
+  purchases   Int      @default(0)
+  purchaseValue Float  @default(0)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shop, date])
+  @@index([shop, campaignId])
+  @@unique([shop, date, campaignId])
 }

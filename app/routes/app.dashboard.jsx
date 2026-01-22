@@ -9,7 +9,9 @@ import { useLoaderData } from "@remix-run/react";
  */
 export const loader = async () => {
   // Load Prisma only at request time (server-only)
-  const { default: prisma } = await import("../utils/db.server.js"); // <- relative + .js
+  const { db } = await import("~/db.server");
+
+
 
   // --- Example query (adjust/remove as needed) ---
   // If you don't need DB yet, you can leave this commented.

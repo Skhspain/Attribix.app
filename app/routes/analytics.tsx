@@ -3,7 +3,7 @@ import * as React from "react";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import prisma from "~/utils/db.server"; // keeps the import your code expected
+import prisma from "~/db.server"; // keeps the import your code expected
 
 export async function loader({}: LoaderFunctionArgs) {
   // If you don't have tables yet, just return empty stats.

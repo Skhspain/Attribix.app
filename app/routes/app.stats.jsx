@@ -5,11 +5,11 @@ import * as React from "react";
 /**
  * IMPORTANT:
  * - No server-only imports at module scope.
- * - We dynamically import ../utils/db.server.js inside the loader.
  */
 export const loader = async () => {
   // Server-only dynamic import (note the relative path + .js)
-  const { default: db } = await import("../utils/db.server.js");
+  const { db } = await import("~/db.server");
+
 
   // Helper that safely calls .count() if the model exists in your schema
   async function safeCount(modelName) {

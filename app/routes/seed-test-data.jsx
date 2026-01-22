@@ -8,7 +8,8 @@ import { json } from "@remix-run/node";
  */
 export const action = async () => {
   // ✅ Load server-only Prisma *inside* the server handler with a relative path + .js extension
-  const { default: prisma } = await import("../utils/db.server.js");
+  const { default: prisma } = await import("~/db.server");
+
 
   // --- seed your data here ---
   // Example scaffolding (remove/replace with your real seed):

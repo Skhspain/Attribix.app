@@ -7,7 +7,7 @@ import { useLoaderData } from "@remix-run/react";
  * - We dynamically import the Prisma client inside the loader.
  */
 export async function loader() {
-  const { db } = await import("../utils/db.server"); // server-only import
+  const { db } = await import("~/db.server"); // server-only import
 
   // Try to read products; fall back safely if your model is named differently
   let products = [];
