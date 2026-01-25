@@ -1,7 +1,7 @@
 // app/routes/app.settings.tracking.jsx
 import React from "react";
-import { json, redirect } from "@remix-run/node";
-import { Form, useFetcher, useLoaderData } from "@remix-run/react";
+import { json } from "@remix-run/node";
+import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -11,7 +11,6 @@ import {
   BlockStack,
   Banner,
   Text,
-  InlineStack,
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
@@ -97,8 +96,10 @@ export async function loader({ request }) {
   try {
     const { admin } = await authenticate.admin(request);
     const settings = await readTrackingMetafields(admin);
+
     return json(settings);
   } catch (e) {
+    // THIS will show up in Fly logs
     console.error("[/app/settings/tracking] loader error:", e);
     throw e;
   }
@@ -106,25 +107,9 @@ export async function loader({ request }) {
 
 export async function action({ request }) {
   try {
-    await authenticate.admin(request);
-
-    const form = await request.formData();
-    const intent = String(form.get("intent") || "save_tracking");
-
-    // 1) Start Meta OAuth (server-side redirect that works in embedded)
-    if (intent === "meta_oauth_start") {
-      // Keep returnTo inside your app. Default to tracking settings page.
-      const returnTo =
-        String(form.get("returnTo") || "").trim() || "/app/settings/tracking";
-
-      // Your existing routes already use this endpoint:
-      // app/routes/api.meta.oauth.start.ts
-      return redirect(`/api/meta/oauth/start?returnTo=${encodeURIComponent(returnTo)}`);
-    }
-
-    // 2) Save tracking settings (existing logic)
     const { admin } = await authenticate.admin(request);
 
+    const form = await request.formData();
     const metaPixelId = String(form.get("metaPixelId") || "").trim();
     const metaAccessToken = String(form.get("metaAccessToken") || "").trim();
 
@@ -155,12 +140,8 @@ export default function TrackingSettings() {
   const data = fetcher.data;
 
   const [debug, setDebug] = React.useState("");
-  const [metaPixelId, setMetaPixelId] = React.useState(
-    initial?.metaPixelId ?? ""
-  );
-  const [metaAccessToken, setMetaAccessToken] = React.useState(
-    initial?.metaAccessToken ?? ""
-  );
+  const [metaPixelId, setMetaPixelId] = React.useState(initial?.metaPixelId ?? "");
+  const [metaAccessToken, setMetaAccessToken] = React.useState(initial?.metaAccessToken ?? "");
 
   const pushDebug = React.useCallback((line) => {
     const ts = new Date().toISOString();
@@ -170,8 +151,7 @@ export default function TrackingSettings() {
   React.useEffect(() => {
     if (!data) return;
     if (data?.ok) pushDebug("Save OK (action returned ok:true).");
-    if (data?.ok === false)
-      pushDebug(`Save ERROR: ${data?.error || "Unknown"}`);
+    if (data?.ok === false) pushDebug(`Save ERROR: ${data?.error || "Unknown"}`);
   }, [data, pushDebug]);
 
   const pixelIdError = React.useMemo(() => {
@@ -195,42 +175,10 @@ export default function TrackingSettings() {
 
               {data?.ok === true && <Banner tone="success" title="Saved" />}
 
-              {/* ACTION ROW: Connect Meta (REAL navigation, works in embedded) */}
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    Meta connection
-                  </Text>
-                  <Text as="p">
-                    If buttons/navigation fail in embedded mode, this uses a server-side POST + redirect,
-                    which is the most reliable way to start OAuth.
-                  </Text>
-
-                  <Form method="post">
-                    <input type="hidden" name="intent" value="meta_oauth_start" />
-                    <input
-                      type="hidden"
-                      name="returnTo"
-                      value="/app/settings/tracking"
-                    />
-                    <InlineStack gap="200">
-                      <Button submit variant="primary">
-                        Connect Meta
-                      </Button>
-                    </InlineStack>
-                  </Form>
-                </BlockStack>
-              </Card>
-
-              {/* SAVE FORM: keep fetcher for nice UX */}
               <fetcher.Form
                 method="post"
-                onSubmit={() =>
-                  pushDebug("Submitting POST to /app/settings/tracking ...")
-                }
+                onSubmit={() => pushDebug("Submitting POST to /app/settings/tracking ...")}
               >
-                <input type="hidden" name="intent" value="save_tracking" />
-
                 <BlockStack gap="300">
                   <Text as="h2" variant="headingMd">
                     Meta Pixel (Conversions API)
@@ -266,9 +214,7 @@ export default function TrackingSettings() {
 
               <Card>
                 <BlockStack gap="200">
-                  <Text as="h3" variant="headingSm">
-                    Debug output
-                  </Text>
+                  <Text as="h3" variant="headingSm">Debug output</Text>
 
                   <textarea
                     readOnly
@@ -287,11 +233,7 @@ export default function TrackingSettings() {
                   />
 
                   <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>
-                    {JSON.stringify(
-                      { fetcherState: fetcher.state, fetcherData: fetcher.data },
-                      null,
-                      2
-                    )}
+                    {JSON.stringify({ fetcherState: fetcher.state, fetcherData: fetcher.data }, null, 2)}
                   </pre>
                 </BlockStack>
               </Card>

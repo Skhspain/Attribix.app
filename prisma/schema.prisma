@@ -56,33 +56,3 @@ model TrackingSettings {
   ga4Id      String?
   ga4Secret  String?
 }
-
-model MetaConnection {
-  id          String   @id @default(cuid())
-  shop        String   @unique
-  accessToken String
-  tokenType   String?  // "bearer"
-  expiresAt   DateTime?
-  adAccountId String?  // e.g. "act_1234567890"
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model MetaCampaignDailyInsight {
-  id          String   @id @default(cuid())
-  shop        String
-  date        DateTime
-  adAccountId String
-  campaignId  String
-  campaignName String?
-  spend       Float    @default(0)
-  purchases   Int      @default(0)
-  purchaseValue Float  @default(0)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([shop, date])
-  @@index([shop, campaignId])
-  @@unique([shop, date, campaignId])
-}

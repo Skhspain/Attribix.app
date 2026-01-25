@@ -27,10 +27,10 @@ model TrackedEvent {
 }
 
 model Session {
-  id            String    @id
+  id            String   @id
   shop          String
   state         String
-  isOnline      Boolean   @default(false)
+  isOnline      Boolean  @default(false)
   scope         String?
   expires       DateTime?
   accessToken   String
@@ -38,13 +38,14 @@ model Session {
   firstName     String?
   lastName      String?
   email         String?
-  accountOwner  Boolean   @default(false)
+  accountOwner  Boolean  @default(false)
   locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  collaborator  Boolean? @default(false)
+  emailVerified Boolean? @default(false)
 
   @@index([shop])
 }
+
 
 model Purchase {
   id         String   @id @default(cuid())
@@ -68,33 +69,4 @@ model TrackingSettings {
   fbToken   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-}
-
-model MetaConnection {
-  id          String    @id @default(cuid())
-  shop        String    @unique
-  accessToken String
-  tokenType   String?
-  expiresAt   DateTime?
-  adAccountId String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-}
-
-model MetaCampaignDailyInsight {
-  id            String   @id @default(cuid())
-  shop          String
-  date          DateTime
-  adAccountId   String
-  campaignId    String
-  campaignName  String?
-  spend         Float    @default(0)
-  purchases     Int      @default(0)
-  purchaseValue Float    @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@unique([shop, date, campaignId])
-  @@index([shop, date])
-  @@index([shop, campaignId])
 }
