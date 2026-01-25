@@ -1,53 +1,62 @@
 // app/routes/api.meta.oauth.callback.ts
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import {
-  exchangeCodeForShortLivedToken,
-  exchangeForLongLivedToken,
-  fetchAdAccounts,
-} from "~/services/metaGraph.server";
+import { exchangeMetaCodeForToken } from "~/services/metaGraph.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  // Validate Shopify admin request (session/hmac etc)
+  const result = await authenticate.admin(request);
+  if (result instanceof Response) return result;
+
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
 
   if (!code || !state) {
-    return redirect("/app/ads?meta=error_missing_code");
+    throw new Response("Missing code/state", { status: 400 });
   }
 
-  // Find which shop started this OAuth by matching the stored state
-  const conn = await (db as any).metaConnection.findFirst({
-    where: { tokenType: state },
+  let decoded: { shop?: string; nonce?: string; returnTo?: string } | null = null;
+  try {
+    decoded = JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
+  } catch {
+    throw new Response("Invalid state", { status: 400 });
+  }
+
+  const shop = decoded?.shop;
+  const returnTo = decoded?.returnTo || "/app/integrations/meta";
+  if (!shop) throw new Response("Missing shop in state", { status: 400 });
+
+  const appBaseUrl = process.env.SHOPIFY_APP_URL;
+  if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
+
+  const redirectUri = `${appBaseUrl.replace(/\/$/, "")}/api/meta/oauth/callback`;
+
+  const token = await exchangeMetaCodeForToken({
+    code,
+    redirectUri,
   });
 
-  if (!conn) {
-    return redirect("/app/ads?meta=error_bad_state");
-  }
+  const expiresAt =
+    typeof token.expires_in === "number"
+      ? new Date(Date.now() + token.expires_in * 1000)
+      : null;
 
-  // Exchange code -> short token -> long token
-  const shortRes = await exchangeCodeForShortLivedToken(code);
-  const longRes = await exchangeForLongLivedToken(shortRes.access_token);
-
-  const accessToken = longRes.access_token;
-  const expiresIn = Number(longRes.expires_in || 0);
-  const expiresAt = expiresIn ? new Date(Date.now() + expiresIn * 1000) : null;
-
-  // Fetch ad accounts so we can auto-pick first (you can add a selector later)
-  const accountsRes = await fetchAdAccounts(accessToken);
-  const first = accountsRes?.data?.[0];
-  const adAccountId = first?.id || null; // usually "act_..."
-
-  await (db as any).metaConnection.update({
-    where: { shop: conn.shop },
-    data: {
-      accessToken,
-      tokenType: "bearer",
-      expiresAt,
-      adAccountId,
+  // Upsert connection for shop
+  await db.metaConnection.upsert({
+    where: { shop },
+    create: {
+      shop,
+      accessToken: token.access_token,
+      expiresAt: expiresAt ?? undefined,
+      // adAccountId can be set later via sync
+    },
+    update: {
+      accessToken: token.access_token,
+      expiresAt: expiresAt ?? undefined,
     },
   });
 
-  return redirect("/app/ads?meta=connected");
+  return redirect(returnTo);
 }

@@ -1,111 +1,132 @@
-// app/routes/api/settings/tracking.jsx
-import { json } from "@remix-run/node";
-import { authenticate } from "../../../shopify.server";
+import { useEffect, useState } from "react";
+import {
+  Page,
+  Layout,
+  Card,
+  Text,
+  TextField,
+  Checkbox,
+  Button,
+  Banner,
+  BlockStack,
+  InlineStack,
+} from "@shopify/polaris";
+import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 
-const NAMESPACE = "attribix";
-const KEY_PIXEL_ID = "meta_pixel_id";
-const KEY_ACCESS_TOKEN = "meta_access_token";
+export default function SettingsRoute() {
+  const fetcher = useAuthenticatedFetch();
+  const [pixelId, setPixelId] = useState("");
+  const [enabled, setEnabled] = useState(false);
 
-async function readTrackingMetafields(admin) {
-  const query = `
-    query TrackingMetafields {
-      shop {
-        pixel: metafield(namespace: "${NAMESPACE}", key: "${KEY_PIXEL_ID}") { value }
-        token: metafield(namespace: "${NAMESPACE}", key: "${KEY_ACCESS_TOKEN}") { value }
+  const [status, setStatus] = useState("idle"); // idle | saving | saved | error
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetcher("/api/settings/tracking", { method: "GET" });
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (!res.ok) {
+          setStatus("error");
+          setErrorMsg(data?.error || "Failed to load settings");
+          return;
+        }
+
+        setPixelId(data?.pixelId || "");
+        setEnabled(Boolean(data?.enabled));
+        setStatus("idle");
+      } catch (e) {
+        if (cancelled) return;
+        setStatus("error");
+        setErrorMsg("Failed to load settings");
       }
     }
-  `;
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetcher]);
 
-  const res = await admin.graphql(query);
-  const payload = await res.json();
+  async function save() {
+    setStatus("saving");
+    setErrorMsg("");
 
-  if (payload?.errors?.length) {
-    const msg = payload.errors.map((e) => e.message).join(" | ");
-    throw new Error(msg || "Shopify GraphQL error");
-  }
-
-  return {
-    metaPixelId: payload?.data?.shop?.pixel?.value ?? "",
-    metaAccessToken: payload?.data?.shop?.token?.value ?? "",
-  };
-}
-
-async function writeTrackingMetafields(admin, { metaPixelId, metaAccessToken }) {
-  const mutation = `
-    mutation SetMetafields($metafields: [MetafieldsSetInput!]!) {
-      metafieldsSet(metafields: $metafields) {
-        metafields { id namespace key value }
-        userErrors { field message }
-      }
-    }
-  `;
-
-  const metafields = [
-    {
-      namespace: NAMESPACE,
-      key: KEY_PIXEL_ID,
-      type: "single_line_text_field",
-      value: String(metaPixelId ?? ""),
-    },
-    {
-      namespace: NAMESPACE,
-      key: KEY_ACCESS_TOKEN,
-      type: "single_line_text_field",
-      value: String(metaAccessToken ?? ""),
-    },
-  ];
-
-  const res = await admin.graphql(mutation, { variables: { metafields } });
-  const payload = await res.json();
-
-  if (payload?.errors?.length) {
-    const msg = payload.errors.map((e) => e.message).join(" | ");
-    throw new Error(msg || "Shopify GraphQL error");
-  }
-
-  const userErrors = payload?.data?.metafieldsSet?.userErrors ?? [];
-  if (userErrors.length) {
-    const msg = userErrors.map((e) => e?.message).filter(Boolean).join(" | ");
-    throw new Error(msg || "Failed to save metafields");
-  }
-
-  return true;
-}
-
-export async function loader({ request }) {
-  try {
-    const { admin } = await authenticate.admin(request);
-    const settings = await readTrackingMetafields(admin);
-    return json(settings);
-  } catch (e) {
-    console.error("[/api/settings/tracking] loader error:", e);
-    return json({ ok: false, error: String(e?.message || e) }, { status: 500 });
-  }
-}
-
-export async function action({ request }) {
-  try {
-    const { admin } = await authenticate.admin(request);
-
-    let body = {};
     try {
-      body = await request.json();
-    } catch {
-      return json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+      const res = await fetcher("/api/settings/tracking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pixelId, enabled }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setStatus("error");
+        setErrorMsg(data?.error || "Failed to save settings");
+        return;
+      }
+
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 1200);
+    } catch (e) {
+      setStatus("error");
+      setErrorMsg("Failed to save settings");
     }
-
-    const metaPixelId = String(body?.metaPixelId || "").trim();
-    const metaAccessToken = String(body?.metaAccessToken || "").trim();
-
-    if (metaPixelId && !/^\d+$/.test(metaPixelId)) {
-      return json({ ok: false, error: "Meta Pixel ID must be numbers only." }, { status: 400 });
-    }
-
-    await writeTrackingMetafields(admin, { metaPixelId, metaAccessToken });
-
-    return json({ ok: true });
-  } catch (e) {
-    console.error("[/api/settings/tracking] action error:", e);
-    return json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }
+
+  return (
+    <Page title="Settings" fullWidth>
+      <Layout>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="p" tone="subdued">
+                Configure tracking settings for your shop.
+              </Text>
+
+              {status === "error" && (
+                <Banner tone="critical">
+                  <p>{errorMsg || "Something went wrong"}</p>
+                </Banner>
+              )}
+
+              {status === "saved" && (
+                <Banner tone="success">
+                  <p>Saved ✅</p>
+                </Banner>
+              )}
+
+              <BlockStack gap="300">
+                <TextField
+                  label="Pixel ID"
+                  value={pixelId}
+                  onChange={setPixelId}
+                  autoComplete="off"
+                />
+
+                <Checkbox
+                  label="Enable tracking"
+                  checked={enabled}
+                  onChange={setEnabled}
+                />
+
+                <InlineStack gap="200">
+                  <Button
+                    variant="primary"
+                    onClick={save}
+                    disabled={status === "saving"}
+                  >
+                    {status === "saving" ? "Saving…" : "Save"}
+                  </Button>
+                </InlineStack>
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
 }

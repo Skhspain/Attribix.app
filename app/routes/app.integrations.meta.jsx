@@ -1,84 +1,77 @@
 // app/routes/app.integrations.meta.jsx
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
-import {
-  Page,
-  Layout,
-  Card,
-  BlockStack,
-  Text,
-  Button,
-  Badge,
-  InlineStack,
-} from "@shopify/polaris";
+import React from "react";
+import { redirect, json } from "@remix-run/node";
+import { useFetcher } from "@remix-run/react";
+import { Page, Layout, Card, Text, Button, BlockStack, Banner } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
-import db from "~/db.server";
 
-export async function loader({ request }) {
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
+/**
+ * Meta integration page.
+ * Diagnostics included:
+ * - A client-side click logger (proves UI receives clicks)
+ * - A fetcher POST button (proves POST hits Remix without relying on <form>)
+ */
 
-  const { session } = result;
-  const shop = session.shop;
-
-  const conn = await db.metaConnection.findUnique({ where: { shop } }).catch(() => null);
-
-  const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
-
-  return json({
-    connected,
-    adAccountId: conn?.adAccountId || null,
-    expiresAt: conn?.expiresAt ? conn.expiresAt.toISOString() : null,
-  });
+export async function loader() {
+  return json({ ok: true });
 }
 
-export default function MetaIntegration() {
-  const data = useLoaderData();
+export async function action({ request }) {
+  console.log("[app.integrations.meta] ACTION HIT", new Date().toISOString());
+  await authenticate.admin(request);
+  return redirect("/api/meta/oauth/start?returnTo=/app/integrations/meta");
+}
+
+export default function MetaIntegrationsPage() {
+  const fetcher = useFetcher();
+  const busy = fetcher.state !== "idle";
 
   return (
-    <Page
-      title="Meta integration"
-      subtitle="Connect your Meta Ads account to pull Ads Manager metrics"
-    >
+    <Page title="Meta">
       <Layout>
         <Layout.Section>
-          <BlockStack gap="400">
-            <Card>
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">
-                    Status
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    {data.connected ? "Meta is connected." : "Meta is not connected yet."}
-                  </Text>
-                  {data.expiresAt ? (
-                    <Text as="p" tone="subdued">
-                      Token expires: {new Date(data.expiresAt).toLocaleString()}
-                    </Text>
-                  ) : null}
-                </BlockStack>
-
-                <Badge tone={data.connected ? "success" : "warning"}>
-                  {data.connected ? `Ad account: ${data.adAccountId || "—"}` : "Not connected"}
-                </Badge>
-              </InlineStack>
-            </Card>
-
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">
-                  Connect
+          <Card>
+            <BlockStack gap="300">
+              <Banner tone="info" title="Debug mode enabled">
+                <Text as="p">
+                  1) If you click and the timestamp updates, clicks are reaching the browser.
+                  2) If you click “POST via fetcher” and you see ACTION HIT in Fly logs, POSTs reach Remix.
                 </Text>
-                <Text as="p" tone="subdued">
-                  This opens Meta OAuth and stores a token for your shop.
-                </Text>
-                <Button url="/api/meta/oauth/start" variant="primary">
-                  {data.connected ? "Reconnect Meta" : "Connect Meta"}
+              </Banner>
+
+              <Text as="p">
+                Connect your Meta account to sync campaigns and enable Meta-related features.
+              </Text>
+
+              {/* Client-side click proof */}
+              <Button
+                onClick={() => {
+                  console.log("[app.integrations.meta] CLIENT CLICK", new Date().toISOString());
+                  alert("CLIENT CLICK OK: " + new Date().toISOString());
+                }}
+              >
+                Test click (client)
+              </Button>
+
+              {/* Server POST proof without relying on <form> submit */}
+              <fetcher.Form method="post">
+                <Button submit variant="primary" loading={busy} disabled={busy}>
+                  POST via fetcher (server)
                 </Button>
-              </BlockStack>
-            </Card>
-          </BlockStack>
+              </fetcher.Form>
+
+              {/* Your original method (keep it too) */}
+              <form method="post">
+                <Button submit variant="secondary">
+                  Connect Meta (form submit)
+                </Button>
+              </form>
+
+              <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
+                {JSON.stringify({ fetcherState: fetcher.state, fetcherData: fetcher.data }, null, 2)}
+              </pre>
+            </BlockStack>
+          </Card>
         </Layout.Section>
       </Layout>
     </Page>

@@ -1,92 +1,123 @@
 // app/services/metaGraph.server.ts
-const GRAPH_VERSION = "v19.0";
 
-function mustEnv(name: string) {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
+type MetaTokenResponse = {
+  access_token: string;
+  token_type?: string;
+  expires_in?: number;
+};
+
+type MetaApiError = {
+  error?: {
+    message?: string;
+    type?: string;
+    code?: number;
+    error_subcode?: number;
+    fbtrace_id?: string;
+  };
+};
+
+async function metaFetchJson<T>(
+  url: string,
+  init?: RequestInit
+): Promise<T> {
+  const res = await fetch(url, init);
+  const text = await res.text();
+
+  let json: any = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    // not json
+  }
+
+  if (!res.ok) {
+    const errMsg =
+      (json as MetaApiError | null)?.error?.message ||
+      text ||
+      `Meta request failed (${res.status})`;
+    throw new Response(errMsg, { status: 500 });
+  }
+
+  return json as T;
 }
 
-export function getMetaOAuthUrl(state: string) {
-  const appId = mustEnv("META_APP_ID");
-  const redirectUri = mustEnv("META_REDIRECT_URL");
-  const scopes = process.env.META_SCOPES ?? "ads_read,read_insights,business_management";
-
-  const u = new URL(`https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`);
-  u.searchParams.set("client_id", appId);
-  u.searchParams.set("redirect_uri", redirectUri);
-  u.searchParams.set("state", state);
-  u.searchParams.set("scope", scopes);
-  u.searchParams.set("response_type", "code");
-  return u.toString();
-}
-
-async function graphGet(path: string, params: Record<string, string>) {
-  const u = new URL(`https://graph.facebook.com/${GRAPH_VERSION}/${path}`);
-  for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
-  const res = await fetch(u.toString());
-  const txt = await res.text();
-  if (!res.ok) throw new Error(`Meta GET ${path} failed: ${res.status} ${txt}`);
-  return JSON.parse(txt);
-}
-
-export async function exchangeCodeForShortLivedToken(code: string) {
-  const appId = mustEnv("META_APP_ID");
-  const secret = mustEnv("META_APP_SECRET");
-  const redirectUri = mustEnv("META_REDIRECT_URL");
-
-  return graphGet("oauth/access_token", {
-    client_id: appId,
-    client_secret: secret,
-    redirect_uri: redirectUri,
-    code,
-  });
-}
-
-export async function exchangeForLongLivedToken(shortToken: string) {
-  const appId = mustEnv("META_APP_ID");
-  const secret = mustEnv("META_APP_SECRET");
-
-  return graphGet("oauth/access_token", {
-    grant_type: "fb_exchange_token",
-    client_id: appId,
-    client_secret: secret,
-    fb_exchange_token: shortToken,
-  });
-}
-
-export async function fetchAdAccounts(accessToken: string) {
-  // GET /me/adaccounts
-  return graphGet("me/adaccounts", {
-    access_token: accessToken,
-    fields: "id,name,account_status,currency",
-    limit: "100",
-  });
-}
-
-export async function fetchCampaignDailyInsights(opts: {
-  accessToken: string;
-  adAccountId: string; // "act_123"
-  since: string; // YYYY-MM-DD
-  until: string; // YYYY-MM-DD
+/**
+ * Exchange OAuth code for access token
+ * https://developers.facebook.com/docs/facebook-login/guides/access-tokens/getting-started/
+ */
+export async function exchangeMetaCodeForToken(args: {
+  code: string;
+  redirectUri: string;
 }) {
-  const { accessToken, adAccountId, since, until } = opts;
+  const clientId = process.env.META_APP_ID;
+  const clientSecret = process.env.META_APP_SECRET;
 
-  // GET /act_xxx/insights
-  // We keep fields minimal and stable.
-  return graphGet(`${adAccountId}/insights`, {
-    access_token: accessToken,
-    time_increment: "1",
-    level: "campaign",
-    time_range: JSON.stringify({ since, until }),
-    fields: [
-      "date_start",
-      "campaign_id",
-      "campaign_name",
-      "spend",
-      "actions",
-      "action_values",
-    ].join(","),
-    limit: "500",
-  });
+  if (!clientId) throw new Response("Missing META_APP_ID", { status: 500 });
+  if (!clientSecret) throw new Response("Missing META_APP_SECRET", { status: 500 });
+
+  const url = new URL("https://graph.facebook.com/v20.0/oauth/access_token");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("client_secret", clientSecret);
+  url.searchParams.set("redirect_uri", args.redirectUri);
+  url.searchParams.set("code", args.code);
+
+  return metaFetchJson<MetaTokenResponse>(url.toString(), { method: "GET" });
+}
+
+/**
+ * Fetch ad accounts available for the user token.
+ */
+export async function fetchUserAdAccounts(args: { accessToken: string }) {
+  const url = new URL("https://graph.facebook.com/v20.0/me/adaccounts");
+  url.searchParams.set("access_token", args.accessToken);
+  url.searchParams.set("fields", "id,name,account_id,currency,timezone_name,amount_spent,spend_cap");
+
+  return metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
+}
+
+/**
+ * Daily insights for either:
+ *  - Ad Account: /{act_XXXX}/insights
+ *  - Campaign: /{campaignId}/insights
+ *
+ * We accept BOTH adAccountId and campaignId so your route won't type-error.
+ */
+export async function fetchCampaignDailyInsights(args: {
+  accessToken: string;
+  adAccountId?: string; // "act_123..."
+  campaignId?: string;  // "123..."
+  since: string;        // YYYY-MM-DD
+  until: string;        // YYYY-MM-DD
+  fields?: string[];
+}) {
+  const id = args.campaignId ?? args.adAccountId;
+  if (!id) {
+    throw new Response("Missing campaignId or adAccountId", { status: 400 });
+  }
+
+  const fields = (args.fields && args.fields.length > 0)
+    ? args.fields
+    : [
+        "date_start",
+        "date_stop",
+        "campaign_id",
+        "campaign_name",
+        "impressions",
+        "clicks",
+        "spend",
+        "cpm",
+        "cpc",
+        "ctr",
+        "actions",
+        "action_values",
+        "purchase_roas",
+      ];
+
+  const url = new URL(`https://graph.facebook.com/v20.0/${encodeURIComponent(id)}/insights`);
+  url.searchParams.set("access_token", args.accessToken);
+  url.searchParams.set("fields", fields.join(","));
+  url.searchParams.set("time_increment", "1");
+  url.searchParams.set("time_range", JSON.stringify({ since: args.since, until: args.until }));
+
+  return metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
 }

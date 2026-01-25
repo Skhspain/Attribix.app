@@ -1,26 +1,24 @@
 // app/routes/app.ads.jsx
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData } from "@remix-run/react";
+import { useLoaderData, useFetcher, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
   Card,
+  Text,
   BlockStack,
   InlineStack,
-  Text,
   Button,
   Badge,
   DataTable,
+  Select,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 
-function money(v) {
-  const rounded = Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
-  return rounded.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+function formatCurrency(n) {
+  const x = Number(n || 0);
+  return x.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
 export async function loader({ request }) {
@@ -31,176 +29,207 @@ export async function loader({ request }) {
   const shop = session.shop;
 
   const conn = await db.metaConnection.findUnique({ where: { shop } }).catch(() => null);
+  const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
 
-  const from = new Date();
-  from.setDate(from.getDate() - 6);
-  from.setHours(0, 0, 0, 0);
+  // last 7 days
+  const until = new Date();
+  const since = new Date();
+  since.setDate(until.getDate() - 6);
 
-  const rows = await db.metaCampaignDailyInsight
-    .findMany({
-      where: { shop, date: { gte: from } },
-      orderBy: [{ date: "desc" }, { spend: "desc" }],
-      take: 50,
-      select: {
-        date: true,
-        campaignName: true,
-        spend: true,
-        purchases: true,
-        purchaseValue: true,
-      },
-    })
-    .catch(() => []);
+  const rows = connected
+    ? await db.metaCampaignDailyInsight.findMany({
+        where: { shop, date: { gte: since, lte: until } },
+        orderBy: [{ date: "desc" }],
+      })
+    : [];
 
-  const spend7d = rows.reduce((a, r) => a + Number(r.spend || 0), 0);
-  const purchases7d = rows.reduce((a, r) => a + Number(r.purchases || 0), 0);
-  const value7d = rows.reduce((a, r) => a + Number(r.purchaseValue || 0), 0);
-  const roas = spend7d > 0 ? value7d / spend7d : 0;
+  // Aggregate quick KPIs from rows
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.spend += Number(r.spend || 0);
+      acc.purchases += Number(r.purchases || 0);
+      acc.purchaseValue += Number(r.purchaseValue || 0);
+      return acc;
+    },
+    { spend: 0, purchases: 0, purchaseValue: 0 }
+  );
+
+  // Group by campaign (sum last 7 days)
+  const byCampaign = new Map();
+  for (const r of rows) {
+    const id = String(r.campaignId);
+    const cur = byCampaign.get(id) || {
+      campaignId: id,
+      campaignName: r.campaignName || id,
+      spend: 0,
+      purchases: 0,
+      purchaseValue: 0,
+    };
+    cur.spend += Number(r.spend || 0);
+    cur.purchases += Number(r.purchases || 0);
+    cur.purchaseValue += Number(r.purchaseValue || 0);
+    byCampaign.set(id, cur);
+  }
+
+  const campaigns = Array.from(byCampaign.values()).sort((a, b) => b.spend - a.spend);
 
   return json({
-    connected: !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__"),
+    connected,
     adAccountId: conn?.adAccountId || null,
-    kpis: { spend7d, purchases7d, value7d, roas },
-    rows,
+    totals,
+    campaigns,
   });
 }
 
-export default function AppAds() {
+export default function AdsDashboard() {
   const data = useLoaderData();
-  const syncer = useFetcher();
-  const syncing = syncer.state !== "idle";
+  const sync = useFetcher();
+  const days = sync.formData?.get("days") || "7";
 
-  const tableRows = (data.rows || []).map((r) => [
-    new Date(r.date).toLocaleDateString(),
-    r.campaignName || "—",
-    money(r.spend),
-    String(r.purchases ?? 0),
-    money(r.purchaseValue ?? 0),
-  ]);
+  const syncing = sync.state !== "idle";
+
+  const tableRows = (data.campaigns || []).slice(0, 15).map((c) => {
+    const roas = c.spend > 0 ? c.purchaseValue / c.spend : 0;
+    return [
+      c.campaignName,
+      formatCurrency(c.spend),
+      String(c.purchases),
+      formatCurrency(c.purchaseValue),
+      roas ? roas.toFixed(2) : "—",
+    ];
+  });
 
   return (
     <Page
-      title="Meta Ads"
-      subtitle="Stored insights from Ads Manager (sync → DB → fast dashboard)"
+      title="Meta ads dashboard"
+      subtitle="Campaign-level spend and purchase value from Ads Manager (stored in your DB)"
       primaryAction={
-        data.connected
-          ? {
-              content: syncing ? "Syncing…" : "Sync last 7 days",
-              onAction: () =>
-                syncer.submit({ days: "7" }, { method: "post", action: "/api/meta/sync" }),
-              disabled: syncing,
-            }
-          : {
-              content: "Connect Meta",
-              url: "/app/integrations/meta",
-            }
+        <Button url="/app/integrations/meta" variant="secondary">
+          Meta integration
+        </Button>
       }
     >
       <Layout>
-        <Layout.Section>
-          <BlockStack gap="400">
+        {!data.connected ? (
+          <Layout.Section>
             <Card>
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">
-                    Connection
-                  </Text>
-                  <Text as="p" tone="subdued">
-                    {data.connected ? "Connected" : "Not connected"}
-                  </Text>
-                </BlockStack>
-                <Badge tone={data.connected ? "success" : "warning"}>
-                  {data.connected ? `Ad account: ${data.adAccountId || "—"}` : "Needs connect"}
-                </Badge>
-              </InlineStack>
-            </Card>
-
-            <Layout>
-              <Layout.Section variant="oneThird">
-                <Card>
-                  <BlockStack gap="200">
-                    <Text as="h3" variant="headingSm">
-                      Spend (7d)
-                    </Text>
-                    <Text as="p" variant="heading2xl">
-                      {money(data.kpis.spend7d)}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </Layout.Section>
-
-              <Layout.Section variant="oneThird">
-                <Card>
-                  <BlockStack gap="200">
-                    <Text as="h3" variant="headingSm">
-                      Purchases (Meta)
-                    </Text>
-                    <Text as="p" variant="heading2xl">
-                      {String(data.kpis.purchases7d)}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </Layout.Section>
-
-              <Layout.Section variant="oneThird">
-                <Card>
-                  <BlockStack gap="200">
-                    <Text as="h3" variant="headingSm">
-                      Purchase value (Meta)
-                    </Text>
-                    <Text as="p" variant="heading2xl">
-                      {money(data.kpis.value7d)}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </Layout.Section>
-
-              <Layout.Section variant="oneThird">
-                <Card>
-                  <BlockStack gap="200">
-                    <Text as="h3" variant="headingSm">
-                      ROAS
-                    </Text>
-                    <Text as="p" variant="heading2xl">
-                      {money(data.kpis.roas)}
-                    </Text>
-                  </BlockStack>
-                </Card>
-              </Layout.Section>
-            </Layout>
-
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h2" variant="headingMd">
-                    Campaigns (recent rows)
-                  </Text>
-
-                  {data.connected ? (
-                    <Button
-                      onClick={() =>
-                        syncer.submit({ days: "7" }, { method: "post", action: "/api/meta/sync" })
-                      }
-                      disabled={syncing}
-                      variant="primary"
-                    >
-                      {syncing ? "Syncing…" : "Sync"}
-                    </Button>
-                  ) : (
-                    <Button url="/app/integrations/meta" variant="primary">
-                      Connect Meta
-                    </Button>
-                  )}
-                </InlineStack>
-
-                <DataTable
-                  columnContentTypes={["text", "text", "numeric", "numeric", "numeric"]}
-                  headings={["Date", "Campaign", "Spend", "Purchases", "Value"]}
-                  rows={tableRows}
-                />
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">Meta is not connected</Text>
+                <Text as="p" tone="subdued">
+                  Connect Meta first, then return here to sync and view Ads Manager insights.
+                </Text>
+                <Button url="/app/integrations/meta" variant="primary">
+                  Connect Meta
+                </Button>
               </BlockStack>
             </Card>
-          </BlockStack>
-        </Layout.Section>
+          </Layout.Section>
+        ) : (
+          <>
+            <Layout.Section>
+              <BlockStack gap="400">
+                <Card>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingMd">Status</Text>
+                      <Text as="p" tone="subdued">
+                        Connected {data.adAccountId ? `(${data.adAccountId})` : ""}
+                      </Text>
+                    </BlockStack>
+                    <Badge tone="success">Connected</Badge>
+                  </InlineStack>
+                </Card>
+
+                <Card>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="center">
+                      <Text as="h2" variant="headingMd">Sync insights</Text>
+                      <sync.Form method="post" action="/api/meta/sync">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Select
+                            label=""
+                            labelHidden
+                            name="days"
+                            value={String(days)}
+                            options={[
+                              { label: "Last 7 days", value: "7" },
+                              { label: "Last 14 days", value: "14" },
+                              { label: "Last 30 days", value: "30" },
+                            ]}
+                            disabled={syncing}
+                            onChange={() => {}}
+                          />
+                          <Button submit variant="primary" disabled={syncing}>
+                            {syncing ? "Syncing…" : "Sync now"}
+                          </Button>
+                        </InlineStack>
+                      </sync.Form>
+                    </InlineStack>
+
+                    {sync.data?.ok === false ? (
+                      <Text as="p" tone="critical">
+                        Sync error: {sync.data.error}
+                      </Text>
+                    ) : null}
+                    {sync.data?.ok ? (
+                      <Text as="p" tone="success">
+                        Synced {sync.data.rows} rows (days: {sync.data.days})
+                      </Text>
+                    ) : null}
+                  </BlockStack>
+                </Card>
+              </BlockStack>
+            </Layout.Section>
+
+            <Layout.Section>
+              <Layout>
+                <Layout.Section variant="oneThird">
+                  <Card>
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingMd">Spend (7d)</Text>
+                      <Text as="p" variant="headingLg">{formatCurrency(data.totals?.spend)}</Text>
+                    </BlockStack>
+                  </Card>
+                </Layout.Section>
+                <Layout.Section variant="oneThird">
+                  <Card>
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingMd">Purchases (7d)</Text>
+                      <Text as="p" variant="headingLg">{String(data.totals?.purchases ?? 0)}</Text>
+                    </BlockStack>
+                  </Card>
+                </Layout.Section>
+                <Layout.Section variant="oneThird">
+                  <Card>
+                    <BlockStack gap="100">
+                      <Text as="h3" variant="headingMd">Purchase value (7d)</Text>
+                      <Text as="p" variant="headingLg">{formatCurrency(data.totals?.purchaseValue)}</Text>
+                    </BlockStack>
+                  </Card>
+                </Layout.Section>
+              </Layout>
+            </Layout.Section>
+
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="300">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd">Top campaigns (last 7 days)</Text>
+                    <Button url="/app/analytics" variant="secondary">
+                      Tracking analytics
+                    </Button>
+                  </InlineStack>
+
+                  <DataTable
+                    columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric"]}
+                    headings={["Campaign", "Spend", "Purchases", "Value", "ROAS"]}
+                    rows={tableRows.length ? tableRows : [["—", "—", "—", "—", "—"]]}
+                  />
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+          </>
+        )}
       </Layout>
     </Page>
   );

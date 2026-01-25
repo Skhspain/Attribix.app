@@ -22,7 +22,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const days = Number(form.get("days") || "7");
 
-  const conn = await (db as any).metaConnection.findUnique({ where: { shop } });
+  const conn = await db.metaConnection.findUnique({ where: { shop } });
   if (!conn || !conn.accessToken || conn.accessToken === "__PENDING__") {
     return json({ ok: false, error: "Meta not connected" }, { status: 400 });
   }
@@ -44,13 +44,13 @@ export async function action({ request }: ActionFunctionArgs) {
     until: untilStr,
   });
 
-  // Upsert per (shop,date,campaignId)
   const rows = insights?.data ?? [];
+
+  // Upsert per (shop,date,campaignId)
   for (const r of rows) {
     const date = new Date(r.date_start);
     const spend = Number(r.spend || 0);
 
-    // Pull purchase count/value from actions if present
     const actions = r.actions || [];
     const values = r.action_values || [];
     const purchase = actions.find((a: any) => a.action_type === "purchase");
@@ -59,7 +59,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const purchases = purchase ? Number(purchase.value || 0) : 0;
     const purchaseVal = purchaseValue ? Number(purchaseValue.value || 0) : 0;
 
-    await (db as any).metaCampaignDailyInsight.upsert({
+    await db.metaCampaignDailyInsight.upsert({
       where: {
         shop_date_campaignId: {
           shop,
@@ -84,25 +84,18 @@ export async function action({ request }: ActionFunctionArgs) {
         purchaseValue: purchaseVal,
       },
     });
-
-    // Also keep your AdSpendDaily in sync (daily sum at shop-level)
-    await (db as any).adSpendDaily.upsert({
-      where: { shop_date: { shop, date } },
-      create: { shop, date, spend },
-      update: { spend: { increment: 0 } }, // keep simple; we’ll recalc correctly below
-    });
   }
 
   // Recalc AdSpendDaily per date (sum campaigns -> daily spend)
-  // (simple, safe approach)
   const byDate = new Map<string, number>();
   for (const r of rows) {
     const k = String(r.date_start);
     byDate.set(k, (byDate.get(k) || 0) + Number(r.spend || 0));
   }
+
   for (const [k, v] of byDate.entries()) {
     const date = new Date(k);
-    await (db as any).adSpendDaily.upsert({
+    await db.adSpendDaily.upsert({
       where: { shop_date: { shop, date } },
       create: { shop, date, spend: v },
       update: { spend: v },
