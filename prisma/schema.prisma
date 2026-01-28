@@ -1,18 +1,36 @@
-// prisma/schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+model TrackedEvent {
+  id          String   @id @default(cuid())
+  eventName   String
+  sessionId   String?
+  createdAt   DateTime @default(now())
+  source      String?
+  ip          String?
+  url         String?
+  userAgent   String?
+  utmCampaign String?
+  utmMedium   String?
+  utmSource   String?
+
+  @@index([createdAt])
+  @@index([eventName])
+  @@index([sessionId])
+  @@index([utmSource])
+}
+
 model Session {
-  id            String   @id
+  id            String    @id
   shop          String
   state         String
-  isOnline      Boolean  @default(false)
+  isOnline      Boolean   @default(false)
   scope         String?
   expires       DateTime?
   accessToken   String
@@ -20,39 +38,34 @@ model Session {
   firstName     String?
   lastName      String?
   email         String?
-  accountOwner  Boolean  @default(false)
+  accountOwner  Boolean   @default(false)
   locale        String?
-  collaborator  Boolean? @default(false)
-  emailVerified Boolean? @default(false)
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+
+  @@index([shop])
 }
 
-model TrackedEvent {
+model Purchase {
   id         String   @id @default(cuid())
-  eventName  String
   createdAt  DateTime @default(now())
+  totalValue Float
+  currency   String   @default("USD")
+}
 
-  // Context
-  url        String?
-  ip         String?
-  userAgent  String?
-
-  // Attribution
-  source      String?
-  sessionId   String?
-  utmSource   String?
-  utmMedium   String?
-  utmCampaign String?
+model AdSpendDaily {
+  id    String   @id @default(cuid())
+  date  DateTime
+  spend Float
 }
 
 model TrackingSettings {
   id        String   @id @default(cuid())
   shop      String   @unique
+  ga4Id     String?
+  ga4Secret String?
+  fbPixelId String?
+  fbToken   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  // Connection + destinations
-  fbPixelId  String?
-  fbToken    String?
-  ga4Id      String?
-  ga4Secret  String?
 }
