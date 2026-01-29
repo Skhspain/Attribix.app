@@ -129,7 +129,8 @@ export default function MetaIntegrationsPage() {
               <Button
                 variant="primary"
                 onClick={() => {
-                  const url = "/api/meta/oauth/start?returnTo=/app/integrations/meta";
+                  const url = `/api/meta/oauth/start?returnTo=/app/integrations/meta&shop=${encodeURIComponent(data.shop)}`;
+
                   console.log("[app.integrations.meta] TOP-LEVEL CONNECT ->", url);
                   topLevelNavigate(url);
                 }}

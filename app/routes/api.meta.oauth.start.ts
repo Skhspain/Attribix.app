@@ -1,26 +1,39 @@
 // app/routes/api.meta.oauth.start.ts
-import { redirect, json, type LoaderFunctionArgs } from "@remix-run/node";
+import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 
 /**
  * Starts Meta OAuth.
- * IMPORTANT: In embedded apps, redirects inside the iframe can show a white page.
- * So:
- *  - If request wants JSON (fetcher), return { url } so the client can do TOP-LEVEL redirect.
- *  - Otherwise, do a normal server redirect (works in non-embedded contexts).
+ *
+ * IMPORTANT:
+ * Shopify embedded auth can redirect to /auth/login when this endpoint is opened
+ * top-level (outside the embedded iframe). That results in a blank/white page.
+ *
+ * So we do NOT require authenticate.admin() to succeed here.
+ * We try it (best-case), but fall back to `shop` query param.
  */
 export async function loader({ request }: LoaderFunctionArgs) {
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
+  const url = new URL(request.url);
 
-  const { session } = result;
-  const shop = session.shop;
-
-  if (!shop) {
-    throw new Response("Missing shop in session", { status: 400 });
+  // Prefer shop from the authenticated session when available
+  let shop: string | null = null;
+  try {
+    const result = await authenticate.admin(request);
+    if (!(result instanceof Response)) {
+      shop = result.session.shop;
+    }
+  } catch {
+    // Ignore – we'll fall back to query param below
   }
 
-  const url = new URL(request.url);
+  // Fallback: shop query param (needed when top-level navigation drops embedded params/cookies)
+  if (!shop) {
+    shop = url.searchParams.get("shop");
+  }
+
+  if (!shop) {
+    throw new Response("Missing shop (need ?shop=...)", { status: 400 });
+  }
 
   const appBaseUrl = process.env.SHOPIFY_APP_URL;
   if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
@@ -44,19 +57,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   fbAuth.searchParams.set("client_id", clientId);
   fbAuth.searchParams.set("redirect_uri", redirectUri);
   fbAuth.searchParams.set("state", state);
-  fbAuth.searchParams.set("scope", ["ads_management", "ads_read", "business_management"].join(","));
+  fbAuth.searchParams.set(
+    "scope",
+    ["ads_management", "ads_read", "business_management"].join(",")
+  );
   fbAuth.searchParams.set("response_type", "code");
 
-  const authUrl = fbAuth.toString();
-
-  // If this is called by a fetcher / wants JSON, return the URL for a top-level redirect client-side.
-  const accept = request.headers.get("accept") || "";
-  const wantsJson = accept.includes("application/json");
-
-  if (wantsJson) {
-    return json({ ok: true, url: authUrl });
-  }
-
-  // Fallback: normal redirect
-  return redirect(authUrl);
+  return redirect(fbAuth.toString());
 }
