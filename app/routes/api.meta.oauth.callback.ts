@@ -4,10 +4,35 @@ import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { exchangeMetaCodeForToken } from "~/services/metaGraph.server";
 
+function ensureShopParam(urlPath: string, shop: string) {
+  try {
+    // If it's already absolute, keep it
+    const u = new URL(urlPath, "https://example.local");
+    if (!u.searchParams.get("shop")) u.searchParams.set("shop", shop);
+    return u.pathname + u.search + u.hash;
+  } catch {
+    // If something odd happens, fall back safely
+    return `/app/integrations/meta?shop=${encodeURIComponent(shop)}`;
+  }
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
-  // Validate Shopify admin request (session/hmac etc)
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
+  /**
+   * IMPORTANT:
+   * Meta redirects to this URL from outside the Shopify embedded context.
+   * That means `authenticate.admin(request)` may return a Response (or fail)
+   * because there is no embedded session/hmac params.
+   *
+   * We keep your existing behavior when it works, BUT we do not require it.
+   */
+  try {
+    const result = await authenticate.admin(request);
+    // If it returns a Response, we DO NOT return it here (because it can block OAuth completion).
+    // This keeps the callback working even when Meta redirects outside embedded context.
+    void result;
+  } catch {
+    // Ignore – we rely on `state.shop` to identify the shop.
+  }
 
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -25,7 +50,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const shop = decoded?.shop;
-  const returnTo = decoded?.returnTo || "/app/integrations/meta";
+  const returnToRaw = decoded?.returnTo || "/app/integrations/meta";
   if (!shop) throw new Response("Missing shop in state", { status: 400 });
 
   const appBaseUrl = process.env.SHOPIFY_APP_URL;
@@ -50,7 +75,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       shop,
       accessToken: token.access_token,
       expiresAt: expiresAt ?? undefined,
-      // adAccountId can be set later via sync
+      // adAccountId is selected later
     },
     update: {
       accessToken: token.access_token,
@@ -58,5 +83,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
+  // Ensure the redirect goes back into the embedded app with shop param
+  const returnTo = ensureShopParam(returnToRaw, shop);
   return redirect(returnTo);
 }

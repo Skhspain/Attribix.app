@@ -15,10 +15,18 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import React from "react";
 
 function formatCurrency(n) {
   const x = Number(n || 0);
   return x.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+
+function formatDayKey(d) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 export async function loader({ request }) {
@@ -43,16 +51,35 @@ export async function loader({ request }) {
       })
     : [];
 
-  // Aggregate quick KPIs from rows
+  // NEW: pull aggregated daily spend rows stored in AdSpendDaily (platform="meta", campaign/adset/ad null)
+  const spendRows = connected
+    ? await db.adSpendDaily.findMany({
+        where: {
+          platform: "meta",
+          campaign: null,
+          adset: null,
+          ad: null,
+          date: { gte: since, lte: until },
+        },
+        orderBy: [{ date: "desc" }],
+      })
+    : [];
+
+  // Aggregate quick KPIs from campaign rows (purchases/value)
   const totals = rows.reduce(
     (acc, r) => {
-      acc.spend += Number(r.spend || 0);
       acc.purchases += Number(r.purchases || 0);
       acc.purchaseValue += Number(r.purchaseValue || 0);
       return acc;
     },
     { spend: 0, purchases: 0, purchaseValue: 0 }
   );
+
+  // Use AdSpendDaily aggregate for spend KPI when available.
+  // If missing (no sync yet), fall back to summing campaign spend.
+  const spendTotalFromDaily = spendRows.reduce((sum, r) => sum + Number(r.spend || 0), 0);
+  const spendTotalFromCampaigns = rows.reduce((sum, r) => sum + Number(r.spend || 0), 0);
+  totals.spend = spendRows.length ? spendTotalFromDaily : spendTotalFromCampaigns;
 
   // Group by campaign (sum last 7 days)
   const byCampaign = new Map();
@@ -84,7 +111,9 @@ export async function loader({ request }) {
 export default function AdsDashboard() {
   const data = useLoaderData();
   const sync = useFetcher();
-  const days = sync.formData?.get("days") || "7";
+
+  // Keep existing behavior but make Select actually change days
+  const [daysState, setDaysState] = React.useState("7");
 
   const syncing = sync.state !== "idle";
 
@@ -114,7 +143,9 @@ export default function AdsDashboard() {
           <Layout.Section>
             <Card>
               <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">Meta is not connected</Text>
+                <Text as="h2" variant="headingMd">
+                  Meta is not connected
+                </Text>
                 <Text as="p" tone="subdued">
                   Connect Meta first, then return here to sync and view Ads Manager insights.
                 </Text>
@@ -131,7 +162,9 @@ export default function AdsDashboard() {
                 <Card>
                   <InlineStack align="space-between" blockAlign="center">
                     <BlockStack gap="100">
-                      <Text as="h2" variant="headingMd">Status</Text>
+                      <Text as="h2" variant="headingMd">
+                        Status
+                      </Text>
                       <Text as="p" tone="subdued">
                         Connected {data.adAccountId ? `(${data.adAccountId})` : ""}
                       </Text>
@@ -143,21 +176,24 @@ export default function AdsDashboard() {
                 <Card>
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="center">
-                      <Text as="h2" variant="headingMd">Sync insights</Text>
+                      <Text as="h2" variant="headingMd">
+                        Sync insights
+                      </Text>
+
                       <sync.Form method="post" action="/api/meta/sync">
                         <InlineStack gap="200" blockAlign="center">
                           <Select
                             label=""
                             labelHidden
                             name="days"
-                            value={String(days)}
+                            value={String(daysState)}
                             options={[
                               { label: "Last 7 days", value: "7" },
                               { label: "Last 14 days", value: "14" },
                               { label: "Last 30 days", value: "30" },
                             ]}
                             disabled={syncing}
-                            onChange={() => {}}
+                            onChange={(v) => setDaysState(String(v))}
                           />
                           <Button submit variant="primary" disabled={syncing}>
                             {syncing ? "Syncing…" : "Sync now"}
@@ -186,24 +222,36 @@ export default function AdsDashboard() {
                 <Layout.Section variant="oneThird">
                   <Card>
                     <BlockStack gap="100">
-                      <Text as="h3" variant="headingMd">Spend (7d)</Text>
-                      <Text as="p" variant="headingLg">{formatCurrency(data.totals?.spend)}</Text>
+                      <Text as="h3" variant="headingMd">
+                        Spend (7d)
+                      </Text>
+                      <Text as="p" variant="headingLg">
+                        {formatCurrency(data.totals?.spend)}
+                      </Text>
                     </BlockStack>
                   </Card>
                 </Layout.Section>
                 <Layout.Section variant="oneThird">
                   <Card>
                     <BlockStack gap="100">
-                      <Text as="h3" variant="headingMd">Purchases (7d)</Text>
-                      <Text as="p" variant="headingLg">{String(data.totals?.purchases ?? 0)}</Text>
+                      <Text as="h3" variant="headingMd">
+                        Purchases (7d)
+                      </Text>
+                      <Text as="p" variant="headingLg">
+                        {String(data.totals?.purchases ?? 0)}
+                      </Text>
                     </BlockStack>
                   </Card>
                 </Layout.Section>
                 <Layout.Section variant="oneThird">
                   <Card>
                     <BlockStack gap="100">
-                      <Text as="h3" variant="headingMd">Purchase value (7d)</Text>
-                      <Text as="p" variant="headingLg">{formatCurrency(data.totals?.purchaseValue)}</Text>
+                      <Text as="h3" variant="headingMd">
+                        Purchase value (7d)
+                      </Text>
+                      <Text as="p" variant="headingLg">
+                        {formatCurrency(data.totals?.purchaseValue)}
+                      </Text>
                     </BlockStack>
                   </Card>
                 </Layout.Section>
@@ -214,7 +262,9 @@ export default function AdsDashboard() {
               <Card>
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd">Top campaigns (last 7 days)</Text>
+                    <Text as="h2" variant="headingMd">
+                      Top campaigns (last 7 days)
+                    </Text>
                     <Button url="/app/analytics" variant="secondary">
                       Tracking analytics
                     </Button>

@@ -8,8 +8,8 @@ primary_region = "fra"
 [env]
   APP_URL = "https://attribix-app.fly.dev"
   NODE_ENV = "production"
-  PORT = "3000"
   HOST = "0.0.0.0"
+  PORT = "3000"
 
 [http_service]
   internal_port = 3000
@@ -33,9 +33,11 @@ primary_region = "fra"
     path = "/health"
 
 [deploy]
-  release_command = "npx prisma db push --schema=prisma/schema.postgres.prisma --accept-data-loss"
+  # Using db push while schema is still evolving
+  # Switch to `prisma migrate deploy` once schema is stable
+  release_command = "npx prisma db push --accept-data-loss"
 
 [vm]
-  memory = "1024MB"
   cpu_kind = "shared"
   cpus = 1
+  memory = "1024MB"
