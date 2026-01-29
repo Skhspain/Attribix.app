@@ -23,8 +23,9 @@ import db from "~/db.server";
  * - A client-side click logger (proves UI receives clicks)
  * - A fetcher POST button (proves POST hits Remix without relying on <form>)
  *
- * Connection flow:
- * - Use TOP-LEVEL redirect to /api/meta/oauth/start to avoid iframe white-page issues.
+ * NEW:
+ * - Shows Meta connection status
+ * - Fetches ad accounts and lets you select + save adAccountId
  */
 
 export async function loader({ request }) {
@@ -49,8 +50,27 @@ export async function loader({ request }) {
 
 export async function action({ request }) {
   console.log("[app.integrations.meta] ACTION HIT", new Date().toISOString());
-  await authenticate.admin(request);
-  return redirect("/api/meta/oauth/start?returnTo=/app/integrations/meta");
+
+  const result = await authenticate.admin(request);
+  if (result instanceof Response) return result;
+
+  const shopFromSession = result.session.shop;
+
+  // IMPORTANT: Preserve embedded params when redirecting, otherwise Shopify auth will bounce to /auth/login (white page)
+  const url = new URL(request.url);
+  const shop = url.searchParams.get("shop") || shopFromSession;
+  const host = url.searchParams.get("host") || "";
+  const embedded = url.searchParams.get("embedded") || "1";
+
+  const returnTo = "/app/integrations/meta";
+
+  const next = new URL("/api/meta/oauth/start", url.origin);
+  next.searchParams.set("returnTo", returnTo);
+  next.searchParams.set("shop", shop);
+  if (host) next.searchParams.set("host", host);
+  if (embedded) next.searchParams.set("embedded", embedded);
+
+  return redirect(next.toString());
 }
 
 export default function MetaIntegrationsPage() {
@@ -60,7 +80,7 @@ export default function MetaIntegrationsPage() {
   const fetcher = useFetcher();
   const busy = fetcher.state !== "idle";
 
-  // Fetch ad accounts
+  // NEW: Fetch ad accounts
   const accountsFetcher = useFetcher();
   const saveFetcher = useFetcher();
 
@@ -79,24 +99,13 @@ export default function MetaIntegrationsPage() {
   const connected = !!data.connected;
   const hasAdAccount = !!data.adAccountId;
 
-  // ✅ The key: break out of the Shopify iframe
-  function topLevelNavigate(url) {
-    try {
-      // Some embedded contexts allow this:
-      if (window.top) window.top.location.href = url;
-      else window.location.href = url;
-    } catch (e) {
-      // Fallback
-      window.location.href = url;
-    }
-  }
-
   return (
     <Page title="Meta">
       <Layout>
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
+              {/* Keep your debug block exactly (not removed) */}
               <Banner tone="info" title="Debug mode enabled">
                 <Text as="p">
                   1) If you click and the timestamp updates, clicks are reaching the browser.
@@ -125,20 +134,7 @@ export default function MetaIntegrationsPage() {
                 </Button>
               </fetcher.Form>
 
-              {/* ✅ WORKING CONNECT: forces top-level navigation */}
-              <Button
-                variant="primary"
-                onClick={() => {
-                  const url = `/api/meta/oauth/start?returnTo=/app/integrations/meta&shop=${encodeURIComponent(data.shop)}`;
-
-                  console.log("[app.integrations.meta] TOP-LEVEL CONNECT ->", url);
-                  topLevelNavigate(url);
-                }}
-              >
-                Connect Meta (top-level)
-              </Button>
-
-              {/* Keep your original method too (but it may be blocked in iframe) */}
+              {/* Your original method (keep it too) */}
               <form method="post">
                 <Button submit variant="secondary">
                   Connect Meta (form submit)
@@ -152,7 +148,7 @@ export default function MetaIntegrationsPage() {
           </Card>
         </Layout.Section>
 
-        {/* Connection status + account selection */}
+        {/* NEW: Connection status + account selection */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">

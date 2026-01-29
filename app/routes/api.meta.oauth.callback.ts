@@ -4,21 +4,26 @@ import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { exchangeMetaCodeForToken } from "~/services/metaGraph.server";
 
-function ensureShopParam(urlPath: string, shop: string) {
+function ensureEmbeddedParams(urlPath: string, shop: string, host?: string, embedded?: string) {
   try {
     const u = new URL(urlPath, "https://example.local");
     if (!u.searchParams.get("shop")) u.searchParams.set("shop", shop);
+    if (host && !u.searchParams.get("host")) u.searchParams.set("host", host);
+    if (embedded && !u.searchParams.get("embedded")) u.searchParams.set("embedded", embedded);
     return u.pathname + u.search + u.hash;
   } catch {
-    return `/app/integrations/meta?shop=${encodeURIComponent(shop)}`;
+    const fallback = new URL("/app/integrations/meta", "https://example.local");
+    fallback.searchParams.set("shop", shop);
+    if (host) fallback.searchParams.set("host", host);
+    if (embedded) fallback.searchParams.set("embedded", embedded);
+    return fallback.pathname + fallback.search;
   }
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   /**
-   * Meta redirects here outside embedded context,
-   * so authenticate.admin may fail or return a Response.
-   * We do NOT require it to succeed.
+   * Meta redirects to this URL from outside the Shopify embedded context.
+   * authenticate.admin may fail here; that's OK because we identify the shop from `state`.
    */
   try {
     const result = await authenticate.admin(request);
@@ -35,7 +40,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     throw new Response("Missing code/state", { status: 400 });
   }
 
-  let decoded: { shop?: string; nonce?: string; returnTo?: string } | null = null;
+  let decoded:
+    | { shop?: string; nonce?: string; returnTo?: string; host?: string; embedded?: string }
+    | null = null;
+
   try {
     decoded = JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
   } catch {
@@ -43,8 +51,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const shop = decoded?.shop;
-  const nonce = decoded?.nonce || null;
   const returnToRaw = decoded?.returnTo || "/app/integrations/meta";
+  const host = decoded?.host || "";
+  const embedded = decoded?.embedded || "1";
+
   if (!shop) throw new Response("Missing shop in state", { status: 400 });
 
   const appBaseUrl = process.env.SHOPIFY_APP_URL;
@@ -62,14 +72,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? new Date(Date.now() + token.expires_in * 1000)
       : null;
 
-  // Upsert connection for shop
   await db.metaConnection.upsert({
     where: { shop },
     create: {
       shop,
       accessToken: token.access_token,
       expiresAt: expiresAt ?? undefined,
-      // adAccountId is selected later
     },
     update: {
       accessToken: token.access_token,
@@ -77,7 +85,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  // Redirect back into the embedded app
-  const returnTo = ensureShopParam(returnToRaw, shop);
+  const returnTo = ensureEmbeddedParams(returnToRaw, shop, host, embedded);
   return redirect(returnTo);
 }
