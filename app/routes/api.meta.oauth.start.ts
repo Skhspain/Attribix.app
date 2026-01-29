@@ -1,11 +1,13 @@
 // app/routes/api.meta.oauth.start.ts
-import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import { redirect, json, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
-import { redirectDocument } from "@remix-run/node";
 
 /**
  * Starts Meta OAuth.
- * IMPORTANT: must be a top-level navigation (not a fetcher) to avoid iframe blocking.
+ * IMPORTANT: In embedded apps, redirects inside the iframe can show a white page.
+ * So:
+ *  - If request wants JSON (fetcher), return { url } so the client can do TOP-LEVEL redirect.
+ *  - Otherwise, do a normal server redirect (works in non-embedded contexts).
  */
 export async function loader({ request }: LoaderFunctionArgs) {
   const result = await authenticate.admin(request);
@@ -42,11 +44,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
   fbAuth.searchParams.set("client_id", clientId);
   fbAuth.searchParams.set("redirect_uri", redirectUri);
   fbAuth.searchParams.set("state", state);
-  fbAuth.searchParams.set(
-    "scope",
-    ["ads_management", "ads_read", "business_management"].join(",")
-  );
+  fbAuth.searchParams.set("scope", ["ads_management", "ads_read", "business_management"].join(","));
   fbAuth.searchParams.set("response_type", "code");
 
-  return redirect(fbAuth.toString());
+  const authUrl = fbAuth.toString();
+
+  // If this is called by a fetcher / wants JSON, return the URL for a top-level redirect client-side.
+  const accept = request.headers.get("accept") || "";
+  const wantsJson = accept.includes("application/json");
+
+  if (wantsJson) {
+    return json({ ok: true, url: authUrl });
+  }
+
+  // Fallback: normal redirect
+  return redirect(authUrl);
 }

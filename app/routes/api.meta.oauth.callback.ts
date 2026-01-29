@@ -6,32 +6,25 @@ import { exchangeMetaCodeForToken } from "~/services/metaGraph.server";
 
 function ensureShopParam(urlPath: string, shop: string) {
   try {
-    // If it's already absolute, keep it
     const u = new URL(urlPath, "https://example.local");
     if (!u.searchParams.get("shop")) u.searchParams.set("shop", shop);
     return u.pathname + u.search + u.hash;
   } catch {
-    // If something odd happens, fall back safely
     return `/app/integrations/meta?shop=${encodeURIComponent(shop)}`;
   }
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   /**
-   * IMPORTANT:
-   * Meta redirects to this URL from outside the Shopify embedded context.
-   * That means `authenticate.admin(request)` may return a Response (or fail)
-   * because there is no embedded session/hmac params.
-   *
-   * We keep your existing behavior when it works, BUT we do not require it.
+   * Meta redirects here outside embedded context,
+   * so authenticate.admin may fail or return a Response.
+   * We do NOT require it to succeed.
    */
   try {
     const result = await authenticate.admin(request);
-    // If it returns a Response, we DO NOT return it here (because it can block OAuth completion).
-    // This keeps the callback working even when Meta redirects outside embedded context.
     void result;
   } catch {
-    // Ignore – we rely on `state.shop` to identify the shop.
+    // ignore
   }
 
   const url = new URL(request.url);
@@ -50,6 +43,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const shop = decoded?.shop;
+  const nonce = decoded?.nonce || null;
   const returnToRaw = decoded?.returnTo || "/app/integrations/meta";
   if (!shop) throw new Response("Missing shop in state", { status: 400 });
 
@@ -83,7 +77,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  // Ensure the redirect goes back into the embedded app with shop param
+  // Redirect back into the embedded app
   const returnTo = ensureShopParam(returnToRaw, shop);
   return redirect(returnTo);
 }

@@ -17,16 +17,9 @@ import {
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 
-/**
- * Meta integration page.
- * Diagnostics included:
- * - A client-side click logger (proves UI receives clicks)
- * - A fetcher POST button (proves POST hits Remix without relying on <form>)
- *
- * NEW:
- * - Shows Meta connection status
- * - Fetches ad accounts and lets you select + save adAccountId
- */
+// ✅ App Bridge for top-level redirects inside embedded admin
+import { useAppBridge } from "@shopify/app-bridge-react";
+import { Redirect } from "@shopify/app-bridge/actions";
 
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
@@ -50,26 +43,21 @@ export async function loader({ request }) {
 
 export async function action({ request }) {
   console.log("[app.integrations.meta] ACTION HIT", new Date().toISOString());
-
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
-
-  // IMPORTANT: include shop in redirect (helps embedded routing / state)
-  const shop = result.session.shop;
-
-  return redirect(
-    `/api/meta/oauth/start?returnTo=${encodeURIComponent("/app/integrations/meta")}&shop=${encodeURIComponent(
-      shop
-    )}`
-  );
+  await authenticate.admin(request);
+  return redirect("/api/meta/oauth/start?returnTo=/app/integrations/meta");
 }
 
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
 
-  // Your existing fetcher (kept)
+  const app = useAppBridge();
+
+  // existing fetcher (kept)
   const fetcher = useFetcher();
   const busy = fetcher.state !== "idle";
+
+  // NEW: fetcher for OAuth start url
+  const oauthFetcher = useFetcher();
 
   // NEW: Fetch ad accounts
   const accountsFetcher = useFetcher();
@@ -78,15 +66,6 @@ export default function MetaIntegrationsPage() {
   const accounts = accountsFetcher.data?.accounts || [];
   const [selected, setSelected] = React.useState(data.adAccountId || "");
 
-  // Keep select in sync if loader data changes (e.g. after saving)
-  React.useEffect(() => {
-    if (data?.adAccountId && data.adAccountId !== selected) {
-      setSelected(data.adAccountId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.adAccountId]);
-
-  // Build Select options
   const options = [
     { label: "Select an ad account…", value: "" },
     ...accounts.map((a) => ({
@@ -98,23 +77,38 @@ export default function MetaIntegrationsPage() {
   const connected = !!data.connected;
   const hasAdAccount = !!data.adAccountId;
 
+  // ✅ When we get {url} back, perform TOP-LEVEL redirect to Meta
+  React.useEffect(() => {
+    const url = oauthFetcher.data?.url;
+    if (!url) return;
+
+    try {
+      const redirect = Redirect.create(app);
+      redirect.dispatch(Redirect.Action.REMOTE, url);
+    } catch (e) {
+      // fallback: full page navigate
+      window.top ? (window.top.location.href = url) : (window.location.href = url);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [oauthFetcher.data?.url]);
+
   return (
     <Page title="Meta">
       <Layout>
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
-              {/* Keep your debug block exactly (not removed) */}
               <Banner tone="info" title="Debug mode enabled">
                 <Text as="p">
-                  1) If you click and the timestamp updates, clicks are reaching the browser. 2) If you click “POST via
-                  fetcher” and you see ACTION HIT in Fly logs, POSTs reach Remix.
+                  1) If you click and the timestamp updates, clicks are reaching the browser.
+                  2) If you click “POST via fetcher” and you see ACTION HIT in Fly logs, POSTs reach Remix.
                 </Text>
               </Banner>
 
-              <Text as="p">Connect your Meta account to sync campaigns and enable Meta-related features.</Text>
+              <Text as="p">
+                Connect your Meta account to sync campaigns and enable Meta-related features.
+              </Text>
 
-              {/* Client-side click proof */}
               <Button
                 onClick={() => {
                   console.log("[app.integrations.meta] CLIENT CLICK", new Date().toISOString());
@@ -124,14 +118,24 @@ export default function MetaIntegrationsPage() {
                 Test click (client)
               </Button>
 
-              {/* Server POST proof without relying on <form> submit */}
               <fetcher.Form method="post">
                 <Button submit variant="primary" loading={busy} disabled={busy}>
                   POST via fetcher (server)
                 </Button>
               </fetcher.Form>
 
-              {/* Your original method (keep it too) */}
+              {/* ✅ Embedded-safe Connect: fetch URL then App Bridge top-level redirect */}
+              <Button
+                variant="secondary"
+                loading={oauthFetcher.state !== "idle"}
+                onClick={() => {
+                  oauthFetcher.load("/api/meta/oauth/start?returnTo=/app/integrations/meta");
+                }}
+              >
+                Connect Meta (top-level)
+              </Button>
+
+              {/* Keep your original form submit too */}
               <form method="post">
                 <Button submit variant="secondary">
                   Connect Meta (form submit)
@@ -139,13 +143,21 @@ export default function MetaIntegrationsPage() {
               </form>
 
               <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify({ fetcherState: fetcher.state, fetcherData: fetcher.data }, null, 2)}
+                {JSON.stringify(
+                  {
+                    fetcherState: fetcher.state,
+                    fetcherData: fetcher.data,
+                    oauthFetcherState: oauthFetcher.state,
+                    oauthFetcherData: oauthFetcher.data,
+                  },
+                  null,
+                  2
+                )}
               </pre>
             </BlockStack>
           </Card>
         </Layout.Section>
 
-        {/* NEW: Connection status + account selection */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
@@ -154,7 +166,11 @@ export default function MetaIntegrationsPage() {
                   Connection status
                 </Text>
 
-                {connected ? <Badge tone="success">Connected</Badge> : <Badge tone="warning">Not connected</Badge>}
+                {connected ? (
+                  <Badge tone="success">Connected</Badge>
+                ) : (
+                  <Badge tone="warning">Not connected</Badge>
+                )}
               </InlineStack>
 
               <BlockStack gap="100">
