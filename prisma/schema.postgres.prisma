@@ -51,12 +51,21 @@ model Purchase {
   createdAt  DateTime @default(now())
   totalValue Float
   currency   String   @default("USD")
+
+  @@index([createdAt])
 }
 
 model AdSpendDaily {
-  id    String   @id @default(cuid())
-  date  DateTime
-  spend Float
+  id        String   @id @default(cuid())
+  date      DateTime
+  platform  String
+  campaign  String?
+  adset     String?
+  ad        String?
+  spend     Float    @default(0)
+
+  @@index([date])
+  @@index([platform, date])
 }
 
 model TrackingSettings {
@@ -68,4 +77,38 @@ model TrackingSettings {
   fbToken   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model MetaConnection {
+  id          String   @id @default(cuid())
+  shop        String   @unique
+  accessToken String
+  expiresAt   DateTime?
+  adAccountId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model MetaCampaignDailyInsight {
+  id            String   @id @default(cuid())
+  shop          String
+  date          DateTime
+  campaignId    String
+  campaignName  String?
+  spend         Float    @default(0)
+  impressions   Int      @default(0)
+  clicks        Int      @default(0)
+  purchases     Int      @default(0)
+  purchaseValue Float    @default(0)
+  raw           Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, date, campaignId], name: "shop_date_campaignId")
+  @@index([shop, date])
+  @@index([date])
 }
