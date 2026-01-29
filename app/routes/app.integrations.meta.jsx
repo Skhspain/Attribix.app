@@ -17,9 +17,15 @@ import {
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 
-// ✅ App Bridge for top-level redirects inside embedded admin
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { Redirect } from "@shopify/app-bridge/actions";
+/**
+ * Meta integration page.
+ * Diagnostics included:
+ * - A client-side click logger (proves UI receives clicks)
+ * - A fetcher POST button (proves POST hits Remix without relying on <form>)
+ *
+ * Connection flow:
+ * - Use TOP-LEVEL redirect to /api/meta/oauth/start to avoid iframe white-page issues.
+ */
 
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
@@ -50,22 +56,18 @@ export async function action({ request }) {
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
 
-  const app = useAppBridge();
-
-  // existing fetcher (kept)
+  // Your existing fetcher (kept)
   const fetcher = useFetcher();
   const busy = fetcher.state !== "idle";
 
-  // NEW: fetcher for OAuth start url
-  const oauthFetcher = useFetcher();
-
-  // NEW: Fetch ad accounts
+  // Fetch ad accounts
   const accountsFetcher = useFetcher();
   const saveFetcher = useFetcher();
 
   const accounts = accountsFetcher.data?.accounts || [];
   const [selected, setSelected] = React.useState(data.adAccountId || "");
 
+  // Build Select options
   const options = [
     { label: "Select an ad account…", value: "" },
     ...accounts.map((a) => ({
@@ -77,20 +79,17 @@ export default function MetaIntegrationsPage() {
   const connected = !!data.connected;
   const hasAdAccount = !!data.adAccountId;
 
-  // ✅ When we get {url} back, perform TOP-LEVEL redirect to Meta
-  React.useEffect(() => {
-    const url = oauthFetcher.data?.url;
-    if (!url) return;
-
+  // ✅ The key: break out of the Shopify iframe
+  function topLevelNavigate(url) {
     try {
-      const redirect = Redirect.create(app);
-      redirect.dispatch(Redirect.Action.REMOTE, url);
+      // Some embedded contexts allow this:
+      if (window.top) window.top.location.href = url;
+      else window.location.href = url;
     } catch (e) {
-      // fallback: full page navigate
-      window.top ? (window.top.location.href = url) : (window.location.href = url);
+      // Fallback
+      window.location.href = url;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [oauthFetcher.data?.url]);
+  }
 
   return (
     <Page title="Meta">
@@ -109,6 +108,7 @@ export default function MetaIntegrationsPage() {
                 Connect your Meta account to sync campaigns and enable Meta-related features.
               </Text>
 
+              {/* Client-side click proof */}
               <Button
                 onClick={() => {
                   console.log("[app.integrations.meta] CLIENT CLICK", new Date().toISOString());
@@ -118,24 +118,26 @@ export default function MetaIntegrationsPage() {
                 Test click (client)
               </Button>
 
+              {/* Server POST proof without relying on <form> submit */}
               <fetcher.Form method="post">
                 <Button submit variant="primary" loading={busy} disabled={busy}>
                   POST via fetcher (server)
                 </Button>
               </fetcher.Form>
 
-              {/* ✅ Embedded-safe Connect: fetch URL then App Bridge top-level redirect */}
+              {/* ✅ WORKING CONNECT: forces top-level navigation */}
               <Button
-                variant="secondary"
-                loading={oauthFetcher.state !== "idle"}
+                variant="primary"
                 onClick={() => {
-                  oauthFetcher.load("/api/meta/oauth/start?returnTo=/app/integrations/meta");
+                  const url = "/api/meta/oauth/start?returnTo=/app/integrations/meta";
+                  console.log("[app.integrations.meta] TOP-LEVEL CONNECT ->", url);
+                  topLevelNavigate(url);
                 }}
               >
                 Connect Meta (top-level)
               </Button>
 
-              {/* Keep your original form submit too */}
+              {/* Keep your original method too (but it may be blocked in iframe) */}
               <form method="post">
                 <Button submit variant="secondary">
                   Connect Meta (form submit)
@@ -143,21 +145,13 @@ export default function MetaIntegrationsPage() {
               </form>
 
               <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify(
-                  {
-                    fetcherState: fetcher.state,
-                    fetcherData: fetcher.data,
-                    oauthFetcherState: oauthFetcher.state,
-                    oauthFetcherData: oauthFetcher.data,
-                  },
-                  null,
-                  2
-                )}
+                {JSON.stringify({ fetcherState: fetcher.state, fetcherData: fetcher.data }, null, 2)}
               </pre>
             </BlockStack>
           </Card>
         </Layout.Section>
 
+        {/* Connection status + account selection */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
