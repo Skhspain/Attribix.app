@@ -21,11 +21,15 @@ import db from "~/db.server";
  * Meta integration page.
  * Diagnostics included:
  * - A client-side click logger (proves UI receives clicks)
- * - A fetcher POST button (proves POST hits Remix without relying on <form>)
  *
- * NEW:
- * - Shows Meta connection status
- * - Fetches ad accounts and lets you select + save adAccountId
+ * FIX:
+ * - "Connect Meta" must escape the Shopify iframe.
+ *   Shopify often intercepts normal 302 redirects from <form method="post">
+ *   and reloads the app instead of navigating to Facebook.
+ *
+ * Approach:
+ * - action() returns JSON with the OAuth start URL
+ * - client sets window.top.location.href to that URL (top-level navigation)
  */
 
 export async function loader({ request }) {
@@ -33,7 +37,9 @@ export async function loader({ request }) {
   if (result instanceof Response) return result;
 
   const shop = result.session.shop;
-  const conn = await db.metaConnection.findUnique({ where: { shop } }).catch(() => null);
+  const conn = await db.metaConnection
+    .findUnique({ where: { shop } })
+    .catch(() => null);
 
   const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
   const adAccountId = conn?.adAccountId || null;
@@ -54,31 +60,22 @@ export async function action({ request }) {
   const result = await authenticate.admin(request);
   if (result instanceof Response) return result;
 
-  const shopFromSession = result.session.shop;
-
-  // IMPORTANT: Preserve embedded params when redirecting, otherwise Shopify auth will bounce to /auth/login (white page)
   const url = new URL(request.url);
-  const shop = url.searchParams.get("shop") || shopFromSession;
-  const host = url.searchParams.get("host") || "";
-  const embedded = url.searchParams.get("embedded") || "1";
+  const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
 
-  const returnTo = "/app/integrations/meta";
+  const startUrl = `/api/meta/oauth/start?returnTo=${encodeURIComponent(returnTo)}`;
 
-  const next = new URL("/api/meta/oauth/start", url.origin);
-  next.searchParams.set("returnTo", returnTo);
-  next.searchParams.set("shop", shop);
-  if (host) next.searchParams.set("host", host);
-  if (embedded) next.searchParams.set("embedded", embedded);
-
-  return redirect(next.toString());
+  // IMPORTANT: Return JSON so the client can force a TOP-LEVEL navigation
+  // (Shopify embedded iframe otherwise intercepts redirects)
+  return json({ ok: true, startUrl });
 }
 
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
 
-  // Your existing fetcher (kept)
-  const fetcher = useFetcher();
-  const busy = fetcher.state !== "idle";
+  // OAuth starter
+  const connectFetcher = useFetcher();
+  const connectBusy = connectFetcher.state !== "idle";
 
   // NEW: Fetch ad accounts
   const accountsFetcher = useFetcher();
@@ -99,17 +96,30 @@ export default function MetaIntegrationsPage() {
   const connected = !!data.connected;
   const hasAdAccount = !!data.adAccountId;
 
+  // When action returns startUrl, break out of iframe
+  React.useEffect(() => {
+    if (connectFetcher.data?.ok && connectFetcher.data?.startUrl) {
+      const target = connectFetcher.data.startUrl;
+
+      // Force top-level navigation out of Shopify iframe
+      try {
+        window.top.location.href = target;
+      } catch {
+        window.location.href = target;
+      }
+    }
+  }, [connectFetcher.data]);
+
   return (
     <Page title="Meta">
       <Layout>
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
-              {/* Keep your debug block exactly (not removed) */}
               <Banner tone="info" title="Debug mode enabled">
                 <Text as="p">
                   1) If you click and the timestamp updates, clicks are reaching the browser.
-                  2) If you click “POST via fetcher” and you see ACTION HIT in Fly logs, POSTs reach Remix.
+                  2) If you click “Connect Meta (top-level)” you should be taken to Facebook (not stay embedded).
                 </Text>
               </Banner>
 
@@ -117,7 +127,6 @@ export default function MetaIntegrationsPage() {
                 Connect your Meta account to sync campaigns and enable Meta-related features.
               </Text>
 
-              {/* Client-side click proof */}
               <Button
                 onClick={() => {
                   console.log("[app.integrations.meta] CLIENT CLICK", new Date().toISOString());
@@ -127,28 +136,37 @@ export default function MetaIntegrationsPage() {
                 Test click (client)
               </Button>
 
-              {/* Server POST proof without relying on <form> submit */}
-              <fetcher.Form method="post">
-                <Button submit variant="primary" loading={busy} disabled={busy}>
-                  POST via fetcher (server)
+              {/* ✅ FIXED: connect via fetcher, then top-level redirect */}
+              <connectFetcher.Form method="post">
+                <Button submit variant="primary" loading={connectBusy} disabled={connectBusy}>
+                  Connect Meta (top-level)
                 </Button>
-              </fetcher.Form>
+              </connectFetcher.Form>
 
-              {/* Your original method (keep it too) */}
-              <form method="post">
+              {/* Keep this as a fallback / comparison */}
+              <form method="post" action="?returnTo=/app/integrations/meta">
                 <Button submit variant="secondary">
-                  Connect Meta (form submit)
+                  Connect Meta (form submit - fallback)
                 </Button>
               </form>
 
               <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify({ fetcherState: fetcher.state, fetcherData: fetcher.data }, null, 2)}
+                {JSON.stringify(
+                  {
+                    connectFetcherState: connectFetcher.state,
+                    connectFetcherData: connectFetcher.data,
+                    accountsFetcherState: accountsFetcher.state,
+                    saveFetcherState: saveFetcher.state,
+                  },
+                  null,
+                  2
+                )}
               </pre>
             </BlockStack>
           </Card>
         </Layout.Section>
 
-        {/* NEW: Connection status + account selection */}
+        {/* Connection status + account selection */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
@@ -179,7 +197,7 @@ export default function MetaIntegrationsPage() {
               {!connected ? (
                 <Banner tone="warning" title="Meta not connected">
                   <Text as="p">
-                    Click “Connect Meta” above, complete the OAuth flow, then come back here to select an ad account.
+                    Click “Connect Meta (top-level)”, complete the OAuth flow, then come back here to select an ad account.
                   </Text>
                 </Banner>
               ) : null}
