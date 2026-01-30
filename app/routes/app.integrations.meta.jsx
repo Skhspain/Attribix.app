@@ -39,29 +39,8 @@ export async function loader({ request }) {
   });
 }
 
-export async function action({ request }) {
-  console.log("[app.integrations.meta] ACTION HIT", new Date().toISOString());
-
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
-
-  const shop = result.session.shop;
-  const url = new URL(request.url);
-  const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
-
-  // ✅ include shop so /api/meta/oauth/start works top-level
-  const startUrl = `/api/meta/oauth/start?shop=${encodeURIComponent(
-    shop
-  )}&returnTo=${encodeURIComponent(returnTo)}`;
-
-  return json({ ok: true, startUrl });
-}
-
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
-
-  const connectFetcher = useFetcher();
-  const connectBusy = connectFetcher.state !== "idle";
 
   const accountsFetcher = useFetcher();
   const saveFetcher = useFetcher();
@@ -78,19 +57,20 @@ export default function MetaIntegrationsPage() {
   ];
 
   const connected = !!data.connected;
-  const hasAdAccount = !!data.adAccountId;
 
-  React.useEffect(() => {
-    if (connectFetcher.data?.ok && connectFetcher.data?.startUrl) {
-      const target = connectFetcher.data.startUrl;
+  function startMetaOAuthTopLevel() {
+    const returnTo = "/app/integrations/meta";
+    const startUrl = `/api/meta/oauth/start?shop=${encodeURIComponent(
+      data.shop
+    )}&returnTo=${encodeURIComponent(returnTo)}`;
 
-      try {
-        window.top.location.href = target;
-      } catch {
-        window.location.href = target;
-      }
+    // MUST be top-level nav for OAuth
+    try {
+      window.top.location.href = startUrl;
+    } catch {
+      window.location.href = startUrl;
     }
-  }, [connectFetcher.data]);
+  }
 
   return (
     <Page title="Meta">
@@ -100,7 +80,8 @@ export default function MetaIntegrationsPage() {
             <BlockStack gap="300">
               <Banner tone="info" title="Debug mode enabled">
                 <Text as="p">
-                  Use “Connect Meta (top-level)”. This must navigate to Facebook, not /auth/login.
+                  Use “Connect Meta (top-level)”. This must navigate to Facebook, not /auth/login,
+                  and not use fetcher/POST.
                 </Text>
               </Banner>
 
@@ -108,17 +89,18 @@ export default function MetaIntegrationsPage() {
                 Connect your Meta account to sync campaigns and enable Meta-related features.
               </Text>
 
-              <connectFetcher.Form method="post">
-                <Button submit variant="primary" loading={connectBusy} disabled={connectBusy}>
-                  Connect Meta (top-level)
+              <InlineStack gap="200">
+                <Button variant="primary" onClick={startMetaOAuthTopLevel}>
+                  {connected ? "Reconnect Meta (top-level)" : "Connect Meta (top-level)"}
                 </Button>
-              </connectFetcher.Form>
+              </InlineStack>
 
               <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
                 {JSON.stringify(
                   {
-                    connectFetcherState: connectFetcher.state,
-                    connectFetcherData: connectFetcher.data,
+                    shop: data.shop,
+                    connected: data.connected,
+                    expiresAt: data.expiresAt,
                   },
                   null,
                   2
@@ -158,8 +140,8 @@ export default function MetaIntegrationsPage() {
               {!connected ? (
                 <Banner tone="warning" title="Meta not connected">
                   <Text as="p">
-                    Click “Connect Meta (top-level)”, complete the OAuth flow, then come back here to
-                    select an ad account.
+                    Click “Connect Meta (top-level)”, complete the OAuth flow, then come back here
+                    to select an ad account.
                   </Text>
                 </Banner>
               ) : null}
@@ -214,12 +196,6 @@ export default function MetaIntegrationsPage() {
                       ) : null}
                     </InlineStack>
                   </saveFetcher.Form>
-
-                  {connected && (hasAdAccount || !!selected) ? (
-                    <Banner tone="success" title="Ready to sync">
-                      <Text as="p">You can now sync Meta insights.</Text>
-                    </Banner>
-                  ) : null}
                 </BlockStack>
               ) : null}
             </BlockStack>
