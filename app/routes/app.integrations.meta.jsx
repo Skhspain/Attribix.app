@@ -1,6 +1,6 @@
 // app/routes/app.integrations.meta.jsx
 import React from "react";
-import { redirect, json } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
   Page,
@@ -16,21 +16,6 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-
-/**
- * Meta integration page.
- * Diagnostics included:
- * - A client-side click logger (proves UI receives clicks)
- *
- * FIX:
- * - "Connect Meta" must escape the Shopify iframe.
- *   Shopify often intercepts normal 302 redirects from <form method="post">
- *   and reloads the app instead of navigating to Facebook.
- *
- * Approach:
- * - action() returns JSON with the OAuth start URL
- * - client sets window.top.location.href to that URL (top-level navigation)
- */
 
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
@@ -60,31 +45,30 @@ export async function action({ request }) {
   const result = await authenticate.admin(request);
   if (result instanceof Response) return result;
 
+  const shop = result.session.shop;
   const url = new URL(request.url);
   const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
 
-  const startUrl = `/api/meta/oauth/start?returnTo=${encodeURIComponent(returnTo)}`;
+  // ✅ include shop so /api/meta/oauth/start works top-level
+  const startUrl = `/api/meta/oauth/start?shop=${encodeURIComponent(
+    shop
+  )}&returnTo=${encodeURIComponent(returnTo)}`;
 
-  // IMPORTANT: Return JSON so the client can force a TOP-LEVEL navigation
-  // (Shopify embedded iframe otherwise intercepts redirects)
   return json({ ok: true, startUrl });
 }
 
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
 
-  // OAuth starter
   const connectFetcher = useFetcher();
   const connectBusy = connectFetcher.state !== "idle";
 
-  // NEW: Fetch ad accounts
   const accountsFetcher = useFetcher();
   const saveFetcher = useFetcher();
 
   const accounts = accountsFetcher.data?.accounts || [];
   const [selected, setSelected] = React.useState(data.adAccountId || "");
 
-  // Build Select options
   const options = [
     { label: "Select an ad account…", value: "" },
     ...accounts.map((a) => ({
@@ -96,12 +80,10 @@ export default function MetaIntegrationsPage() {
   const connected = !!data.connected;
   const hasAdAccount = !!data.adAccountId;
 
-  // When action returns startUrl, break out of iframe
   React.useEffect(() => {
     if (connectFetcher.data?.ok && connectFetcher.data?.startUrl) {
       const target = connectFetcher.data.startUrl;
 
-      // Force top-level navigation out of Shopify iframe
       try {
         window.top.location.href = target;
       } catch {
@@ -118,8 +100,7 @@ export default function MetaIntegrationsPage() {
             <BlockStack gap="300">
               <Banner tone="info" title="Debug mode enabled">
                 <Text as="p">
-                  1) If you click and the timestamp updates, clicks are reaching the browser.
-                  2) If you click “Connect Meta (top-level)” you should be taken to Facebook (not stay embedded).
+                  Use “Connect Meta (top-level)”. This must navigate to Facebook, not /auth/login.
                 </Text>
               </Banner>
 
@@ -127,36 +108,17 @@ export default function MetaIntegrationsPage() {
                 Connect your Meta account to sync campaigns and enable Meta-related features.
               </Text>
 
-              <Button
-                onClick={() => {
-                  console.log("[app.integrations.meta] CLIENT CLICK", new Date().toISOString());
-                  alert("CLIENT CLICK OK: " + new Date().toISOString());
-                }}
-              >
-                Test click (client)
-              </Button>
-
-              {/* ✅ FIXED: connect via fetcher, then top-level redirect */}
               <connectFetcher.Form method="post">
                 <Button submit variant="primary" loading={connectBusy} disabled={connectBusy}>
                   Connect Meta (top-level)
                 </Button>
               </connectFetcher.Form>
 
-              {/* Keep this as a fallback / comparison */}
-              <form method="post" action="?returnTo=/app/integrations/meta">
-                <Button submit variant="secondary">
-                  Connect Meta (form submit - fallback)
-                </Button>
-              </form>
-
               <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
                 {JSON.stringify(
                   {
                     connectFetcherState: connectFetcher.state,
                     connectFetcherData: connectFetcher.data,
-                    accountsFetcherState: accountsFetcher.state,
-                    saveFetcherState: saveFetcher.state,
                   },
                   null,
                   2
@@ -166,7 +128,6 @@ export default function MetaIntegrationsPage() {
           </Card>
         </Layout.Section>
 
-        {/* Connection status + account selection */}
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
@@ -197,7 +158,8 @@ export default function MetaIntegrationsPage() {
               {!connected ? (
                 <Banner tone="warning" title="Meta not connected">
                   <Text as="p">
-                    Click “Connect Meta (top-level)”, complete the OAuth flow, then come back here to select an ad account.
+                    Click “Connect Meta (top-level)”, complete the OAuth flow, then come back here to
+                    select an ad account.
                   </Text>
                 </Banner>
               ) : null}
@@ -255,9 +217,7 @@ export default function MetaIntegrationsPage() {
 
                   {connected && (hasAdAccount || !!selected) ? (
                     <Banner tone="success" title="Ready to sync">
-                      <Text as="p">
-                        You can now go to <strong>Meta ads dashboard</strong> and run “Sync now”.
-                      </Text>
+                      <Text as="p">You can now sync Meta insights.</Text>
                     </Banner>
                   ) : null}
                 </BlockStack>
