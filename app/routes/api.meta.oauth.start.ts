@@ -4,43 +4,39 @@ import { authenticate } from "~/shopify.server";
 
 /**
  * Starts Meta OAuth.
- *
  * IMPORTANT:
- * This endpoint must work in a TOP-LEVEL navigation (outside the embedded Shopify iframe).
- * In that context, `authenticate.admin(request)` often returns a Response that redirects to /auth/login.
- * We must NOT return that redirect, otherwise you get the white /auth/login page.
- *
- * So:
- * - We *try* authenticate.admin (nice when it works)
- * - But we do NOT require it
- * - We accept `shop` from query params
+ * - This must be a top-level navigation (NOT fetcher).
+ * - When you navigate top-level, Shopify embedded params may be missing.
+ *   So we must NOT require authenticate.admin() to succeed here.
  */
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
 
-  // Try admin auth if available, but DO NOT return its redirect Response.
-  let authedShop: string | null = null;
+  // Prefer shop from query string (works for top-level navigation)
+  let shop = url.searchParams.get("shop") || "";
+
+  // Best-effort: if embedded auth is present, use it (but never require it)
   try {
     const result = await authenticate.admin(request);
     if (!(result instanceof Response)) {
-      authedShop = result.session.shop || null;
+      shop = result.session.shop || shop;
     }
   } catch {
     // ignore
   }
 
-  const shop = authedShop || url.searchParams.get("shop");
-  if (!shop) {
-    throw new Response("Missing shop (pass ?shop=...)", { status: 400 });
+  if (!shop) throw new Response("Missing shop", { status: 400 });
+  if (!shop.endsWith(".myshopify.com")) {
+    throw new Response("Invalid shop", { status: 400 });
   }
 
   const appBaseUrl = process.env.SHOPIFY_APP_URL;
   if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
 
+  const redirectUri = `${appBaseUrl.replace(/\/$/, "")}/api/meta/oauth/callback`;
+
   const clientId = process.env.META_APP_ID;
   if (!clientId) throw new Response("Missing META_APP_ID", { status: 500 });
-
-  const redirectUri = `${appBaseUrl.replace(/\/$/, "")}/api/meta/oauth/callback`;
 
   const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
 
