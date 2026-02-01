@@ -21,10 +21,16 @@ export async function loader({ request }) {
   const result = await authenticate.admin(request);
   if (result instanceof Response) return result;
 
+  const url = new URL(request.url);
+
+  // These are present on embedded app routes:
+  // /app/integrations/meta?embedded=1&host=...&shop=...
+  const host = url.searchParams.get("host") || "";
+  const embedded = url.searchParams.get("embedded") || "1";
+
   const shop = result.session.shop;
-  const conn = await db.metaConnection
-    .findUnique({ where: { shop } })
-    .catch(() => null);
+
+  const conn = await db.metaConnection.findUnique({ where: { shop } }).catch(() => null);
 
   const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
   const adAccountId = conn?.adAccountId || null;
@@ -36,6 +42,8 @@ export async function loader({ request }) {
     adAccountId,
     expiresAt,
     shop,
+    host,
+    embedded,
   });
 }
 
@@ -60,9 +68,15 @@ export default function MetaIntegrationsPage() {
 
   function startMetaOAuthTopLevel() {
     const returnTo = "/app/integrations/meta";
-    const startUrl = `/api/meta/oauth/start?shop=${encodeURIComponent(
-      data.shop
-    )}&returnTo=${encodeURIComponent(returnTo)}`;
+
+    // ✅ CRITICAL FIX:
+    // Pass host + embedded through to /api/meta/oauth/start
+    // so the state includes them and callback can redirect correctly.
+    const startUrl =
+      `/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}` +
+      `&host=${encodeURIComponent(data.host || "")}` +
+      `&embedded=${encodeURIComponent(data.embedded || "1")}` +
+      `&returnTo=${encodeURIComponent(returnTo)}`;
 
     // MUST be top-level nav for OAuth
     try {
@@ -99,6 +113,8 @@ export default function MetaIntegrationsPage() {
                 {JSON.stringify(
                   {
                     shop: data.shop,
+                    host: data.host,
+                    embedded: data.embedded,
                     connected: data.connected,
                     expiresAt: data.expiresAt,
                   },
@@ -128,6 +144,12 @@ export default function MetaIntegrationsPage() {
               <BlockStack gap="100">
                 <Text as="p" tone="subdued">
                   Shop: {data.shop}
+                </Text>
+                <Text as="p" tone="subdued">
+                  Host: {data.host ? data.host : "—"}
+                </Text>
+                <Text as="p" tone="subdued">
+                  Embedded: {data.embedded ? data.embedded : "—"}
                 </Text>
                 <Text as="p" tone="subdued">
                   Token expiry: {data.expiresAt ? data.expiresAt : "—"}

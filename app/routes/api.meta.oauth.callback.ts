@@ -85,6 +85,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
+  // ✅ IMPORTANT:
+  // Do NOT go through /auth here (it can drop context and end at /auth/login without ?shop).
+  // Redirect directly back to the embedded app route with shop/host/embedded intact.
   const returnTo = ensureEmbeddedParams(returnToRaw, shop, host, embedded);
   return redirect(returnTo);
 }

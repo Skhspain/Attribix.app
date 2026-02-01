@@ -2,33 +2,33 @@
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 
-/**
- * Starts Meta OAuth.
- * IMPORTANT:
- * - This must be a top-level navigation (NOT fetcher).
- * - When you navigate top-level, Shopify embedded params may be missing.
- *   So we must NOT require authenticate.admin() to succeed here.
- */
+function base64UrlEncode(obj: any) {
+  return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
 
-  // Prefer shop from query string (works for top-level navigation)
+  // These come from the embedded Shopify URL when you're inside Admin
   let shop = url.searchParams.get("shop") || "";
+  let host = url.searchParams.get("host") || "";
+  let embedded = url.searchParams.get("embedded") || "1";
 
-  // Best-effort: if embedded auth is present, use it (but never require it)
+  // If we are in embedded context, authenticate.admin will work and we can fill missing shop.
+  // IMPORTANT: Do NOT let this redirect us to /auth/login.
   try {
-    const result = await authenticate.admin(request);
-    if (!(result instanceof Response)) {
-      shop = result.session.shop || shop;
-    }
-  } catch {
-    // ignore
+    const { session } = await authenticate.admin(request);
+    if (!shop) shop = session.shop;
+  } catch (err) {
+    // ignore — we still continue if we have shop in query params
+    console.log("[meta.oauth.start] authenticate.admin failed (continuing)");
   }
 
-  if (!shop) throw new Response("Missing shop", { status: 400 });
-  if (!shop.endsWith(".myshopify.com")) {
-    throw new Response("Invalid shop", { status: 400 });
+  if (!shop) {
+    return new Response("Missing shop", { status: 400 });
   }
+
+  const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
 
   const appBaseUrl = process.env.SHOPIFY_APP_URL;
   if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
@@ -38,25 +38,28 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const clientId = process.env.META_APP_ID;
   if (!clientId) throw new Response("Missing META_APP_ID", { status: 500 });
 
-  const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
-
-  const stateObj = {
+  // Put EVERYTHING we need to get back into Shopify embedded context in the state
+  const state = base64UrlEncode({
     shop,
     nonce: crypto.randomUUID(),
     returnTo,
-  };
+    host,
+    embedded,
+  });
 
-  const state = Buffer.from(JSON.stringify(stateObj), "utf8").toString("base64url");
+  const scope = ["ads_read", "business_management"].join(",");
 
-  const fbAuth = new URL("https://www.facebook.com/v20.0/dialog/oauth");
-  fbAuth.searchParams.set("client_id", clientId);
-  fbAuth.searchParams.set("redirect_uri", redirectUri);
-  fbAuth.searchParams.set("state", state);
-  fbAuth.searchParams.set(
-    "scope",
-    ["ads_management", "ads_read", "business_management"].join(",")
-  );
-  fbAuth.searchParams.set("response_type", "code");
+  const metaAuthUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
+  metaAuthUrl.searchParams.set("client_id", clientId);
+  metaAuthUrl.searchParams.set("redirect_uri", redirectUri);
+  metaAuthUrl.searchParams.set("state", state);
+  metaAuthUrl.searchParams.set("response_type", "code");
+  metaAuthUrl.searchParams.set("scope", scope);
 
-  return redirect(fbAuth.toString());
+  console.log("[meta.oauth.start] shop=", shop);
+  console.log("[meta.oauth.start] host=", host);
+  console.log("[meta.oauth.start] embedded=", embedded);
+  console.log("[meta.oauth.start] redirectUri=", redirectUri);
+
+  return redirect(metaAuthUrl.toString());
 }
