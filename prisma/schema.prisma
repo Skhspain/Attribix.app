@@ -112,3 +112,27 @@ model MetaCampaignDailyInsight {
   @@index([shop, date])
   @@index([date])
 }
+
+//
+// ✅ Added by ChatGPT in this conversation
+// Stores Google Ads OAuth tokens per Shopify shop
+//
+model GoogleConnection {
+  id           String   @id @default(cuid())
+  shop         String   @unique
+
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime?
+
+  // token.scope from Google (space-delimited)
+  scope        String?
+
+  // ✅ optional; your runtime currently expects this column to exist
+  adCustomerId String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([shop])
+}
