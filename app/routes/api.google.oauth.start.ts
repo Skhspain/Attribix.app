@@ -5,6 +5,17 @@ function base64UrlEncode(input: string) {
   return Buffer.from(input, "utf8").toString("base64url");
 }
 
+function getHostFromReferer(request: Request): string {
+  const ref = request.headers.get("referer");
+  if (!ref) return "";
+  try {
+    const u = new URL(ref);
+    return u.searchParams.get("host") || "";
+  } catch {
+    return "";
+  }
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   // Best-effort Shopify auth (same pattern as your Meta start)
   try {
@@ -16,9 +27,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
 
   const shop = url.searchParams.get("shop") || "";
-  const host = url.searchParams.get("host") || "";
+  let host = url.searchParams.get("host") || "";
   const embedded = url.searchParams.get("embedded") || "1";
   const returnTo = url.searchParams.get("returnTo") || "/app/integrations/google";
+
+  // ✅ Fallback: Shopify often includes host in the Referer
+  if (!host) host = getHostFromReferer(request);
 
   if (!shop) throw new Response("Missing shop", { status: 400 });
 

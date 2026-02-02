@@ -136,3 +136,4 @@ model GoogleConnection {
 
   @@index([shop])
 }
+

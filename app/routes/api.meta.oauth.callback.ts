@@ -91,3 +91,4 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const returnTo = ensureEmbeddedParams(returnToRaw, shop, host, embedded);
   return redirect(returnTo);
 }
+  

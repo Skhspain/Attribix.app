@@ -70,9 +70,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
+  // ✅ Ensure the returnTo we send back to Shopify has shop/host/embedded
   const returnTo = ensureEmbeddedParams(returnToRaw, shop, host, embedded);
 
-  return redirect(`/auth?shop=${shop}&returnTo=${encodeURIComponent(returnTo)}`);
+  // ✅ CRITICAL: /auth must receive host for embedded Shopify apps
+  const authUrl = new URL("/auth", url.origin);
+  authUrl.searchParams.set("shop", shop);
+  if (host) authUrl.searchParams.set("host", host);
+  authUrl.searchParams.set("returnTo", returnTo);
+
+  return redirect(authUrl.toString());
 }
 
 export default function GoogleCallback() {

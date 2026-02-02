@@ -1,5 +1,5 @@
 // app/utils/useAuthenticatedFetch.ts
-import { useAppBridge } from "@shopify/shopify-app-remix/react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticatedFetch } from "@shopify/app-bridge-utils";
 import { useCallback } from "react";
 
