@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import {
@@ -16,6 +16,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
@@ -49,19 +50,17 @@ export async function loader({ request }) {
 export default function GoogleIntegrationsPage() {
   const data = useLoaderData();
 
-  const customersFetcher = useFetcher();
+  const authenticatedFetch = useAuthenticatedFetch();
+
   const saveCustomerFetcher = useFetcher();
   const syncSpendFetcher = useFetcher();
 
   const [selectedCustomerId, setSelectedCustomerId] = useState(data.adCustomerId ?? "");
 
-  // Keep selection in sync if loader returns a different saved value (rare but safe)
-  useEffect(() => {
-    if ((data.adCustomerId ?? "") !== selectedCustomerId) {
-      setSelectedCustomerId(data.adCustomerId ?? "");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.adCustomerId]);
+  // Local state for customers list (instead of customersFetcher.load)
+  const [customers, setCustomers] = useState([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customersError, setCustomersError] = useState("");
 
   function startGoogleOAuthTopLevel() {
     const returnTo = "/app/integrations/google";
@@ -70,15 +69,13 @@ export default function GoogleIntegrationsPage() {
       data.shop
     )}&returnTo=${encodeURIComponent(returnTo)}`;
 
-    // MUST be top-level navigation (escape iframe)
+    // ✅ MUST be top-level navigation (escape iframe)
     const topWindow = window.top ?? window;
     topWindow.location.href = startUrl;
   }
 
-  const customers = customersFetcher.data?.customers ?? [];
-
   const customerOptions = useMemo(() => {
-    const opts = customers.map((c) => ({
+    const opts = (customers || []).map((c) => ({
       label: c.name ? `${c.name} (${c.id})` : c.id,
       value: c.id,
     }));
@@ -86,22 +83,63 @@ export default function GoogleIntegrationsPage() {
     return [{ label: "Select an ad account…", value: "" }, ...opts];
   }, [customers]);
 
-  // Build URL once so debug is clear + consistent
-  const customersUrl = useMemo(() => {
-    return `/api/google/ads/customers?shop=${encodeURIComponent(data.shop)}`;
-  }, [data.shop]);
+  const loadAdAccounts = useCallback(async () => {
+    // Hard guards to prevent weird states
+    if (!data.connected) return;
+    if (!data.developerTokenConfigured) return;
+    if (customersLoading) return;
 
-  function loadAdAccounts() {
-    // In embedded contexts, fetcher.load() can behave weirdly.
-    // fetcher.submit() forces a proper request.
-    const form = new FormData();
-    form.set("shop", data.shop);
+    setCustomersError("");
+    setCustomersLoading(true);
 
-    customersFetcher.submit(form, {
-      method: "get",
-      action: "/api/google/ads/customers",
-    });
-  }
+    const url = `/api/google/ads/customers?shop=${encodeURIComponent(data.shop)}`;
+
+    try {
+      console.log("[Google Ads] CLICK: Load ad accounts");
+      console.log("[Google Ads] customersUrl =", url);
+
+      const res = await authenticatedFetch(url, { method: "GET" });
+      const contentType = res.headers.get("content-type") || "";
+
+      // If auth breaks, Shopify may redirect and you may get HTML
+      if (!contentType.includes("application/json")) {
+        const text = await res.text().catch(() => "");
+        setCustomersError(
+          `Unexpected response (not JSON). Status ${res.status}. This usually means the request got redirected to /auth/login.\n\n${text.slice(
+            0,
+            300
+          )}`
+        );
+        setCustomers([]);
+        return;
+      }
+
+      const payload = await res.json();
+
+      if (!res.ok || !payload?.ok) {
+        setCustomersError(String(payload?.error || `Request failed (${res.status})`));
+        setCustomers([]);
+        return;
+      }
+
+      const list = payload.customers || [];
+      setCustomers(list);
+
+      // If nothing selected yet, keep it empty (don’t auto-select)
+      // If saved selection exists, keep it in UI
+    } catch (err) {
+      setCustomersError(String(err?.message || err));
+      setCustomers([]);
+    } finally {
+      setCustomersLoading(false);
+    }
+  }, [
+    authenticatedFetch,
+    data.connected,
+    data.developerTokenConfigured,
+    data.shop,
+    customersLoading,
+  ]);
 
   function saveSelectedAccount() {
     if (!selectedCustomerId) return;
@@ -130,16 +168,11 @@ export default function GoogleIntegrationsPage() {
     });
   }
 
-  const isLoadingCustomers = customersFetcher.state !== "idle";
   const isSavingCustomer = saveCustomerFetcher.state !== "idle";
   const isSyncingSpend = syncSpendFetcher.state !== "idle";
 
   const saveOk = saveCustomerFetcher.data?.ok;
   const syncOk = syncSpendFetcher.data?.ok;
-
-  const customersError = customersFetcher.data?.error;
-  const saveError = saveCustomerFetcher.data?.error;
-  const syncError = syncSpendFetcher.data?.error;
 
   return (
     <Page title="Google Ads">
@@ -147,19 +180,26 @@ export default function GoogleIntegrationsPage() {
         <Layout.Section>
           <Card>
             <BlockStack gap="300">
-              <Banner tone="info" title="Google OAuth must open in a new top-level navigation">
+              <Banner
+                tone="info"
+                title="Google OAuth must open in a new top-level navigation"
+              >
                 <Text as="p">
-                  This button forces a top-level redirect (outside Shopify iframe), which is required for Google OAuth.
+                  This button forces a top-level redirect (outside Shopify iframe),
+                  which is required for Google OAuth.
                 </Text>
               </Banner>
 
               <Text as="p">
-                Connect your Google account to pull Google Ads campaigns, spend and performance data into Attribix.
+                Connect your Google account to pull Google Ads campaigns, spend and
+                performance data into Attribix.
               </Text>
 
               <InlineStack gap="200" blockAlign="center">
                 <Button variant="primary" onClick={startGoogleOAuthTopLevel}>
-                  {data.connected ? "Reconnect Google (top-level)" : "Connect Google (top-level)"}
+                  {data.connected
+                    ? "Reconnect Google (top-level)"
+                    : "Connect Google (top-level)"}
                 </Button>
 
                 {data.connected ? (
@@ -176,44 +216,61 @@ export default function GoogleIntegrationsPage() {
               </InlineStack>
 
               <BlockStack gap="100">
-                <Text as="p" tone="subdued">Shop: {data.shop}</Text>
-                <Text as="p" tone="subdued">Token expiry: {data.expiresAt ?? "—"}</Text>
-                <Text as="p" tone="subdued">Selected ad account: {data.adCustomerId ?? "—"}</Text>
+                <Text as="p" tone="subdued">
+                  Shop: {data.shop}
+                </Text>
+                <Text as="p" tone="subdued">
+                  Token expiry: {data.expiresAt ?? "—"}
+                </Text>
+                <Text as="p" tone="subdued">
+                  Selected ad account: {data.adCustomerId ?? "—"}
+                </Text>
               </BlockStack>
 
               <Divider />
 
-              {/* Step 2/3: Pick account + Sync spend */}
               <BlockStack gap="200">
                 <Text variant="headingMd" as="h2">
                   Step 2: Load & pick ad account (customer)
                 </Text>
 
                 <Text as="p" tone="subdued">
-                  Step 1 is connecting Google (OAuth). After that, you load accounts and choose which one to sync.
-                  Syncing spend is step 3.
+                  Step 1 is connecting Google (OAuth). After that, you load accounts and
+                  choose which one to sync. Syncing spend is step 3.
                 </Text>
 
                 {!data.connected ? (
-                  <Banner tone="warning" title="Step 1 required: connect Google first">
-                    <Text as="p">You must connect Google OAuth before loading ad accounts.</Text>
+                  <Banner tone="warning" title="Connect Google first">
+                    <Text as="p">
+                      You must connect Google OAuth before loading ad accounts.
+                    </Text>
                   </Banner>
                 ) : !data.developerTokenConfigured ? (
                   <Banner tone="critical" title="Developer token missing">
                     <Text as="p">
-                      You need a Google Ads Developer Token set on the server (Fly secret) before spend sync can work.
+                      You need a Google Ads Developer Token set on the server (Fly secret)
+                      before spend sync can work.
                     </Text>
                   </Banner>
                 ) : null}
 
-                {/* Debug banner (helps you verify request URL + state) */}
+                {/* Debug block (kept, but now reflects local state) */}
                 <Banner tone="info" title="Debug (Load ad accounts)">
                   <BlockStack gap="100">
-                    <Text as="p">Fetcher state: {customersFetcher.state}</Text>
-                    <Text as="p">URL (expected): {customersUrl}</Text>
+                    <Text as="p">
+                      Loading: <b>{customersLoading ? "yes" : "no"}</b>
+                    </Text>
+                    <Text as="p">
+                      URL (expected):{" "}
+                      <b>
+                        /api/google/ads/customers?shop=
+                        {data.shop}
+                      </b>
+                    </Text>
                     <Text as="p" tone="subdued">
-                      If you click “Load ad accounts”, you should see an XHR/fetch request to the URL above.
-                      If it still hangs, we check the route file next.
+                      If you click “Load ad accounts”, you should see a request to that URL in
+                      Network. If you get an “Unexpected response (not JSON)”, it usually means
+                      the request got redirected to /auth/login.
                     </Text>
                   </BlockStack>
                 </Banner>
@@ -221,9 +278,9 @@ export default function GoogleIntegrationsPage() {
                 <InlineStack gap="200" blockAlign="end" wrap>
                   <Button
                     onClick={loadAdAccounts}
-                    disabled={!data.connected || !data.developerTokenConfigured || isLoadingCustomers}
+                    disabled={!data.connected || !data.developerTokenConfigured || customersLoading}
                   >
-                    {isLoadingCustomers ? "Loading ad accounts..." : "Load ad accounts"}
+                    {customersLoading ? "Loading ad accounts..." : "Load ad accounts"}
                   </Button>
 
                   <div style={{ minWidth: 420 }}>
@@ -252,9 +309,17 @@ export default function GoogleIntegrationsPage() {
                   </Button>
                 </InlineStack>
 
+                {customersError ? (
+                  <Banner tone="critical" title="Failed to load ad accounts">
+                    <Text as="p" tone="subdued" breakWord>
+                      {customersError}
+                    </Text>
+                  </Banner>
+                ) : null}
+
                 {saveOk ? (
                   <Banner tone="success" title="Saved">
-                    <Text as="p">Ad account saved. Next: Sync spend.</Text>
+                    <Text as="p">Ad account saved. You can now sync spend.</Text>
                   </Banner>
                 ) : null}
 
@@ -264,21 +329,15 @@ export default function GoogleIntegrationsPage() {
                   </Banner>
                 ) : null}
 
-                {customersError ? (
-                  <Banner tone="critical" title="Failed to load ad accounts">
-                    <Text as="p">{String(customersError)}</Text>
-                  </Banner>
-                ) : null}
-
-                {saveError ? (
+                {saveCustomerFetcher.data?.error ? (
                   <Banner tone="critical" title="Failed to save selection">
-                    <Text as="p">{String(saveError)}</Text>
+                    <Text as="p">{String(saveCustomerFetcher.data.error)}</Text>
                   </Banner>
                 ) : null}
 
-                {syncError ? (
+                {syncSpendFetcher.data?.error ? (
                   <Banner tone="critical" title="Failed to sync spend">
-                    <Text as="p">{String(syncError)}</Text>
+                    <Text as="p">{String(syncSpendFetcher.data.error)}</Text>
                   </Banner>
                 ) : null}
               </BlockStack>
@@ -295,9 +354,9 @@ export default function GoogleIntegrationsPage() {
                     developerTokenConfigured: data.developerTokenConfigured,
                     customersLoaded: customers.length,
                     selectedCustomerId,
-                    customersFetcher: customersFetcher.state,
-                    saveCustomerFetcher: saveCustomerFetcher.state,
-                    syncSpendFetcher: syncSpendFetcher.state,
+                    customersLoading,
+                    isSavingCustomer,
+                    isSyncingSpend,
                   },
                   null,
                   2
