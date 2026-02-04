@@ -22,9 +22,6 @@ export async function loader({ request }) {
   if (result instanceof Response) return result;
 
   const url = new URL(request.url);
-
-  // These are present on embedded app routes:
-  // /app/integrations/meta?embedded=1&host=...&shop=...
   const host = url.searchParams.get("host") || "";
   const embedded = url.searchParams.get("embedded") || "1";
 
@@ -50,14 +47,12 @@ export async function loader({ request }) {
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
 
-  // IMPORTANT:
-  // In Shopify Admin, the browser origin is admin.shopify.com.
-  // If we use absolute paths like "/api/...", requests go to Shopify (and 404).
-  // Build URLs under the embedded app base:
-  //   /store/<store>/apps/<app-handle>
-  const appBase =
-    typeof window !== "undefined" ? window.location.pathname.split("/app/")[0] || "" : "";
-  const withAppBase = (path) => `${appBase}${path.startsWith("/") ? path : `/${path}`}`;
+  // ✅ MINIMAL FIX:
+  // Always build API URLs against the current app origin (Fly),
+  // so we never accidentally hit https://admin.shopify.com/api/...
+  const apiUrl = React.useCallback((path) => {
+    return new URL(path, window.location.origin).toString();
+  }, []);
 
   const accountsFetcher = useFetcher();
   const saveFetcher = useFetcher();
@@ -78,16 +73,12 @@ export default function MetaIntegrationsPage() {
   function startMetaOAuthTopLevel() {
     const returnTo = "/app/integrations/meta";
 
-    // ✅ CRITICAL FIX:
-    // Pass host + embedded through to /api/meta/oauth/start
-    // so the state includes them and callback can redirect correctly.
     const startUrl =
-      withAppBase(`/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}`) +
+      apiUrl(`/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}`) +
       `&host=${encodeURIComponent(data.host || "")}` +
       `&embedded=${encodeURIComponent(data.embedded || "1")}` +
       `&returnTo=${encodeURIComponent(returnTo)}`;
 
-    // MUST be top-level nav for OAuth
     try {
       window.top.location.href = startUrl;
     } catch {
@@ -151,18 +142,10 @@ export default function MetaIntegrationsPage() {
               </InlineStack>
 
               <BlockStack gap="100">
-                <Text as="p" tone="subdued">
-                  Shop: {data.shop}
-                </Text>
-                <Text as="p" tone="subdued">
-                  Host: {data.host ? data.host : "—"}
-                </Text>
-                <Text as="p" tone="subdued">
-                  Embedded: {data.embedded ? data.embedded : "—"}
-                </Text>
-                <Text as="p" tone="subdued">
-                  Token expiry: {data.expiresAt ? data.expiresAt : "—"}
-                </Text>
+                <Text as="p" tone="subdued">Shop: {data.shop}</Text>
+                <Text as="p" tone="subdued">Host: {data.host ? data.host : "—"}</Text>
+                <Text as="p" tone="subdued">Embedded: {data.embedded ? data.embedded : "—"}</Text>
+                <Text as="p" tone="subdued">Token expiry: {data.expiresAt ? data.expiresAt : "—"}</Text>
                 <Text as="p" tone="subdued">
                   Selected ad account: {data.adAccountId ? data.adAccountId : "—"}
                 </Text>
@@ -181,16 +164,15 @@ export default function MetaIntegrationsPage() {
                 <BlockStack gap="300">
                   <InlineStack gap="200" blockAlign="center">
                     <Button
-                      onClick={() => accountsFetcher.load(withAppBase("/api/meta/adaccounts"))}
+                      // ✅ MINIMAL FIX: force Fly origin
+                      onClick={() => accountsFetcher.load(apiUrl("/api/meta/adaccounts"))}
                       loading={accountsFetcher.state !== "idle"}
                     >
                       Fetch ad accounts
                     </Button>
 
                     {accountsFetcher.data?.ok === false ? (
-                      <Text as="p" tone="critical">
-                        {accountsFetcher.data.error}
-                      </Text>
+                      <Text as="p" tone="critical">{accountsFetcher.data.error}</Text>
                     ) : null}
                   </InlineStack>
 
@@ -202,7 +184,8 @@ export default function MetaIntegrationsPage() {
                     helpText="Attribix needs an ad account (act_...) to pull campaign insights."
                   />
 
-                  <saveFetcher.Form method="post" action={withAppBase("/api/meta/adaccount/select")}>
+                  {/* ✅ MINIMAL FIX: force Fly origin for POST */}
+                  <saveFetcher.Form method="post" action={apiUrl("/api/meta/adaccount/select")}>
                     <input type="hidden" name="adAccountId" value={selected} />
                     <InlineStack gap="200" blockAlign="center">
                       <Button
@@ -215,15 +198,11 @@ export default function MetaIntegrationsPage() {
                       </Button>
 
                       {saveFetcher.data?.ok ? (
-                        <Text as="p" tone="success">
-                          Saved: {saveFetcher.data.adAccountId}
-                        </Text>
+                        <Text as="p" tone="success">Saved: {saveFetcher.data.adAccountId}</Text>
                       ) : null}
 
                       {saveFetcher.data?.ok === false ? (
-                        <Text as="p" tone="critical">
-                          {saveFetcher.data.error}
-                        </Text>
+                        <Text as="p" tone="critical">{saveFetcher.data.error}</Text>
                       ) : null}
                     </InlineStack>
                   </saveFetcher.Form>

@@ -23,17 +23,11 @@ export async function loader({ request }) {
 
   const shop = result.session.shop;
 
-  const conn = await db.googleConnection
-    .findUnique({ where: { shop } })
-    .catch(() => null);
+  const conn = await db.googleConnection.findUnique({ where: { shop } }).catch(() => null);
 
   const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
   const expiresAt = conn?.expiresAt ? new Date(conn.expiresAt).toISOString() : null;
-
-  // Saved ad account (customer) selection (optional)
   const adCustomerId = conn?.adCustomerId ?? null;
-
-  // Don't leak token value — only indicate presence
   const developerTokenConfigured = !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
 
   return json({
@@ -49,14 +43,11 @@ export async function loader({ request }) {
 export default function GoogleIntegrationsPage() {
   const data = useLoaderData();
 
-  // IMPORTANT:
-  // In Shopify Admin, the browser origin is admin.shopify.com.
-  // If we use absolute paths like "/api/...", requests go to Shopify (and 404).
-  // Build URLs under the embedded app base:
-  //   /store/<store>/apps/<app-handle>
-  const appBase =
-    typeof window !== "undefined" ? window.location.pathname.split("/app/")[0] || "" : "";
-  const withAppBase = (path) => `${appBase}${path.startsWith("/") ? path : `/${path}`}`;
+  // ✅ MINIMAL FIX:
+  // Always hit Fly origin, never admin.shopify.com
+  const apiUrl = React.useCallback((path) => {
+    return new URL(path, window.location.origin).toString();
+  }, []);
 
   const customersFetcher = useFetcher();
   const saveCustomerFetcher = useFetcher();
@@ -64,7 +55,6 @@ export default function GoogleIntegrationsPage() {
 
   const [selectedCustomerId, setSelectedCustomerId] = useState(data.adCustomerId ?? "");
 
-  // Keep selection in sync if loader returns a different saved value
   useEffect(() => {
     const saved = data.adCustomerId ?? "";
     if (saved !== selectedCustomerId) setSelectedCustomerId(saved);
@@ -73,22 +63,18 @@ export default function GoogleIntegrationsPage() {
 
   function startGoogleOAuthTopLevel() {
     const returnTo = "/app/integrations/google";
-
-    const startUrl = withAppBase(
+    const startUrl = apiUrl(
       `/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(
         returnTo
       )}`
     );
 
-    // ✅ MUST be top-level navigation (escape iframe)
     const topWindow = window.top ?? window;
     topWindow.location.href = startUrl;
   }
 
-  // IMPORTANT: only trust customers if ok === true
   const customers = customersFetcher.data?.ok ? customersFetcher.data.customers ?? [] : [];
-  const customersError =
-    customersFetcher.data?.ok === false ? customersFetcher.data?.error : null;
+  const customersError = customersFetcher.data?.ok === false ? customersFetcher.data?.error : null;
 
   const customerOptions = useMemo(() => {
     const opts = customers.map((c) => ({
@@ -98,9 +84,9 @@ export default function GoogleIntegrationsPage() {
     return [{ label: "Select an ad account…", value: "" }, ...opts];
   }, [customers]);
 
-  // Make URL explicit for debugging
+  // ✅ MINIMAL FIX: customersUrl is absolute to Fly origin
   const customersUrl = useMemo(() => {
-    return withAppBase(`/api/google/ads/customers?shop=${encodeURIComponent(data.shop)}`);
+    return apiUrl(`/api/google/ads/customers?shop=${encodeURIComponent(data.shop)}`);
   }, [data.shop]);
 
   function loadAdAccounts() {
@@ -110,7 +96,6 @@ export default function GoogleIntegrationsPage() {
     console.log("[Google Ads] CLICK: Load ad accounts");
     console.log("[Google Ads] customersUrl =", customersUrl);
 
-    // fetcher.load makes a GET request to this URL
     customersFetcher.load(customersUrl);
   }
 
@@ -123,7 +108,8 @@ export default function GoogleIntegrationsPage() {
 
     saveCustomerFetcher.submit(form, {
       method: "post",
-      action: withAppBase("/api/google/ads/customer"),
+      // ✅ MINIMAL FIX: absolute Fly origin
+      action: apiUrl("/api/google/ads/customer"),
     });
   }
 
@@ -137,7 +123,8 @@ export default function GoogleIntegrationsPage() {
 
     syncSpendFetcher.submit(form, {
       method: "post",
-      action: withAppBase("/api/google/ads/sync-spend"),
+      // ✅ MINIMAL FIX: absolute Fly origin
+      action: apiUrl("/api/google/ads/sync-spend"),
     });
   }
 
@@ -172,11 +159,7 @@ export default function GoogleIntegrationsPage() {
                   {data.connected ? "Reconnect Google (top-level)" : "Connect Google (top-level)"}
                 </Button>
 
-                {data.connected ? (
-                  <Badge tone="success">Connected</Badge>
-                ) : (
-                  <Badge tone="warning">Not connected</Badge>
-                )}
+                {data.connected ? <Badge tone="success">Connected</Badge> : <Badge tone="warning">Not connected</Badge>}
 
                 {data.developerTokenConfigured ? (
                   <Badge tone="success">Developer token: OK</Badge>
@@ -194,36 +177,12 @@ export default function GoogleIntegrationsPage() {
               <Divider />
 
               <BlockStack gap="200">
-                <Text variant="headingMd" as="h2">
-                  Step 2: Load & pick ad account (customer)
-                </Text>
+                <Text variant="headingMd" as="h2">Step 2: Load & pick ad account (customer)</Text>
 
-                <Text as="p" tone="subdued">
-                  Step 1 is connecting Google (OAuth). After that, you load accounts and choose which one to sync.
-                  Syncing spend is step 3.
-                </Text>
-
-                {!data.connected ? (
-                  <Banner tone="warning" title="Step 1 required: connect Google first">
-                    <Text as="p">You must connect Google OAuth before loading ad accounts.</Text>
-                  </Banner>
-                ) : !data.developerTokenConfigured ? (
-                  <Banner tone="critical" title="Developer token missing">
-                    <Text as="p">
-                      You need a Google Ads Developer Token set on the server (Fly secret) before spend sync can work.
-                    </Text>
-                  </Banner>
-                ) : null}
-
-                {/* Debug banner */}
                 <Banner tone="info" title="Debug (Load ad accounts)">
                   <BlockStack gap="100">
                     <Text as="p">Fetcher state: {customersFetcher.state}</Text>
                     <Text as="p">URL (expected): {customersUrl}</Text>
-                    <Text as="p" tone="subdued">
-                      After clicking “Load ad accounts”, you MUST see a request to the URL above in Network (Fetch/XHR).
-                      If you see nothing, the click handler didn’t run (check Console).
-                    </Text>
                   </BlockStack>
                 </Banner>
 
@@ -291,28 +250,6 @@ export default function GoogleIntegrationsPage() {
                   </Banner>
                 ) : null}
               </BlockStack>
-
-              <Divider />
-
-              <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify(
-                  {
-                    shop: data.shop,
-                    connected: data.connected,
-                    expiresAt: data.expiresAt,
-                    adCustomerId: data.adCustomerId,
-                    developerTokenConfigured: data.developerTokenConfigured,
-                    customersLoaded: customers.length,
-                    selectedCustomerId,
-                    customersFetcher: customersFetcher.state,
-                    saveCustomerFetcher: saveCustomerFetcher.state,
-                    syncSpendFetcher: syncSpendFetcher.state,
-                    customersFetcherData: customersFetcher.data ?? null,
-                  },
-                  null,
-                  2
-                )}
-              </pre>
             </BlockStack>
           </Card>
         </Layout.Section>
