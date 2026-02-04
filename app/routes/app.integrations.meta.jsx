@@ -50,6 +50,15 @@ export async function loader({ request }) {
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
 
+  // IMPORTANT:
+  // In Shopify Admin, the browser origin is admin.shopify.com.
+  // If we use absolute paths like "/api/...", requests go to Shopify (and 404).
+  // Build URLs under the embedded app base:
+  //   /store/<store>/apps/<app-handle>
+  const appBase =
+    typeof window !== "undefined" ? window.location.pathname.split("/app/")[0] || "" : "";
+  const withAppBase = (path) => `${appBase}${path.startsWith("/") ? path : `/${path}`}`;
+
   const accountsFetcher = useFetcher();
   const saveFetcher = useFetcher();
 
@@ -73,7 +82,7 @@ export default function MetaIntegrationsPage() {
     // Pass host + embedded through to /api/meta/oauth/start
     // so the state includes them and callback can redirect correctly.
     const startUrl =
-      `/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}` +
+      withAppBase(`/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}`) +
       `&host=${encodeURIComponent(data.host || "")}` +
       `&embedded=${encodeURIComponent(data.embedded || "1")}` +
       `&returnTo=${encodeURIComponent(returnTo)}`;
@@ -172,7 +181,7 @@ export default function MetaIntegrationsPage() {
                 <BlockStack gap="300">
                   <InlineStack gap="200" blockAlign="center">
                     <Button
-                      onClick={() => accountsFetcher.load("/api/meta/adaccounts")}
+                      onClick={() => accountsFetcher.load(withAppBase("/api/meta/adaccounts"))}
                       loading={accountsFetcher.state !== "idle"}
                     >
                       Fetch ad accounts
@@ -193,7 +202,7 @@ export default function MetaIntegrationsPage() {
                     helpText="Attribix needs an ad account (act_...) to pull campaign insights."
                   />
 
-                  <saveFetcher.Form method="post" action="/api/meta/adaccount/select">
+                  <saveFetcher.Form method="post" action={withAppBase("/api/meta/adaccount/select")}>
                     <input type="hidden" name="adAccountId" value={selected} />
                     <InlineStack gap="200" blockAlign="center">
                       <Button
