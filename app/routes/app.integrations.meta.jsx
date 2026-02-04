@@ -1,4 +1,3 @@
-// app/routes/app.integrations.meta.jsx
 import React from "react";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
@@ -25,6 +24,9 @@ export async function loader({ request }) {
   const host = url.searchParams.get("host") || "";
   const embedded = url.searchParams.get("embedded") || "1";
 
+  // ✅ IMPORTANT: this is your Fly origin when the app is served from Fly
+  const appOrigin = url.origin;
+
   const shop = result.session.shop;
 
   const conn = await db.metaConnection.findUnique({ where: { shop } }).catch(() => null);
@@ -41,18 +43,20 @@ export async function loader({ request }) {
     shop,
     host,
     embedded,
+    appOrigin, // ✅ added
   });
 }
 
 export default function MetaIntegrationsPage() {
   const data = useLoaderData();
 
-  // ✅ MINIMAL FIX:
-  // Always build API URLs against the current app origin (Fly),
-  // so we never accidentally hit https://admin.shopify.com/api/...
-  const apiUrl = React.useCallback((path) => {
-    return new URL(path, window.location.origin).toString();
-  }, []);
+  // ✅ Minimal + SSR-safe:
+  // Always build absolute URLs using the server-provided appOrigin (Fly),
+  // never window.* (avoids “Application error” SSR crashes).
+  const apiUrl = React.useCallback(
+    (path) => new URL(path, data.appOrigin).toString(),
+    [data.appOrigin]
+  );
 
   const accountsFetcher = useFetcher();
   const saveFetcher = useFetcher();
@@ -117,6 +121,7 @@ export default function MetaIntegrationsPage() {
                     embedded: data.embedded,
                     connected: data.connected,
                     expiresAt: data.expiresAt,
+                    appOrigin: data.appOrigin,
                   },
                   null,
                   2
@@ -151,29 +156,15 @@ export default function MetaIntegrationsPage() {
                 </Text>
               </BlockStack>
 
-              {!connected ? (
-                <Banner tone="warning" title="Meta not connected">
-                  <Text as="p">
-                    Click “Connect Meta (top-level)”, complete the OAuth flow, then come back here
-                    to select an ad account.
-                  </Text>
-                </Banner>
-              ) : null}
-
               {connected ? (
                 <BlockStack gap="300">
                   <InlineStack gap="200" blockAlign="center">
                     <Button
-                      // ✅ MINIMAL FIX: force Fly origin
                       onClick={() => accountsFetcher.load(apiUrl("/api/meta/adaccounts"))}
                       loading={accountsFetcher.state !== "idle"}
                     >
                       Fetch ad accounts
                     </Button>
-
-                    {accountsFetcher.data?.ok === false ? (
-                      <Text as="p" tone="critical">{accountsFetcher.data.error}</Text>
-                    ) : null}
                   </InlineStack>
 
                   <Select
@@ -184,7 +175,6 @@ export default function MetaIntegrationsPage() {
                     helpText="Attribix needs an ad account (act_...) to pull campaign insights."
                   />
 
-                  {/* ✅ MINIMAL FIX: force Fly origin for POST */}
                   <saveFetcher.Form method="post" action={apiUrl("/api/meta/adaccount/select")}>
                     <input type="hidden" name="adAccountId" value={selected} />
                     <InlineStack gap="200" blockAlign="center">
@@ -196,18 +186,17 @@ export default function MetaIntegrationsPage() {
                       >
                         Save ad account
                       </Button>
-
-                      {saveFetcher.data?.ok ? (
-                        <Text as="p" tone="success">Saved: {saveFetcher.data.adAccountId}</Text>
-                      ) : null}
-
-                      {saveFetcher.data?.ok === false ? (
-                        <Text as="p" tone="critical">{saveFetcher.data.error}</Text>
-                      ) : null}
                     </InlineStack>
                   </saveFetcher.Form>
                 </BlockStack>
-              ) : null}
+              ) : (
+                <Banner tone="warning" title="Meta not connected">
+                  <Text as="p">
+                    Click “Connect Meta (top-level)”, complete the OAuth flow, then come back here
+                    to select an ad account.
+                  </Text>
+                </Banner>
+              )}
             </BlockStack>
           </Card>
         </Layout.Section>

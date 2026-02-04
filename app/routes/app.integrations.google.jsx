@@ -21,6 +21,9 @@ export async function loader({ request }) {
   const result = await authenticate.admin(request);
   if (result instanceof Response) return result;
 
+  const url = new URL(request.url);
+  const appOrigin = url.origin; // ✅ added
+
   const shop = result.session.shop;
 
   const conn = await db.googleConnection.findUnique({ where: { shop } }).catch(() => null);
@@ -37,17 +40,18 @@ export async function loader({ request }) {
     shop,
     adCustomerId,
     developerTokenConfigured,
+    appOrigin, // ✅ added
   });
 }
 
 export default function GoogleIntegrationsPage() {
   const data = useLoaderData();
 
-  // ✅ MINIMAL FIX:
-  // Always hit Fly origin, never admin.shopify.com
-  const apiUrl = React.useCallback((path) => {
-    return new URL(path, window.location.origin).toString();
-  }, []);
+  // ✅ SSR-safe absolute URL builder (no window usage)
+  const apiUrl = React.useCallback(
+    (path) => new URL(path, data.appOrigin).toString(),
+    [data.appOrigin]
+  );
 
   const customersFetcher = useFetcher();
   const saveCustomerFetcher = useFetcher();
@@ -84,17 +88,14 @@ export default function GoogleIntegrationsPage() {
     return [{ label: "Select an ad account…", value: "" }, ...opts];
   }, [customers]);
 
-  // ✅ MINIMAL FIX: customersUrl is absolute to Fly origin
+  // ✅ IMPORTANT: this used to cause “Application error” when it referenced window in SSR
   const customersUrl = useMemo(() => {
     return apiUrl(`/api/google/ads/customers?shop=${encodeURIComponent(data.shop)}`);
-  }, [data.shop]);
+  }, [data.shop, apiUrl]);
 
   function loadAdAccounts() {
     if (!data.connected) return;
     if (!data.developerTokenConfigured) return;
-
-    console.log("[Google Ads] CLICK: Load ad accounts");
-    console.log("[Google Ads] customersUrl =", customersUrl);
 
     customersFetcher.load(customersUrl);
   }
@@ -108,7 +109,6 @@ export default function GoogleIntegrationsPage() {
 
     saveCustomerFetcher.submit(form, {
       method: "post",
-      // ✅ MINIMAL FIX: absolute Fly origin
       action: apiUrl("/api/google/ads/customer"),
     });
   }
@@ -123,7 +123,6 @@ export default function GoogleIntegrationsPage() {
 
     syncSpendFetcher.submit(form, {
       method: "post",
-      // ✅ MINIMAL FIX: absolute Fly origin
       action: apiUrl("/api/google/ads/sync-spend"),
     });
   }
@@ -131,12 +130,6 @@ export default function GoogleIntegrationsPage() {
   const isLoadingCustomers = customersFetcher.state !== "idle";
   const isSavingCustomer = saveCustomerFetcher.state !== "idle";
   const isSyncingSpend = syncSpendFetcher.state !== "idle";
-
-  const saveOk = saveCustomerFetcher.data?.ok;
-  const syncOk = syncSpendFetcher.data?.ok;
-
-  const saveError = saveCustomerFetcher.data?.error;
-  const syncError = syncSpendFetcher.data?.error;
 
   return (
     <Page title="Google Ads">
@@ -149,10 +142,6 @@ export default function GoogleIntegrationsPage() {
                   This button forces a top-level redirect (outside Shopify iframe), which is required for Google OAuth.
                 </Text>
               </Banner>
-
-              <Text as="p">
-                Connect your Google account to pull Google Ads campaigns, spend and performance data into Attribix.
-              </Text>
 
               <InlineStack gap="200" blockAlign="center">
                 <Button variant="primary" onClick={startGoogleOAuthTopLevel}>
@@ -168,88 +157,60 @@ export default function GoogleIntegrationsPage() {
                 )}
               </InlineStack>
 
-              <BlockStack gap="100">
-                <Text as="p" tone="subdued">Shop: {data.shop}</Text>
-                <Text as="p" tone="subdued">Token expiry: {data.expiresAt ?? "—"}</Text>
-                <Text as="p" tone="subdued">Selected ad account: {data.adCustomerId ?? "—"}</Text>
-              </BlockStack>
-
               <Divider />
 
-              <BlockStack gap="200">
-                <Text variant="headingMd" as="h2">Step 2: Load & pick ad account (customer)</Text>
+              <InlineStack gap="200" blockAlign="end" wrap>
+                <Button
+                  onClick={loadAdAccounts}
+                  disabled={!data.connected || !data.developerTokenConfigured || isLoadingCustomers}
+                >
+                  {isLoadingCustomers ? "Loading ad accounts..." : "Load ad accounts"}
+                </Button>
 
-                <Banner tone="info" title="Debug (Load ad accounts)">
-                  <BlockStack gap="100">
-                    <Text as="p">Fetcher state: {customersFetcher.state}</Text>
-                    <Text as="p">URL (expected): {customersUrl}</Text>
-                  </BlockStack>
+                <div style={{ minWidth: 420 }}>
+                  <Select
+                    label="Ad account (customer)"
+                    options={customerOptions}
+                    value={selectedCustomerId}
+                    onChange={setSelectedCustomerId}
+                    disabled={!data.connected || !data.developerTokenConfigured || customers.length === 0}
+                  />
+                </div>
+
+                <Button
+                  variant="primary"
+                  onClick={saveSelectedAccount}
+                  disabled={!selectedCustomerId || isSavingCustomer}
+                >
+                  {isSavingCustomer ? "Saving..." : "Save selection"}
+                </Button>
+
+                <Button
+                  onClick={syncSpendLast30Days}
+                  disabled={!selectedCustomerId || isSyncingSpend}
+                >
+                  {isSyncingSpend ? "Syncing..." : "Sync spend (last 30 days)"}
+                </Button>
+              </InlineStack>
+
+              {customersError ? (
+                <Banner tone="critical" title="Failed to load ad accounts">
+                  <Text as="p">{String(customersError)}</Text>
                 </Banner>
+              ) : null}
 
-                <InlineStack gap="200" blockAlign="end" wrap>
-                  <Button
-                    onClick={loadAdAccounts}
-                    disabled={!data.connected || !data.developerTokenConfigured || isLoadingCustomers}
-                  >
-                    {isLoadingCustomers ? "Loading ad accounts..." : "Load ad accounts"}
-                  </Button>
-
-                  <div style={{ minWidth: 420 }}>
-                    <Select
-                      label="Ad account (customer)"
-                      options={customerOptions}
-                      value={selectedCustomerId}
-                      onChange={setSelectedCustomerId}
-                      disabled={!data.connected || !data.developerTokenConfigured || customers.length === 0}
-                    />
-                  </div>
-
-                  <Button
-                    variant="primary"
-                    onClick={saveSelectedAccount}
-                    disabled={!selectedCustomerId || isSavingCustomer}
-                  >
-                    {isSavingCustomer ? "Saving..." : "Save selection"}
-                  </Button>
-
-                  <Button
-                    onClick={syncSpendLast30Days}
-                    disabled={!selectedCustomerId || isSyncingSpend}
-                  >
-                    {isSyncingSpend ? "Syncing..." : "Sync spend (last 30 days)"}
-                  </Button>
-                </InlineStack>
-
-                {customersError ? (
-                  <Banner tone="critical" title="Failed to load ad accounts">
-                    <Text as="p">{String(customersError)}</Text>
-                  </Banner>
-                ) : null}
-
-                {saveOk ? (
-                  <Banner tone="success" title="Saved">
-                    <Text as="p">Ad account saved. Next: Sync spend.</Text>
-                  </Banner>
-                ) : null}
-
-                {syncOk ? (
-                  <Banner tone="success" title="Sync started">
-                    <Text as="p">Spend sync triggered successfully.</Text>
-                  </Banner>
-                ) : null}
-
-                {saveError ? (
-                  <Banner tone="critical" title="Failed to save selection">
-                    <Text as="p">{String(saveError)}</Text>
-                  </Banner>
-                ) : null}
-
-                {syncError ? (
-                  <Banner tone="critical" title="Failed to sync spend">
-                    <Text as="p">{String(syncError)}</Text>
-                  </Banner>
-                ) : null}
-              </BlockStack>
+              <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
+                {JSON.stringify(
+                  {
+                    appOrigin: data.appOrigin,
+                    customersUrl,
+                    customersFetcher: customersFetcher.state,
+                    customersLoaded: customers.length,
+                  },
+                  null,
+                  2
+                )}
+              </pre>
             </BlockStack>
           </Card>
         </Layout.Section>
