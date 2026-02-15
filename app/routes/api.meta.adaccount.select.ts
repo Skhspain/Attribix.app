@@ -8,7 +8,8 @@ export async function action({ request }: ActionFunctionArgs) {
   const result = await authenticate.admin(request);
   if (result instanceof Response) return result;
 
-  const shop = result.session.shop;
+  const { session } = result;
+  const shop = session.shop;
 
   const form = await request.formData();
   const adAccountId = String(form.get("adAccountId") || "").trim();
@@ -17,15 +18,14 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, error: "Missing adAccountId" }, { status: 400 });
   }
 
-  // Ensure Meta is connected first
-  const conn = await db.metaConnection.findUnique({ where: { shop } });
-  if (!conn || !conn.accessToken || conn.accessToken === "__PENDING__") {
-    return json({ ok: false, error: "Meta not connected" }, { status: 400 });
-  }
-
-  await db.metaConnection.update({
+  await db.metaConnection.upsert({
     where: { shop },
-    data: { adAccountId },
+    update: { adAccountId },
+    create: {
+      shop,
+      adAccountId,
+      accessToken: "__PENDING__", // required by Prisma if record doesn't exist yet
+    },
   });
 
   return json({ ok: true, adAccountId });

@@ -1,65 +1,79 @@
 // app/routes/api.meta.oauth.start.ts
-import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
+import db from "~/db.server";
 
-function base64UrlEncode(obj: any) {
-  return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+function mustEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
 
-  // These come from the embedded Shopify URL when you're inside Admin
-  let shop = url.searchParams.get("shop") || "";
-  let host = url.searchParams.get("host") || "";
-  let embedded = url.searchParams.get("embedded") || "1";
+  const shopFromQuery = url.searchParams.get("shop") || "";
+  const host = url.searchParams.get("host") || "";
+  const embedded = url.searchParams.get("embedded") || "1";
+  const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
 
-  // If we are in embedded context, authenticate.admin will work and we can fill missing shop.
-  // IMPORTANT: Do NOT let this redirect us to /auth/login.
+  // Try to get shop from session (preferred), but don't fail hard.
+  let shop = shopFromQuery;
+
   try {
-    const { session } = await authenticate.admin(request);
-    if (!shop) shop = session.shop;
-  } catch (err) {
-    // ignore — we still continue if we have shop in query params
-    console.log("[meta.oauth.start] authenticate.admin failed (continuing)");
+    const result = await authenticate.admin(request);
+    if (!(result instanceof Response)) {
+      shop = result.session.shop;
+    }
+  } catch {
+    // ok: we can proceed with ?shop=...
   }
 
   if (!shop) {
-    return new Response("Missing shop", { status: 400 });
+    return redirect(
+      `${returnTo}?metaError=${encodeURIComponent("Missing shop")}&host=${encodeURIComponent(
+        host
+      )}&embedded=${encodeURIComponent(embedded)}`
+    );
   }
 
-  const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
-
-  const appBaseUrl = process.env.SHOPIFY_APP_URL;
-  if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
-
-  const redirectUri = `${appBaseUrl.replace(/\/$/, "")}/api/meta/oauth/callback`;
-
-  const clientId = process.env.META_APP_ID;
-  if (!clientId) throw new Response("Missing META_APP_ID", { status: 500 });
-
-  // Put EVERYTHING we need to get back into Shopify embedded context in the state
-  const state = base64UrlEncode({
-    shop,
-    nonce: crypto.randomUUID(),
-    returnTo,
-    host,
-    embedded,
+  // Ensure record exists (Prisma requires accessToken on create)
+  await db.metaConnection.upsert({
+    where: { shop },
+    update: {},
+    create: {
+      shop,
+      accessToken: "__PENDING__",
+      // keep existing fields optional; don't set expiresAt unless you have it
+    },
   });
 
-  const scope = ["ads_read", "business_management"].join(",");
+  const META_APP_ID = mustEnv("META_APP_ID");
+  const META_REDIRECT_URI = mustEnv("META_REDIRECT_URI");
 
-  const metaAuthUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
-  metaAuthUrl.searchParams.set("client_id", clientId);
-  metaAuthUrl.searchParams.set("redirect_uri", redirectUri);
-  metaAuthUrl.searchParams.set("state", state);
-  metaAuthUrl.searchParams.set("response_type", "code");
-  metaAuthUrl.searchParams.set("scope", scope);
+  const state = JSON.stringify({
+    shop,
+    host,
+    embedded,
+    returnTo,
+  });
 
-  console.log("[meta.oauth.start] shop=", shop);
-  console.log("[meta.oauth.start] host=", host);
-  console.log("[meta.oauth.start] embedded=", embedded);
-  console.log("[meta.oauth.start] redirectUri=", redirectUri);
+  const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
+  authUrl.searchParams.set("client_id", META_APP_ID);
+  authUrl.searchParams.set("redirect_uri", META_REDIRECT_URI);
+  authUrl.searchParams.set("state", state);
 
-  return redirect(metaAuthUrl.toString());
+  // Adjust scopes to what you actually use
+  authUrl.searchParams.set(
+    "scope",
+    [
+      "ads_read",
+      "ads_management",
+      "business_management",
+      // add/remove as needed
+    ].join(",")
+  );
+
+  return redirect(authUrl.toString());
 }
