@@ -17,17 +17,26 @@ import {
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 
+function isResponseLike(x) {
+  return (
+    x &&
+    typeof x === "object" &&
+    typeof x.status === "number" &&
+    x.headers &&
+    typeof x.headers.get === "function"
+  );
+}
+
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
 
-  // ✅ Embedded refresh fix:
-  // If Shopify returns a redirect to /auth..., do NOT pass that through to the browser,
-  // because it loads /auth/login inside the iframe and you get the "problem loading page" refresh.
-  // Instead, tell Shopify to reauthorize via headers.
-  if (result instanceof Response) {
-    const location = result.headers.get("Location") || result.headers.get("location");
+  // ✅ Embedded refresh fix (robust):
+  // If Shopify auth returns a redirect to /auth..., do NOT return the 302 to the browser/iframe.
+  // Return 401 + reauthorize headers so Shopify App Bridge can do the correct top-level reauth.
+  if (isResponseLike(result)) {
+    const location = result.headers.get("Location") || result.headers.get("location") || "";
 
-    if (location?.startsWith("/auth")) {
+    if (location.startsWith("/auth")) {
       return new Response(null, {
         status: 401,
         headers: {
@@ -182,8 +191,6 @@ export default function MetaIntegrationsPage() {
 
       const form = new FormData();
       form.set("adAccountId", selected);
-
-      // âœ… IMPORTANT: include shop explicitly so the server can always persist correctly
       form.set("shop", data.shop);
 
       const res = await authedFetch("/api/meta/adaccount/select", {

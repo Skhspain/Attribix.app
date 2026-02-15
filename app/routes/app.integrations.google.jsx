@@ -20,14 +20,24 @@ import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 
+function isResponseLike(x) {
+  return (
+    x &&
+    typeof x === "object" &&
+    typeof x.status === "number" &&
+    x.headers &&
+    typeof x.headers.get === "function"
+  );
+}
+
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
 
-  // ✅ Embedded refresh fix (same logic as Meta):
-  if (result instanceof Response) {
-    const location = result.headers.get("Location") || result.headers.get("location");
+  // ✅ Embedded refresh fix (robust)
+  if (isResponseLike(result)) {
+    const location = result.headers.get("Location") || result.headers.get("location") || "";
 
-    if (location?.startsWith("/auth")) {
+    if (location.startsWith("/auth")) {
       return new Response(null, {
         status: 401,
         headers: {
@@ -62,14 +72,8 @@ export async function loader({ request }) {
   });
 }
 
-/**
- * IMPORTANT:
- * This inner component is only rendered on the client AFTER mount.
- * That means App Bridge hooks are safe to use here.
- */
 function GoogleIntegrationsInner({ data }) {
   const authFetch = useAuthenticatedFetch();
-
   const apiUrl = useCallback((path) => new URL(path, data.appOrigin).toString(), [data.appOrigin]);
 
   const [customers, setCustomers] = useState([]);
@@ -93,7 +97,6 @@ function GoogleIntegrationsInner({ data }) {
 
   function startGoogleOAuthTopLevel() {
     const returnTo = "/app/integrations/google";
-
     const startUrl = apiUrl(
       `/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(
         returnTo
@@ -114,7 +117,6 @@ function GoogleIntegrationsInner({ data }) {
       setCustomersError(null);
       setCustomersLoading(true);
 
-      // IMPORTANT: relative URL (stays inside embedded app origin)
       const url = `/api/google/ads/customers?shop=${encodeURIComponent(data.shop)}`;
       const res = await authFetch(url, { method: "GET" });
 
@@ -240,7 +242,11 @@ function GoogleIntegrationsInner({ data }) {
                   {data.connected ? "Reconnect Google (top-level)" : "Connect Google (top-level)"}
                 </Button>
 
-                {data.connected ? <Badge tone="success">Connected</Badge> : <Badge tone="warning">Not connected</Badge>}
+                {data.connected ? (
+                  <Badge tone="success">Connected</Badge>
+                ) : (
+                  <Badge tone="warning">Not connected</Badge>
+                )}
 
                 {data.developerTokenConfigured ? (
                   <Badge tone="success">Developer token: OK</Badge>
@@ -250,15 +256,9 @@ function GoogleIntegrationsInner({ data }) {
               </InlineStack>
 
               <BlockStack gap="100">
-                <Text as="p" tone="subdued">
-                  Shop: {data.shop}
-                </Text>
-                <Text as="p" tone="subdued">
-                  Token expiry: {data.expiresAt ?? "â€”"}
-                </Text>
-                <Text as="p" tone="subdued">
-                  Selected ad account: {data.adCustomerId || "â€”"}
-                </Text>
+                <Text as="p" tone="subdued">Shop: {data.shop}</Text>
+                <Text as="p" tone="subdued">Token expiry: {data.expiresAt ?? "â€”"}</Text>
+                <Text as="p" tone="subdued">Selected ad account: {data.adCustomerId || "â€”"}</Text>
               </BlockStack>
 
               <Divider />
@@ -345,14 +345,7 @@ function GoogleIntegrationsInner({ data }) {
               <Divider />
 
               <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify(
-                  {
-                    appOrigin: data.appOrigin,
-                    customersLoaded: customers.length,
-                  },
-                  null,
-                  2
-                )}
+                {JSON.stringify({ appOrigin: data.appOrigin, customersLoaded: customers.length }, null, 2)}
               </pre>
             </BlockStack>
           </Card>
@@ -365,7 +358,6 @@ function GoogleIntegrationsInner({ data }) {
 export default function GoogleIntegrationsPage() {
   const data = useLoaderData();
 
-  // SSR-safe mount gate: render zero App Bridge hooks on the server
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
