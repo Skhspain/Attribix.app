@@ -5,33 +5,52 @@ import { RemixServer } from "@remix-run/react";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 
-// IMPORTANT: we don't assume named exports here (your shopify.server.ts does not export `shopify`)
 import * as shopifyServer from "./shopify.server";
 
 const ABORT_DELAY = 5000;
 
-function addShopifyDocumentHeaders(request, responseHeaders) {
-  // Shopify Remix templates usually expose this on `shopify`,
-  // but your project may export different shapes.
+function applyEmbeddedAppHeaders(request, responseHeaders) {
+  // 1) Try Shopify helper if it exists in your project
   const candidate =
     shopifyServer.shopify ||
     shopifyServer.default ||
     shopifyServer.authenticate ||
     shopifyServer;
 
-  const fn = candidate?.addDocumentResponseHeaders;
-
-  if (typeof fn === "function") {
+  const addDoc = candidate?.addDocumentResponseHeaders;
+  if (typeof addDoc === "function") {
     try {
-      fn(request, responseHeaders);
+      addDoc(request, responseHeaders);
     } catch (e) {
       console.warn("[entry.server] addDocumentResponseHeaders failed:", e);
     }
-  } else {
-    // Not fatal — but embedded apps may break on refresh without CSP/frame headers
-    console.warn(
-      "[entry.server] addDocumentResponseHeaders not found on shopify.server exports"
-    );
+  }
+
+  // 2) Remove X-Frame-Options (will break embedding if set to DENY/SAMEORIGIN)
+  try {
+    if (responseHeaders.has("X-Frame-Options")) {
+      responseHeaders.delete("X-Frame-Options");
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3) Ensure CSP allows Shopify admin to frame this app
+  // Shopify admin is always https://admin.shopify.com
+  // For embedded apps, also allow the shop domain.
+  const url = new URL(request.url);
+  const shop = url.searchParams.get("shop") || "";
+  const shopOrigin = shop ? `https://${shop}` : "https://*.myshopify.com";
+
+  const frameAncestors = `frame-ancestors https://admin.shopify.com ${shopOrigin} https://*.myshopify.com;`;
+
+  // If CSP already exists, ensure it includes frame-ancestors.
+  // If not, set a minimal CSP that at least sets frame-ancestors.
+  const existingCsp = responseHeaders.get("Content-Security-Policy");
+  if (!existingCsp) {
+    responseHeaders.set("Content-Security-Policy", frameAncestors);
+  } else if (!/frame-ancestors/i.test(existingCsp)) {
+    responseHeaders.set("Content-Security-Policy", `${existingCsp}; ${frameAncestors}`);
   }
 }
 
@@ -41,7 +60,7 @@ export default function handleRequest(
   responseHeaders,
   remixContext
 ) {
-  addShopifyDocumentHeaders(request, responseHeaders);
+  applyEmbeddedAppHeaders(request, responseHeaders);
 
   const ua = request.headers.get("user-agent") || "";
   if (isbot(ua)) {
@@ -72,7 +91,6 @@ function handleBotRequest(request, status, headers, remixContext) {
           headers.set("Content-Type", "text/html");
 
           const body = new PassThrough();
-
           resolve(
             new Response(body, {
               status: didError ? 500 : status,
@@ -107,7 +125,6 @@ function handleBrowserRequest(request, status, headers, remixContext) {
           headers.set("Content-Type", "text/html");
 
           const body = new PassThrough();
-
           resolve(
             new Response(body, {
               status: didError ? 500 : status,
