@@ -5,10 +5,35 @@ import { RemixServer } from "@remix-run/react";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 
-// IMPORTANT: this is what adds Shopify's CSP / embedded headers
-import { shopify } from "./shopify.server";
+// IMPORTANT: we don't assume named exports here (your shopify.server.ts does not export `shopify`)
+import * as shopifyServer from "./shopify.server";
 
 const ABORT_DELAY = 5000;
+
+function addShopifyDocumentHeaders(request, responseHeaders) {
+  // Shopify Remix templates usually expose this on `shopify`,
+  // but your project may export different shapes.
+  const candidate =
+    shopifyServer.shopify ||
+    shopifyServer.default ||
+    shopifyServer.authenticate ||
+    shopifyServer;
+
+  const fn = candidate?.addDocumentResponseHeaders;
+
+  if (typeof fn === "function") {
+    try {
+      fn(request, responseHeaders);
+    } catch (e) {
+      console.warn("[entry.server] addDocumentResponseHeaders failed:", e);
+    }
+  } else {
+    // Not fatal — but embedded apps may break on refresh without CSP/frame headers
+    console.warn(
+      "[entry.server] addDocumentResponseHeaders not found on shopify.server exports"
+    );
+  }
+}
 
 export default function handleRequest(
   request,
@@ -16,13 +41,7 @@ export default function handleRequest(
   responseHeaders,
   remixContext
 ) {
-  // Add Shopify-required headers for embedded apps (CSP / frame-ancestors etc)
-  try {
-    shopify.addDocumentResponseHeaders(request, responseHeaders);
-  } catch (e) {
-    // Don't crash SSR if something unexpected happens
-    console.warn("[entry.server] addDocumentResponseHeaders failed:", e);
-  }
+  addShopifyDocumentHeaders(request, responseHeaders);
 
   const ua = request.headers.get("user-agent") || "";
   if (isbot(ua)) {
