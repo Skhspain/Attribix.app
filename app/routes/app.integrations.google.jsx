@@ -30,10 +30,26 @@ function isResponseLike(x) {
   );
 }
 
+function getAppOrigin(request) {
+  const url = new URL(request.url);
+
+  const proto =
+    request.headers.get("x-forwarded-proto") ||
+    request.headers.get("fly-forwarded-proto") ||
+    url.protocol.replace(":", "") ||
+    "https";
+
+  const host =
+    request.headers.get("x-forwarded-host") ||
+    request.headers.get("host") ||
+    url.host;
+
+  return `${proto}://${host}`;
+}
+
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
 
-  // ✅ Embedded refresh fix (robust)
   if (isResponseLike(result)) {
     const location = result.headers.get("Location") || result.headers.get("location") || "";
 
@@ -50,10 +66,8 @@ export async function loader({ request }) {
     return result;
   }
 
-  const url = new URL(request.url);
-  const appOrigin = url.origin;
-
   const shop = result.session.shop;
+  const appOrigin = getAppOrigin(request);
 
   const conn = await db.googleConnection.findUnique({ where: { shop } }).catch(() => null);
 

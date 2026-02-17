@@ -27,15 +27,32 @@ function isResponseLike(x) {
   );
 }
 
+function getAppOrigin(request) {
+  const url = new URL(request.url);
+
+  // Fly/Proxy correct origin (avoid "http://" inside Shopify Admin)
+  const proto =
+    request.headers.get("x-forwarded-proto") ||
+    request.headers.get("fly-forwarded-proto") ||
+    url.protocol.replace(":", "") ||
+    "https";
+
+  const host =
+    request.headers.get("x-forwarded-host") ||
+    request.headers.get("host") ||
+    url.host;
+
+  return `${proto}://${host}`;
+}
+
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
 
   // ✅ Embedded refresh fix (robust):
-  // If Shopify auth returns a redirect to /auth..., do NOT return the 302 to the browser/iframe.
-  // Return 401 + reauthorize headers so Shopify App Bridge can do the correct top-level reauth.
+  // If Shopify auth returns a redirect to /auth..., do NOT return the 302 to the iframe.
+  // Return 401 + reauthorize headers so App Bridge can do the correct top-level reauth.
   if (isResponseLike(result)) {
     const location = result.headers.get("Location") || result.headers.get("location") || "";
-
     if (location.startsWith("/auth")) {
       return new Response(null, {
         status: 401,
@@ -45,7 +62,6 @@ export async function loader({ request }) {
         },
       });
     }
-
     return result;
   }
 
@@ -55,7 +71,7 @@ export async function loader({ request }) {
   const host = url.searchParams.get("host") || "";
   const embedded = url.searchParams.get("embedded") || "1";
 
-  const appOrigin = url.origin;
+  const appOrigin = getAppOrigin(request);
   const apiKey = process.env.SHOPIFY_API_KEY || "";
 
   const conn = await db.metaConnection
@@ -191,6 +207,8 @@ export default function MetaIntegrationsPage() {
 
       const form = new FormData();
       form.set("adAccountId", selected);
+
+      // include shop explicitly
       form.set("shop", data.shop);
 
       const res = await authedFetch("/api/meta/adaccount/select", {
