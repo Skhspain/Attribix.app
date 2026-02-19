@@ -12,10 +12,8 @@ function pickFirst(...vals: Array<string | null | undefined>) {
 }
 
 async function resolveShop(request: Request, authResult: any) {
-  // 1) Prefer authenticated session shop (best signal)
   const sessionShop = authResult?.session?.shop;
 
-  // 2) Fallbacks: query, headers
   const url = new URL(request.url);
   const qsShop = url.searchParams.get("shop");
 
@@ -23,13 +21,16 @@ async function resolveShop(request: Request, authResult: any) {
     request.headers.get("x-shopify-shop-domain") ||
     request.headers.get("X-Shopify-Shop-Domain");
 
-  // 3) Body (formData) - only if needed
   let bodyShop: string | null = null;
   try {
     const ct = request.headers.get("content-type") || "";
-    if (ct.includes("multipart/form-data") || ct.includes("application/x-www-form-urlencoded")) {
+    if (
+      ct.includes("multipart/form-data") ||
+      ct.includes("application/x-www-form-urlencoded")
+    ) {
       const form = await request.clone().formData();
-      bodyShop = typeof form.get("shop") === "string" ? String(form.get("shop")) : null;
+      const v = form.get("shop");
+      bodyShop = typeof v === "string" ? v : null;
     }
   } catch {
     // ignore
@@ -52,7 +53,6 @@ async function resolveShop(request: Request, authResult: any) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  // Must be admin authenticated (session token / App Bridge)
   const result = await authenticate.admin(request);
   if (result instanceof Response) return result;
 
@@ -63,20 +63,17 @@ export async function action({ request }: ActionFunctionArgs) {
   const adAccountId = typeof adAccountIdRaw === "string" ? adAccountIdRaw.trim() : "";
 
   if (!adAccountId) {
-    return json(
-      { ok: false, error: "Missing adAccountId" },
-      { status: 400 }
-    );
+    return json({ ok: false, error: "Missing adAccountId" }, { status: 400 });
   }
 
-  // Ensure connection row exists, then save selected ad account
+  // If MetaConnection doesn't exist yet, Prisma requires accessToken on create.
+  // We set a placeholder and let OAuth callback overwrite it later.
   const saved = await db.metaConnection.upsert({
     where: { shop },
     create: {
       shop,
       adAccountId,
-      // keep existing behavior for accessToken; do not set here
-      // accessToken is set in OAuth callback
+      accessToken: "__PENDING__",
     },
     update: {
       adAccountId,
