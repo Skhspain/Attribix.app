@@ -48,12 +48,11 @@ function getAppOrigin(request) {
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
 
-  // Embedded refresh fix:
+  // ✅ Embedded refresh fix (robust):
   // If Shopify auth returns a redirect to /auth..., do NOT return the 302 to the iframe.
   // Return 401 + reauthorize headers so App Bridge can do the correct top-level reauth.
   if (isResponseLike(result)) {
-    const location =
-      result.headers.get("Location") || result.headers.get("location") || "";
+    const location = result.headers.get("Location") || result.headers.get("location") || "";
     if (location.startsWith("/auth")) {
       return new Response(null, {
         status: 401,
@@ -125,9 +124,7 @@ export default function MetaIntegrationsPage() {
   const [accountsLoading, setAccountsLoading] = React.useState(false);
   const [accountsError, setAccountsError] = React.useState(null);
 
-  // Selected dropdown state (local UI)
   const [selected, setSelected] = React.useState(data.adAccountId || "");
-
   const [saveLoading, setSaveLoading] = React.useState(false);
   const [saveError, setSaveError] = React.useState(null);
   const [saveOk, setSaveOk] = React.useState(false);
@@ -135,11 +132,6 @@ export default function MetaIntegrationsPage() {
   const [debugStep, setDebugStep] = React.useState("");
 
   const connected = !!data.connected;
-
-  // If loader updates (because we revalidated), keep dropdown in sync
-  React.useEffect(() => {
-    setSelected(data.adAccountId || "");
-  }, [data.adAccountId]);
 
   async function authedFetch(path, init = {}) {
     setDebugStep("session-token:starting");
@@ -206,6 +198,14 @@ export default function MetaIntegrationsPage() {
     }
   }
 
+  // ✅ AUTO-FETCH accounts on load when connected
+  React.useEffect(() => {
+    if (connected) {
+      fetchAdAccounts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
+
   async function saveAdAccount() {
     if (!selected) return;
 
@@ -216,7 +216,9 @@ export default function MetaIntegrationsPage() {
 
       const form = new FormData();
       form.set("adAccountId", selected);
-      form.set("shop", data.shop); // keep
+
+      // include shop explicitly
+      form.set("shop", data.shop);
 
       const res = await authedFetch("/api/meta/adaccount/select", {
         method: "POST",
@@ -236,7 +238,7 @@ export default function MetaIntegrationsPage() {
       setSaveOk(true);
       setDebugStep("adaccount:save:ok");
 
-      // ✅ THIS is the key fix: refresh loader data so data.adAccountId updates
+      // ✅ Revalidate loader so "Saved ad account (loader)" updates immediately
       revalidator.revalidate();
     } catch (e) {
       setSaveOk(false);
@@ -263,8 +265,14 @@ export default function MetaIntegrationsPage() {
     }
   }
 
+  // ✅ FALLBACK option: if accounts haven't loaded yet, still show the saved selection
+  const hasSelectedInAccounts = !!selected && accounts.some((a) => a?.id === selected);
+
   const options = [
     { label: "Select an ad account…", value: "" },
+    ...(!selected || hasSelectedInAccounts
+      ? []
+      : [{ label: `Saved: ${selected}`, value: selected }]),
     ...accounts.map((a) => ({
       label: a.name ? `${a.name} (${a.id})` : a.id,
       value: a.id,
@@ -305,8 +313,10 @@ export default function MetaIntegrationsPage() {
                     expiresAt: data.expiresAt,
                     debugStep,
                     hasApiKey: Boolean(data.apiKey),
-                    loaderAdAccountId: data.adAccountId, // helpful
-                    selectedState: selected, // helpful
+
+                    // extra visibility:
+                    loaderAdAccountId: data.adAccountId || null,
+                    selectedState: selected || null,
                     revalidatorState: revalidator.state,
                   },
                   null,
@@ -333,17 +343,23 @@ export default function MetaIntegrationsPage() {
               </InlineStack>
 
               <BlockStack gap="100">
-                <Text as="p" tone="subdued">Shop: {data.shop}</Text>
-                <Text as="p" tone="subdued">Token expiry: {data.expiresAt ?? "—"}</Text>
-                <Text as="p" tone="subdued">Saved ad account (loader): {data.adAccountId || "—"}</Text>
-                <Text as="p" tone="subdued">Selected (local state): {selected || "—"}</Text>
+                <Text as="p" tone="subdued">
+                  Shop: {data.shop}
+                </Text>
+                <Text as="p" tone="subdued">
+                  Token expiry: {data.expiresAt ?? "—"}
+                </Text>
+                <Text as="p" tone="subdued">
+                  Saved ad account (loader): {data.adAccountId || "—"}
+                </Text>
+                <Text as="p" tone="subdued">
+                  Selected (local state): {selected || "—"}
+                </Text>
               </BlockStack>
 
               {!connected ? (
                 <Banner tone="warning" title="Meta not connected">
-                  <Text as="p">
-                    Click “Connect Meta (top-level)”, complete OAuth, then come back here.
-                  </Text>
+                  <Text as="p">Click “Connect Meta (top-level)”, complete OAuth, then come back here.</Text>
                 </Banner>
               ) : (
                 <BlockStack gap="300">
@@ -380,7 +396,7 @@ export default function MetaIntegrationsPage() {
 
                   {saveOk ? (
                     <Banner tone="success" title="Saved">
-                      <Text as="p">Ad account saved successfully. (Loader will refresh now.)</Text>
+                      <Text as="p">Ad account saved successfully.</Text>
                     </Banner>
                   ) : null}
 
