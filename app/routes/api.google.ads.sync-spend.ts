@@ -1,123 +1,130 @@
-import { json, type ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "~/shopify.server";
+// app/routes/api.google.ads.sync-spend.ts
+import type { ActionFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
 import db from "~/db.server";
+import { authenticate } from "~/shopify.server";
+import { googleAdsSearchStream } from "~/services/googleAds.server";
 
-function dateRangeLast30Days() {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - 30);
-
-  const toYMD = (d: Date) => d.toISOString().slice(0, 10);
-  return { start: toYMD(start), end: toYMD(end) };
-}
-
-function parseYMDToDate(ymd: string) {
-  // store as DateTime at midnight UTC
-  return new Date(`${ymd}T00:00:00.000Z`);
+function parseGoogleDateToUtcMidnight(dateStr: string) {
+  const [y, m, d] = dateStr.split("-").map((v) => Number(v));
+  return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0));
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
 
-  const form = await request.formData();
-  const shop = String(form.get("shop") || result.session.shop);
-  const customerId = String(form.get("customerId") || "").trim();
-  const range = String(form.get("range") || "last_30_days");
+  // Body might be empty, depending on how you call it from UI
+  const body = await request.json().catch(() => ({}));
+
+  // ✅ Try body first
+  let customerId: string | undefined =
+    body?.customerId || body?.customer_id || body?.selectedCustomerId;
+
+  // ✅ Fallback: use saved selection from DB
+  if (!customerId) {
+    const conn = await db.googleConnection.findUnique({ where: { shop } });
+    customerId = conn?.adCustomerId ?? undefined;
+  }
 
   if (!customerId) {
-    return json({ ok: false, error: "Missing customerId" }, { status: 400 });
+    return json(
+      {
+        ok: false,
+        error:
+          "Missing customerId. Save selection first (or send { customerId } in the request).",
+      },
+      { status: 400 }
+    );
   }
 
   const conn = await db.googleConnection.findUnique({ where: { shop } });
-  if (!conn || !conn.accessToken || conn.accessToken === "__PENDING__") {
-    return json({ ok: false, error: "Google is not connected." }, { status: 401 });
+  if (!conn?.accessToken) {
+    return json(
+      { ok: false, error: "Google not connected for this shop" },
+      { status: 400 }
+    );
   }
 
-  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
-  if (!developerToken) {
-    return json({ ok: false, error: "Missing GOOGLE_ADS_DEVELOPER_TOKEN on server." }, { status: 500 });
-  }
-
-  const { start, end } = dateRangeLast30Days();
-
-  // GAQL: campaign spend per day (cost_micros)
+  // ✅ Daily spend totals last 30 days
   const query = `
     SELECT
       segments.date,
-      campaign.id,
-      campaign.name,
       metrics.cost_micros
-    FROM campaign
-    WHERE segments.date BETWEEN '${start}' AND '${end}'
+    FROM customer
+    WHERE segments.date DURING LAST_30_DAYS
   `.trim();
 
   try {
-    const url = `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:searchStream`;
-
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${conn.accessToken}`,
-        "developer-token": developerToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query }),
+    const chunks = await googleAdsSearchStream({
+      accessToken: conn.accessToken,
+      customerId,
+      query,
     });
 
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      return json(
-        { ok: false, error: `Google Ads API error (${resp.status}). ${text}` },
-        { status: 502 }
-      );
-    }
-
-    // searchStream returns an array of "batches"
-    const batches = (await resp.json()) as any[];
-
-    let rows = 0;
-    let created = 0;
-
-    for (const batch of batches) {
-      const results = batch?.results || [];
+    const rows: Array<{ date: string; costMicros: number }> = [];
+    for (const chunk of chunks) {
+      const results = Array.isArray(chunk?.results) ? chunk.results : [];
       for (const r of results) {
-        const ymd = r?.segments?.date;
-        const campaignName = r?.campaign?.name || null;
-        const costMicros = Number(r?.metrics?.costMicros || 0);
-
-        if (!ymd) continue;
-
-        const spend = costMicros / 1_000_000;
-        const date = parseYMDToDate(ymd);
-
-        rows += 1;
-
-        // Simple insert (no unique constraints exist on AdSpendDaily)
-        // If you want "replace", we can delete existing google rows in range first.
-        await db.adSpendDaily.create({
-          data: {
-            date,
-            platform: "google",
-            campaign: campaignName ?? undefined,
-            spend,
-          },
-        });
-
-        created += 1;
+        const date = r?.segments?.date;
+        const costMicros = Number(r?.metrics?.costMicros ?? 0);
+        if (date) rows.push({ date, costMicros });
       }
     }
 
+    const totalsByDate = new Map<string, number>();
+    for (const r of rows) {
+      totalsByDate.set(r.date, (totalsByDate.get(r.date) ?? 0) + r.costMicros);
+    }
+
+    const items = Array.from(totalsByDate.entries()).map(([dateStr, micros]) => {
+      const spend = micros / 1_000_000;
+      return {
+        date: parseGoogleDateToUtcMidnight(dateStr),
+        platform: "google",
+        campaign: null,
+        adset: null,
+        ad: null,
+        spend,
+      };
+    });
+
+    if (items.length > 0) {
+      const times = items.map((i) => i.date.getTime());
+      const minDate = new Date(Math.min(...times));
+      const maxDate = new Date(Math.max(...times));
+
+      await db.adSpendDaily.deleteMany({
+        where: {
+          platform: "google",
+          campaign: null,
+          adset: null,
+          ad: null,
+          date: { gte: minDate, lte: maxDate },
+        },
+      });
+
+      await db.adSpendDaily.createMany({ data: items });
+    }
+
+    // ✅ ensure connection has the latest chosen ID
+    await db.googleConnection.update({
+      where: { shop },
+      data: { adCustomerId: customerId },
+    });
+
     return json({
       ok: true,
-      range,
       customerId,
-      start,
-      end,
-      rows,
-      created,
+      insertedDays: items.length,
     });
   } catch (err: any) {
-    return json({ ok: false, error: err?.message || String(err) }, { status: 500 });
+    return json(
+      {
+        ok: false,
+        error: err?.message ? String(err.message) : "Failed to sync spend",
+      },
+      { status: 500 }
+    );
   }
 }

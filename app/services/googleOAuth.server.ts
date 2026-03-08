@@ -1,21 +1,20 @@
-type GoogleTokenResponse = {
-  access_token: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
-  token_type?: string;
-  id_token?: string;
-};
+// app/services/googleOAuth.server.ts
+
+function invariant(cond: any, msg: string): asserts cond {
+  if (!cond) throw new Error(msg);
+}
 
 export async function exchangeGoogleCodeForToken(params: {
   code: string;
   redirectUri: string;
 }) {
-  const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
+  const clientId = process.env.GOOGLE_ADS_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET;
 
-  if (!clientId) throw new Error("Missing GOOGLE_ADS_CLIENT_ID");
-  if (!clientSecret) throw new Error("Missing GOOGLE_ADS_CLIENT_SECRET");
+  invariant(clientId, "Missing GOOGLE_ADS_CLIENT_ID (or GOOGLE_CLIENT_ID)");
+  invariant(clientSecret, "Missing GOOGLE_ADS_CLIENT_SECRET (or GOOGLE_CLIENT_SECRET)");
+  invariant(params.code, "Missing OAuth code");
+  invariant(params.redirectUri, "Missing redirectUri");
 
   const body = new URLSearchParams();
   body.set("code", params.code);
@@ -26,16 +25,30 @@ export async function exchangeGoogleCodeForToken(params: {
 
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
   });
 
-  const json = (await res.json()) as any;
+  const text = await res.text();
 
   if (!res.ok) {
-    const msg = json?.error_description || json?.error || "Token exchange failed";
-    throw new Error(msg);
+    // This is where your earlier "Unauthorized" came from
+    throw new Error(`Google token exchange failed (${res.status}): ${text.slice(0, 1200)}`);
   }
 
-  return json as GoogleTokenResponse;
+  let json: any;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Google token exchange returned non-JSON: ${text.slice(0, 1200)}`);
+  }
+
+  return json as {
+    access_token: string;
+    expires_in?: number;
+    refresh_token?: string;
+    scope?: string;
+    token_type?: string;
+    id_token?: string;
+  };
 }

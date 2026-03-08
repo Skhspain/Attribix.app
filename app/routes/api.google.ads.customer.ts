@@ -26,7 +26,7 @@ export async function action({ request }: ActionFunctionArgs) {
     });
 
     return json({ ok: true, customerId });
-  } catch (err: any) {
+  } catch (err: any) {  
     return json({ ok: false, error: err?.message || String(err) }, { status: 500 });
   }
 }

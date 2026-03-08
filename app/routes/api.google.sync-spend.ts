@@ -1,19 +1,31 @@
+// app/routes/api.google.sync-spend.ts
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
+import db from "~/db.server";
 import { syncGoogleSpendDaily } from "~/services/googleAds.server";
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
-  const shop = session.shop;
+  const result = await authenticate.admin(request);
+  if (result instanceof Response) return result;
 
-  const body = await request.json().catch(() => ({}));
-  const days = Number(body?.days ?? 30);
+  const shop = result.session.shop;
 
-  const result = await syncGoogleSpendDaily(shop, Number.isFinite(days) ? days : 30);
-  return json({ ok: true, ...result });
-}
+  const conn = await db.googleConnection.findUnique({ where: { shop } }).catch(() => null);
 
-export default function Route() {
-  return null;
+  if (!conn?.accessToken || conn.accessToken === "__PENDING__") {
+    return json({ ok: false, error: "Google is not connected (missing access token)" }, { status: 400 });
+  }
+
+  if (!conn.adCustomerId) {
+    return json({ ok: false, error: "No selected Google Ads customer ID (adCustomerId is null)" }, { status: 400 });
+  }
+
+  const out = await syncGoogleSpendDaily({
+    shop,
+    accessToken: conn.accessToken,
+    customerId: conn.adCustomerId,
+  });
+
+  return json({ ok: true, result: out });
 }

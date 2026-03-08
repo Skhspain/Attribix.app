@@ -9,7 +9,7 @@ export async function loader({}: LoaderFunctionArgs) {
   const [events, orders, revenue, spend, latest] = await Promise.all([
     anyDb.trackedEvent?.count?.().catch(() => 0),
     anyDb.purchase?.count?.().catch(() => 0),
-    anyDb.purchase?.aggregate?.({ _sum: { total: true } }).catch(() => ({ _sum: { total: 0 } })),
+    anyDb.purchase?.aggregate?.({ _sum: { totalValue: true } }).catch(() => ({ _sum: { totalValue: 0 } })),
     anyDb.adSpendDaily?.aggregate?.({ _sum: { spend: true } }).catch(() => ({ _sum: { spend: 0 } })),
     anyDb.purchase?.findMany?.({ orderBy: { createdAt: "desc" }, take: 10 }).catch(() => []),
   ]);
@@ -17,7 +17,7 @@ export async function loader({}: LoaderFunctionArgs) {
   return json({
     events: events ?? 0,
     orders: orders ?? 0,
-    revenue: revenue?._sum?.total ?? 0,
+    revenue: revenue?._sum?.totalValue ?? 0,
     spend: spend?._sum?.spend ?? 0,
     latest: latest ?? [],
   });

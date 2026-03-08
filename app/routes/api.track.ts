@@ -19,6 +19,16 @@ function pickFirstString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length ? x : null;
 }
 
+// ✅ ADD ONLY
+function pickFirstNumber(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string") {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function getUtmFromUrl(url: string) {
   try {
     const u = new URL(url);
@@ -30,6 +40,17 @@ function getUtmFromUrl(url: string) {
   } catch {
     return { utmSource: null, utmMedium: null, utmCampaign: null };
   }
+}
+
+// ✅ ADD ONLY
+function getShopFromOriginOrUrl(origin: string | null, url: string | null): string | null {
+  try {
+    if (origin) return new URL(origin).hostname;
+  } catch {}
+  try {
+    if (url) return new URL(url).hostname;
+  } catch {}
+  return null;
 }
 
 async function readJsonBody(request: Request) {
@@ -70,15 +91,10 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (!data) {
       console.error("[/api/track] invalid json body");
-      return corsify(
-        json(
-          { ok: false, error: "invalid json" },
-          { status: 400 }
-        )
-      );
+      return corsify(json({ ok: false, error: "invalid json" }, { status: 400 }));
     }
 
-    // super visible logging
+    // super visible logging (PRESERVED) + ✅ added fields
     console.log("[/api/track] HIT", {
       origin,
       ip,
@@ -88,9 +104,19 @@ export async function action({ request }: ActionFunctionArgs) {
       accountID: data?.accountID ?? null,
       eventType: data?.event?.type ?? null,
       eventName: data?.event?.name ?? null,
+
+      // ✅ Upgrade v1 (ADD ONLY)
+      visitorId: data?.visitorId ?? null,
+      eventId: data?.eventId ?? null,
+      referrer: data?.referrer ?? null,
+      clickIds: data?.clickIds ?? null,
+      urlFromBody: data?.url ?? null,
+      orderId: data?.orderId ?? null,
+      value: data?.value ?? data?.totalValue ?? null,
+      currency: data?.currency ?? null,
     });
 
-    // ignore noise posts
+    // ignore noise posts (PRESERVED)
     const type = pickFirstString(data?.type);
     if (!type) return corsify(new Response(null, { status: 204 }));
 
@@ -109,8 +135,21 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(url || "");
 
+    // ✅ Upgrade v1 (ADD ONLY)
+    const shop = getShopFromOriginOrUrl(origin, url);
+    const visitorId = pickFirstString(data?.visitorId);
+    const eventId = pickFirstString(data?.eventId);
+    const referrer = pickFirstString(data?.referrer);
+
+    const clickIds = data?.clickIds ?? {};
+    const fbclid = pickFirstString(clickIds?.fbclid);
+    const gclid = pickFirstString(clickIds?.gclid);
+    const ttclid = pickFirstString(clickIds?.ttclid);
+    const msclkid = pickFirstString(clickIds?.msclkid);
+
     await db.trackedEvent.create({
       data: {
+        // EXISTING (PRESERVED)
         eventName,
         createdAt: new Date(),
         url,
@@ -121,8 +160,90 @@ export async function action({ request }: ActionFunctionArgs) {
         utmCampaign: utmCampaign ?? null,
         ip,
         userAgent: ua,
+
+        // ✅ Upgrade v1 fields (ADD ONLY)
+        shop,
+        visitorId,
+        eventId,
+        referrer,
+        fbclid,
+        gclid,
+        ttclid,
+        msclkid,
       },
     });
+
+    // ✅ Upgrade v1: write Purchase too (ADD ONLY)
+    // Writes ONLY when we can detect an orderId + event looks like a purchase.
+    const possibleOrderId =
+      pickFirstString(data?.orderId) ||
+      pickFirstString(event?.orderId) ||
+      pickFirstString(event?.data?.orderId) ||
+      pickFirstString(event?.data?.order?.id) ||
+      pickFirstString(event?.data?.checkout?.order?.id) ||
+      null;
+
+    const possibleTotal =
+      pickFirstNumber(data?.totalValue) ??
+      pickFirstNumber(data?.value) ??
+      pickFirstNumber(event?.value) ??
+      pickFirstNumber(event?.data?.totalPrice) ??
+      pickFirstNumber(event?.data?.checkout?.totalPrice) ??
+      null;
+
+    const possibleCurrency =
+      pickFirstString(data?.currency) ||
+      pickFirstString(event?.currency) ||
+      pickFirstString(event?.data?.currency) ||
+      pickFirstString(event?.data?.checkout?.currency) ||
+      null;
+
+    const isPurchaseLike =
+      ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
+        (eventName || "").toLowerCase()
+      ) ||
+      ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
+        (type || "").toLowerCase()
+      );
+
+    if (possibleOrderId && isPurchaseLike) {
+      await db.purchase.upsert({
+        where: { orderId: possibleOrderId },
+        create: {
+          createdAt: new Date(),
+          totalValue: possibleTotal ?? 0,
+          currency: possibleCurrency ?? "USD",
+
+          // attribution (same as event)
+          shop,
+          orderId: possibleOrderId,
+          visitorId,
+          sessionId: null,
+          utmSource: utmSource ?? null,
+          utmMedium: utmMedium ?? null,
+          utmCampaign: utmCampaign ?? null,
+          fbclid,
+          gclid,
+          ttclid,
+          msclkid,
+        },
+        update: {
+          // keep updating if later events include better values
+          totalValue: possibleTotal ?? undefined,
+          currency: possibleCurrency ?? undefined,
+
+          shop: shop ?? undefined,
+          visitorId: visitorId ?? undefined,
+          utmSource: utmSource ?? undefined,
+          utmMedium: utmMedium ?? undefined,
+          utmCampaign: utmCampaign ?? undefined,
+          fbclid: fbclid ?? undefined,
+          gclid: gclid ?? undefined,
+          ttclid: ttclid ?? undefined,
+          msclkid: msclkid ?? undefined,
+        },
+      });
+    }
 
     return corsify(json({ ok: true, saved: true, eventName }, { status: 200 }));
   } catch (err: any) {

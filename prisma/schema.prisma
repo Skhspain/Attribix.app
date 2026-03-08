@@ -20,10 +20,26 @@ model TrackedEvent {
   utmMedium   String?
   utmSource   String?
 
+  // ✅ Upgrade v1 additions (ADD ONLY)
+  shop      String?
+  visitorId String?
+  eventId   String? @unique
+  referrer  String?
+
+  fbclid    String?
+  gclid     String?
+  ttclid    String?
+  msclkid   String?
+
   @@index([createdAt])
   @@index([eventName])
   @@index([sessionId])
   @@index([utmSource])
+
+  // ✅ Upgrade v1 indexes (ADD ONLY)
+  @@index([shop])
+  @@index([visitorId])
+  @@index([eventId])
 }
 
 model Session {
@@ -52,17 +68,37 @@ model Purchase {
   totalValue Float
   currency   String   @default("USD")
 
+  // ✅ Upgrade v1 additions (ADD ONLY)
+  shop      String?
+  orderId   String? @unique
+  visitorId String?
+  sessionId String?
+
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+
+  fbclid    String?
+  gclid     String?
+  ttclid    String?
+  msclkid   String?
+
   @@index([createdAt])
+
+  // ✅ Upgrade v1 indexes (ADD ONLY)
+  @@index([shop])
+  @@index([orderId])
+  @@index([visitorId])
 }
 
 model AdSpendDaily {
-  id        String   @id @default(cuid())
-  date      DateTime
-  platform  String
-  campaign  String?
-  adset     String?
-  ad        String?
-  spend     Float    @default(0)
+  id       String   @id @default(cuid())
+  date     DateTime
+  spend    Float    @default(0)
+  ad       String?
+  adset    String?
+  campaign String?
+  platform String
 
   @@index([date])
   @@index([platform, date])
@@ -82,13 +118,13 @@ model TrackingSettings {
 }
 
 model MetaConnection {
-  id          String   @id @default(cuid())
-  shop        String   @unique
+  id          String    @id @default(cuid())
+  shop        String    @unique
   accessToken String
   expiresAt   DateTime?
   adAccountId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([shop])
 }
@@ -113,27 +149,16 @@ model MetaCampaignDailyInsight {
   @@index([date])
 }
 
-//
-// ✅ Added by ChatGPT in this conversation
-// Stores Google Ads OAuth tokens per Shopify shop
-//
 model GoogleConnection {
-  id           String   @id @default(cuid())
-  shop         String   @unique
-
+  id           String    @id @default(cuid())
+  shop         String    @unique
   accessToken  String
   refreshToken String?
-  expiresAt    DateTime?
-
-  // token.scope from Google (space-delimited)
   scope        String?
-
-  // ✅ optional; your runtime currently expects this column to exist
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
   adCustomerId String?
-
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
 
   @@index([shop])
 }
-
