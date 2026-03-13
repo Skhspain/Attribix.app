@@ -20,10 +20,33 @@ model TrackedEvent {
   utmMedium   String?
   utmSource   String?
 
+  shop      String?
+  visitorId String?
+  eventId   String? @unique
+  referrer  String?
+
+  fbclid    String?
+  gclid     String?
+  ttclid    String?
+  msclkid   String?
+
+  fbp       String?
+  fbc       String?
+  host      String?
+  origin    String?
+  accountId String?
+
   @@index([createdAt])
   @@index([eventName])
   @@index([sessionId])
   @@index([utmSource])
+  @@index([shop])
+  @@index([visitorId])
+  @@index([eventId])
+  @@index([fbclid])
+  @@index([gclid])
+  @@index([fbc])
+  @@index([fbp])
 }
 
 model Session {
@@ -52,7 +75,32 @@ model Purchase {
   totalValue Float
   currency   String   @default("USD")
 
+  shop        String?
+  orderId     String? @unique
+  visitorId   String?
+  sessionId   String?
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  fbclid      String?
+  gclid       String?
+  ttclid      String?
+  msclkid     String?
+
+  fbp         String?
+  fbc         String?
+  referrer    String?
+  landingPage String?
+
   @@index([createdAt])
+  @@index([shop])
+  @@index([orderId])
+  @@index([visitorId])
+  @@index([sessionId])
+  @@index([fbclid])
+  @@index([gclid])
+  @@index([fbc])
+  @@index([fbp])
 }
 
 model AdSpendDaily {
@@ -78,7 +126,16 @@ model TrackingSettings {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  trackingKey     String?  @unique
+  trackingEnabled Boolean  @default(true)
+  pixelLastSeenAt DateTime?
+  lastEventAt     DateTime?
+  installedAt     DateTime?
+  uninstalledAt   DateTime?
+
   @@index([shop])
+  @@index([trackingKey])
+  @@index([trackingEnabled])
 }
 
 model MetaConnection {
@@ -120,7 +177,9 @@ model GoogleConnection {
   refreshToken String?
   expiresAt    DateTime?
   scope        String?
-  adCustomerId String?  // optional, but useful later (123-456-7890)
+  adCustomerId String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  @@index([shop])
 }

@@ -34,8 +34,8 @@ primary_region = "fra"
 
 [deploy]
   # Using db push while schema is still evolving
-  # Switch to `prisma migrate deploy` once schema is stable
-  release_command = "npx prisma db push --accept-data-loss"
+  # Important: production uses the Postgres schema file
+  release_command = "npx prisma db push --accept-data-loss --schema=prisma/schema.postgres.prisma"
 
 [vm]
   cpu_kind = "shared"

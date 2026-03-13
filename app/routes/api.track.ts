@@ -2,6 +2,8 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { db } from "~/db.server";
+import { sendServerConversions } from "~/services/serverConversions.server";
+import { touchTrackingHealth } from "~/models/trackingSettings.server";
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -16,10 +18,9 @@ function corsify(res: Response) {
 }
 
 function pickFirstString(x: unknown): string | null {
-  return typeof x === "string" && x.trim().length ? x : null;
+  return typeof x === "string" && x.trim().length ? x.trim() : null;
 }
 
-// ✅ ADD ONLY
 function pickFirstNumber(x: unknown): number | null {
   if (typeof x === "number" && Number.isFinite(x)) return x;
   if (typeof x === "string") {
@@ -42,7 +43,15 @@ function getUtmFromUrl(url: string) {
   }
 }
 
-// ✅ ADD ONLY
+function getHostFromUrl(url: string | null): string | null {
+  try {
+    if (!url) return null;
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
 function getShopFromOriginOrUrl(origin: string | null, url: string | null): string | null {
   try {
     if (origin) return new URL(origin).hostname;
@@ -53,11 +62,33 @@ function getShopFromOriginOrUrl(origin: string | null, url: string | null): stri
   return null;
 }
 
+function normalizeOrderId(value: unknown): string | null {
+  const s = pickFirstString(value);
+  if (!s) return null;
+  return s;
+}
+
+function isUniqueConstraintError(err: any) {
+  return err?.code === "P2002" || String(err?.message || "").includes("Unique constraint");
+}
+
+function getTrackingKeyFromRequest(request: Request, data: any) {
+  const fromBody = pickFirstString(data?.trackingKey);
+  if (fromBody) return fromBody;
+
+  const auth = request.headers.get("authorization");
+  if (!auth) return null;
+
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
 async function readJsonBody(request: Request) {
   const ct = request.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
     return await request.json();
   }
+
   const text = await request.text();
   try {
     return JSON.parse(text);
@@ -94,29 +125,6 @@ export async function action({ request }: ActionFunctionArgs) {
       return corsify(json({ ok: false, error: "invalid json" }, { status: 400 }));
     }
 
-    // super visible logging (PRESERVED) + ✅ added fields
-    console.log("[/api/track] HIT", {
-      origin,
-      ip,
-      ua: ua ? ua.slice(0, 80) : null,
-      keys: Object.keys(data || {}).slice(0, 20),
-      type: data?.type ?? null,
-      accountID: data?.accountID ?? null,
-      eventType: data?.event?.type ?? null,
-      eventName: data?.event?.name ?? null,
-
-      // ✅ Upgrade v1 (ADD ONLY)
-      visitorId: data?.visitorId ?? null,
-      eventId: data?.eventId ?? null,
-      referrer: data?.referrer ?? null,
-      clickIds: data?.clickIds ?? null,
-      urlFromBody: data?.url ?? null,
-      orderId: data?.orderId ?? null,
-      value: data?.value ?? data?.totalValue ?? null,
-      currency: data?.currency ?? null,
-    });
-
-    // ignore noise posts (PRESERVED)
     const type = pickFirstString(data?.type);
     if (!type) return corsify(new Response(null, { status: 204 }));
 
@@ -133,54 +141,170 @@ export async function action({ request }: ActionFunctionArgs) {
       pickFirstString(data?.url) ??
       null;
 
-    const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(url || "");
+    const referrer = pickFirstString(data?.referrer) ?? null;
+    const host = pickFirstString(data?.host) ?? getHostFromUrl(url);
+    const originHost = origin;
 
-    // ✅ Upgrade v1 (ADD ONLY)
-    const shop = getShopFromOriginOrUrl(origin, url);
-    const visitorId = pickFirstString(data?.visitorId);
-    const eventId = pickFirstString(data?.eventId);
-    const referrer = pickFirstString(data?.referrer);
+    const requestedShop =
+      pickFirstString(data?.shop) ||
+      null;
 
-    const clickIds = data?.clickIds ?? {};
-    const fbclid = pickFirstString(clickIds?.fbclid);
-    const gclid = pickFirstString(clickIds?.gclid);
-    const ttclid = pickFirstString(clickIds?.ttclid);
-    const msclkid = pickFirstString(clickIds?.msclkid);
+    const inferredStorefrontHost = getShopFromOriginOrUrl(origin, url);
+    const trackingKey = getTrackingKeyFromRequest(request, data);
 
-    await db.trackedEvent.create({
-      data: {
-        // EXISTING (PRESERVED)
-        eventName,
-        createdAt: new Date(),
-        url,
-        source: utmSource ?? null,
-        sessionId: null,
-        utmSource: utmSource ?? null,
-        utmMedium: utmMedium ?? null,
-        utmCampaign: utmCampaign ?? null,
-        ip,
-        userAgent: ua,
+    let matchedSettings: any = null;
 
-        // ✅ Upgrade v1 fields (ADD ONLY)
-        shop,
-        visitorId,
-        eventId,
-        referrer,
-        fbclid,
-        gclid,
-        ttclid,
-        msclkid,
-      },
+    if (requestedShop) {
+      matchedSettings = await db.trackingSettings.findUnique({
+        where: { shop: requestedShop },
+      });
+    }
+
+    if (!matchedSettings && trackingKey) {
+      matchedSettings = await db.trackingSettings.findUnique({
+        where: { trackingKey },
+      });
+    }
+
+    if (requestedShop && matchedSettings && matchedSettings.shop !== requestedShop) {
+      console.error("[/api/track] tracking key/shop mismatch", {
+        requestedShop,
+        matchedShop: matchedSettings.shop,
+      });
+      return corsify(json({ ok: false, error: "shop mismatch" }, { status: 403 }));
+    }
+
+    if (matchedSettings?.trackingEnabled === false) {
+      return corsify(json({ ok: false, error: "tracking disabled" }, { status: 403 }));
+    }
+
+    if (matchedSettings?.trackingKey && trackingKey !== matchedSettings.trackingKey) {
+      console.error("[/api/track] invalid tracking key", {
+        requestedShop,
+        matchedShop: matchedSettings.shop,
+        hasTrackingKey: Boolean(trackingKey),
+      });
+      return corsify(json({ ok: false, error: "invalid tracking key" }, { status: 403 }));
+    }
+
+    const resolvedShop =
+      matchedSettings?.shop ||
+      requestedShop ||
+      inferredStorefrontHost ||
+      null;
+
+    console.log("[/api/track] HIT", {
+      origin,
+      ip,
+      ua: ua ? ua.slice(0, 120) : null,
+      keys: Object.keys(data || {}).slice(0, 40),
+      type: data?.type ?? null,
+      accountID: data?.accountID ?? null,
+      eventType: data?.event?.type ?? null,
+      eventName: data?.event?.name ?? null,
+      requestedShop,
+      resolvedShop,
+      inferredStorefrontHost,
+      visitorId: data?.visitorId ?? null,
+      sessionId: data?.sessionId ?? null,
+      eventId: data?.eventId ?? null,
+      referrer: data?.referrer ?? null,
+      clickIds: data?.clickIds ?? null,
+      fbp: data?.fbp ?? null,
+      fbc: data?.fbc ?? null,
+      urlFromBody: data?.url ?? null,
+      orderId: data?.orderId ?? null,
+      value: data?.value ?? data?.totalValue ?? null,
+      currency: data?.currency ?? null,
+      email: data?.email ?? null,
+      phone: data?.phone ?? null,
+      authMode: matchedSettings
+        ? matchedSettings.trackingKey
+          ? "tracking_key"
+          : "shop_only"
+        : "legacy_open",
     });
 
-    // ✅ Upgrade v1: write Purchase too (ADD ONLY)
-    // Writes ONLY when we can detect an orderId + event looks like a purchase.
+    const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(url || "");
+
+    const visitorId = pickFirstString(data?.visitorId);
+    const sessionId = pickFirstString(data?.sessionId);
+    const eventId = pickFirstString(data?.eventId);
+    const accountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId);
+
+    const clickIds = data?.clickIds ?? {};
+    const fbclid =
+      pickFirstString(clickIds?.fbclid) ||
+      pickFirstString(data?.fbclid) ||
+      null;
+    const gclid =
+      pickFirstString(clickIds?.gclid) ||
+      pickFirstString(data?.gclid) ||
+      null;
+    const ttclid =
+      pickFirstString(clickIds?.ttclid) ||
+      pickFirstString(data?.ttclid) ||
+      null;
+    const msclkid =
+      pickFirstString(clickIds?.msclkid) ||
+      pickFirstString(data?.msclkid) ||
+      null;
+
+    const fbp = pickFirstString(data?.fbp);
+    const fbc = pickFirstString(data?.fbc);
+
+    try {
+      await db.trackedEvent.create({
+        data: {
+          eventName,
+          createdAt: new Date(),
+          url,
+          source: utmSource ?? null,
+          sessionId: sessionId ?? null,
+          utmSource: utmSource ?? null,
+          utmMedium: utmMedium ?? null,
+          utmCampaign: utmCampaign ?? null,
+          ip,
+          userAgent: ua,
+          shop: resolvedShop,
+          visitorId,
+          eventId,
+          referrer,
+          fbclid,
+          gclid,
+          ttclid,
+          msclkid,
+          fbp,
+          fbc,
+          host,
+          origin: originHost,
+          accountId,
+        },
+      });
+    } catch (trackedEventError: any) {
+      if (eventId && isUniqueConstraintError(trackedEventError)) {
+        console.log("[/api/track] duplicate eventId ignored", { eventId });
+      } else {
+        throw trackedEventError;
+      }
+    }
+
+    if (matchedSettings?.shop) {
+      try {
+        await touchTrackingHealth(matchedSettings.shop, {
+          pixelSeen: type === "pixel_boot",
+        });
+      } catch (healthError: any) {
+        console.error("[/api/track] touchTrackingHealth error:", healthError?.message || healthError);
+      }
+    }
+
     const possibleOrderId =
-      pickFirstString(data?.orderId) ||
-      pickFirstString(event?.orderId) ||
-      pickFirstString(event?.data?.orderId) ||
-      pickFirstString(event?.data?.order?.id) ||
-      pickFirstString(event?.data?.checkout?.order?.id) ||
+      normalizeOrderId(data?.orderId) ||
+      normalizeOrderId(event?.orderId) ||
+      normalizeOrderId(event?.data?.orderId) ||
+      normalizeOrderId(event?.data?.order?.id) ||
+      normalizeOrderId(event?.data?.checkout?.order?.id) ||
       null;
 
     const possibleTotal =
@@ -198,12 +322,26 @@ export async function action({ request }: ActionFunctionArgs) {
       pickFirstString(event?.data?.checkout?.currency) ||
       null;
 
+    const possibleEmail =
+      pickFirstString(data?.email) ||
+      pickFirstString(event?.email) ||
+      pickFirstString(event?.data?.email) ||
+      pickFirstString(event?.data?.checkout?.email) ||
+      null;
+
+    const possiblePhone =
+      pickFirstString(data?.phone) ||
+      pickFirstString(event?.phone) ||
+      pickFirstString(event?.data?.phone) ||
+      pickFirstString(event?.data?.checkout?.phone) ||
+      null;
+
     const isPurchaseLike =
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
-        (eventName || "").toLowerCase()
+        (eventName || "").toLowerCase(),
       ) ||
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
-        (type || "").toLowerCase()
+        (type || "").toLowerCase(),
       );
 
     if (possibleOrderId && isPurchaseLike) {
@@ -213,12 +351,10 @@ export async function action({ request }: ActionFunctionArgs) {
           createdAt: new Date(),
           totalValue: possibleTotal ?? 0,
           currency: possibleCurrency ?? "USD",
-
-          // attribution (same as event)
-          shop,
+          shop: resolvedShop,
           orderId: possibleOrderId,
           visitorId,
-          sessionId: null,
+          sessionId: sessionId ?? null,
           utmSource: utmSource ?? null,
           utmMedium: utmMedium ?? null,
           utmCampaign: utmCampaign ?? null,
@@ -226,14 +362,17 @@ export async function action({ request }: ActionFunctionArgs) {
           gclid,
           ttclid,
           msclkid,
+          fbp,
+          fbc,
+          referrer,
+          landingPage: url,
         },
         update: {
-          // keep updating if later events include better values
           totalValue: possibleTotal ?? undefined,
           currency: possibleCurrency ?? undefined,
-
-          shop: shop ?? undefined,
+          shop: resolvedShop ?? undefined,
           visitorId: visitorId ?? undefined,
+          sessionId: sessionId ?? undefined,
           utmSource: utmSource ?? undefined,
           utmMedium: utmMedium ?? undefined,
           utmCampaign: utmCampaign ?? undefined,
@@ -241,8 +380,43 @@ export async function action({ request }: ActionFunctionArgs) {
           gclid: gclid ?? undefined,
           ttclid: ttclid ?? undefined,
           msclkid: msclkid ?? undefined,
+          fbp: fbp ?? undefined,
+          fbc: fbc ?? undefined,
+          referrer: referrer ?? undefined,
+          landingPage: url ?? undefined,
         },
       });
+
+      try {
+        const conversionResult = await sendServerConversions({
+          eventName: "Purchase",
+          eventTime: Math.floor(Date.now() / 1000),
+          eventId: eventId || `purchase_${possibleOrderId}`,
+          orderId: possibleOrderId,
+          value: possibleTotal ?? 0,
+          currency: possibleCurrency ?? "USD",
+          url,
+          sourceUrl: url,
+          actionSource: "website",
+          shop: resolvedShop,
+          ip,
+          userAgent: ua,
+          email: possibleEmail,
+          phone: possiblePhone,
+          fbclid,
+          fbp,
+          fbc,
+          gclid,
+          externalId: visitorId,
+        });
+
+        console.log("[/api/track] server conversions", conversionResult);
+      } catch (conversionError: any) {
+        console.error(
+          "[/api/track] server conversion error:",
+          conversionError?.message || conversionError,
+        );
+      }
     }
 
     return corsify(json({ ok: true, saved: true, eventName }, { status: 200 }));

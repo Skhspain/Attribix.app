@@ -1,33 +1,24 @@
 // app/components/AppBridgeProvider.jsx
 import React from "react";
-import { useLocation } from "@remix-run/react";
 
-// IMPORTANT: @shopify/app-bridge-react is CommonJS in your runtime.
-// Use default import to avoid "Named export 'Provider' not found".
-import appBridgeReact from "@shopify/app-bridge-react";
-const { Provider } = appBridgeReact;
-
+/**
+ * IMPORTANT
+ *
+ * This file now acts as a compatibility shim only.
+ *
+ * Why:
+ * - The real embedded Shopify provider is already mounted in app/routes/app.jsx
+ *   via @shopify/shopify-app-remix/react AppProvider.
+ * - Mounting another App Bridge Provider here can create overlapping client
+ *   contexts and unstable embedded behavior.
+ * - We keep this component and prop shape intact so the surrounding app
+ *   structure does not need to change again right now.
+ *
+ * Result:
+ * - root.jsx can keep rendering <AppBridgeProvider apiKey={...}>...</AppBridgeProvider>
+ * - but this component no longer mounts a second App Bridge context
+ */
 export default function AppBridgeProvider({ apiKey, children }) {
-  const location = useLocation();
-
-  // SSR-safe mount gate (Provider expects browser context)
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
-
-  if (!mounted) return children;
-
-  const params = new URLSearchParams(location.search);
-  const host = params.get("host");
-
-  // If someone opens the app outside Shopify embedded context,
-  // host may be missing — avoid crashing the whole app.
-  if (!apiKey || !host) return children;
-
-  const config = {
-    apiKey,
-    host,
-    forceRedirect: true,
-  };
-
-  return <Provider config={config}>{children}</Provider>;
+  void apiKey;
+  return <>{children}</>;
 }
