@@ -3,6 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { db } from "~/db.server";
 import { sendServerConversions } from "~/services/serverConversions.server";
+import { normalizeTrackedEvent } from "~/services/trackingNormalizer.server";
 import { touchTrackingHealth } from "~/models/trackingSettings.server";
 
 const CORS: Record<string, string> = {
@@ -129,19 +130,27 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!type) return corsify(new Response(null, { status: 204 }));
 
     const event = data?.event ?? null;
+    const eventSnapshot = data?.eventSnapshot ?? null;
 
     const eventName =
       pickFirstString(type) ??
+      pickFirstString(eventSnapshot?.name) ??
       pickFirstString(event?.name) ??
       pickFirstString(event?.type) ??
       "unknown";
 
     const url =
-      pickFirstString(event?.context?.document?.location?.href) ??
       pickFirstString(data?.url) ??
+      pickFirstString(eventSnapshot?.url) ??
+      pickFirstString(event?.context?.document?.location?.href) ??
+      pickFirstString(event?.data?.context?.document?.location?.href) ??
       null;
 
-    const referrer = pickFirstString(data?.referrer) ?? null;
+    const referrer =
+      pickFirstString(data?.referrer) ??
+      pickFirstString(eventSnapshot?.referrer) ??
+      null;
+
     const host = pickFirstString(data?.host) ?? getHostFromUrl(url);
     const originHost = origin;
 
@@ -193,6 +202,17 @@ export async function action({ request }: ActionFunctionArgs) {
       inferredStorefrontHost ||
       null;
 
+    const normalizedEvent = normalizeTrackedEvent({
+      data,
+      event,
+      type,
+      url,
+      referrer,
+      shop: resolvedShop,
+      ip,
+      userAgent: ua,
+    });
+
     console.log("[/api/track] HIT", {
       origin,
       ip,
@@ -200,8 +220,8 @@ export async function action({ request }: ActionFunctionArgs) {
       keys: Object.keys(data || {}).slice(0, 40),
       type: data?.type ?? null,
       accountID: data?.accountID ?? null,
-      eventType: data?.event?.type ?? null,
-      eventName: data?.event?.name ?? null,
+      eventType: data?.event?.type ?? data?.eventSnapshot?.type ?? null,
+      eventName: data?.event?.name ?? data?.eventSnapshot?.name ?? null,
       requestedShop,
       resolvedShop,
       inferredStorefrontHost,
@@ -213,52 +233,61 @@ export async function action({ request }: ActionFunctionArgs) {
       fbp: data?.fbp ?? null,
       fbc: data?.fbc ?? null,
       urlFromBody: data?.url ?? null,
-      orderId: data?.orderId ?? null,
-      value: data?.value ?? data?.totalValue ?? null,
-      currency: data?.currency ?? null,
-      email: data?.email ?? null,
-      phone: data?.phone ?? null,
+      orderId: data?.orderId ?? data?.eventSnapshot?.orderId ?? null,
+      value: data?.value ?? data?.totalValue ?? data?.eventSnapshot?.totalValue ?? null,
+      currency: data?.currency ?? data?.eventSnapshot?.currency ?? null,
+      email: data?.email ?? data?.eventSnapshot?.email ?? null,
+      phone: data?.phone ?? data?.eventSnapshot?.phone ?? null,
       authMode: matchedSettings
         ? matchedSettings.trackingKey
           ? "tracking_key"
           : "shop_only"
         : "legacy_open",
+      normalizedEvent,
     });
 
-    const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(url || "");
+    const normalizedUrl = normalizedEvent.url || url || null;
+    const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(normalizedUrl || "");
 
-    const visitorId = pickFirstString(data?.visitorId);
-    const sessionId = pickFirstString(data?.sessionId);
-    const eventId = pickFirstString(data?.eventId);
+    const visitorId = normalizedEvent.visitorId;
+    const sessionId = normalizedEvent.sessionId;
+    const eventId = normalizedEvent.eventId || pickFirstString(data?.eventId);
     const accountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId);
 
     const clickIds = data?.clickIds ?? {};
     const fbclid =
-      pickFirstString(clickIds?.fbclid) ||
-      pickFirstString(data?.fbclid) ||
-      null;
-    const gclid =
-      pickFirstString(clickIds?.gclid) ||
-      pickFirstString(data?.gclid) ||
-      null;
-    const ttclid =
-      pickFirstString(clickIds?.ttclid) ||
-      pickFirstString(data?.ttclid) ||
-      null;
-    const msclkid =
-      pickFirstString(clickIds?.msclkid) ||
-      pickFirstString(data?.msclkid) ||
+      normalizedEvent.fbclid ??
+      pickFirstString(clickIds?.fbclid) ??
+      pickFirstString(data?.fbclid) ??
       null;
 
-    const fbp = pickFirstString(data?.fbp);
-    const fbc = pickFirstString(data?.fbc);
+    const gclid =
+      normalizedEvent.gclid ??
+      pickFirstString(clickIds?.gclid) ??
+      pickFirstString(data?.gclid) ??
+      null;
+
+    const ttclid =
+      normalizedEvent.ttclid ??
+      pickFirstString(clickIds?.ttclid) ??
+      pickFirstString(data?.ttclid) ??
+      null;
+
+    const msclkid =
+      normalizedEvent.msclkid ??
+      pickFirstString(clickIds?.msclkid) ??
+      pickFirstString(data?.msclkid) ??
+      null;
+
+    const fbp = normalizedEvent.fbp ?? pickFirstString(data?.fbp);
+    const fbc = normalizedEvent.fbc ?? pickFirstString(data?.fbc);
 
     try {
       await db.trackedEvent.create({
         data: {
-          eventName,
+          eventName: normalizedEvent.eventName || eventName,
           createdAt: new Date(),
-          url,
+          url: normalizedUrl,
           source: utmSource ?? null,
           sessionId: sessionId ?? null,
           utmSource: utmSource ?? null,
@@ -269,7 +298,7 @@ export async function action({ request }: ActionFunctionArgs) {
           shop: resolvedShop,
           visitorId,
           eventId,
-          referrer,
+          referrer: normalizedEvent.referrer ?? referrer,
           fbclid,
           gclid,
           ttclid,
@@ -300,6 +329,8 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const possibleOrderId =
+      normalizedEvent.orderId ||
+      normalizeOrderId(eventSnapshot?.orderId) ||
       normalizeOrderId(data?.orderId) ||
       normalizeOrderId(event?.orderId) ||
       normalizeOrderId(event?.data?.orderId) ||
@@ -308,21 +339,31 @@ export async function action({ request }: ActionFunctionArgs) {
       null;
 
     const possibleTotal =
+      normalizedEvent.value ??
+      pickFirstNumber(eventSnapshot?.totalValue) ??
+      pickFirstNumber(eventSnapshot?.value) ??
       pickFirstNumber(data?.totalValue) ??
       pickFirstNumber(data?.value) ??
       pickFirstNumber(event?.value) ??
+      pickFirstNumber(event?.data?.totalPrice?.amount) ??
+      pickFirstNumber(event?.data?.checkout?.totalPrice?.amount) ??
       pickFirstNumber(event?.data?.totalPrice) ??
       pickFirstNumber(event?.data?.checkout?.totalPrice) ??
       null;
 
     const possibleCurrency =
+      normalizedEvent.currency ||
+      pickFirstString(eventSnapshot?.currency) ||
       pickFirstString(data?.currency) ||
       pickFirstString(event?.currency) ||
       pickFirstString(event?.data?.currency) ||
-      pickFirstString(event?.data?.checkout?.currency) ||
+      pickFirstString(event?.data?.checkout?.currencyCode) ||
+      pickFirstString(event?.data?.checkout?.totalPrice?.currencyCode) ||
       null;
 
     const possibleEmail =
+      normalizedEvent.email ||
+      pickFirstString(eventSnapshot?.email) ||
       pickFirstString(data?.email) ||
       pickFirstString(event?.email) ||
       pickFirstString(event?.data?.email) ||
@@ -330,6 +371,8 @@ export async function action({ request }: ActionFunctionArgs) {
       null;
 
     const possiblePhone =
+      normalizedEvent.phone ||
+      pickFirstString(eventSnapshot?.phone) ||
       pickFirstString(data?.phone) ||
       pickFirstString(event?.phone) ||
       pickFirstString(event?.data?.phone) ||
@@ -338,7 +381,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const isPurchaseLike =
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
-        (eventName || "").toLowerCase(),
+        (normalizedEvent.eventName || eventName || "").toLowerCase(),
       ) ||
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
         (type || "").toLowerCase(),
@@ -364,8 +407,8 @@ export async function action({ request }: ActionFunctionArgs) {
           msclkid,
           fbp,
           fbc,
-          referrer,
-          landingPage: url,
+          referrer: normalizedEvent.referrer ?? referrer,
+          landingPage: normalizedUrl,
         },
         update: {
           totalValue: possibleTotal ?? undefined,
@@ -382,8 +425,8 @@ export async function action({ request }: ActionFunctionArgs) {
           msclkid: msclkid ?? undefined,
           fbp: fbp ?? undefined,
           fbc: fbc ?? undefined,
-          referrer: referrer ?? undefined,
-          landingPage: url ?? undefined,
+          referrer: (normalizedEvent.referrer ?? referrer) ?? undefined,
+          landingPage: normalizedUrl ?? undefined,
         },
       });
 
@@ -395,8 +438,8 @@ export async function action({ request }: ActionFunctionArgs) {
           orderId: possibleOrderId,
           value: possibleTotal ?? 0,
           currency: possibleCurrency ?? "USD",
-          url,
-          sourceUrl: url,
+          url: normalizedUrl,
+          sourceUrl: normalizedUrl,
           actionSource: "website",
           shop: resolvedShop,
           ip,
@@ -419,7 +462,17 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    return corsify(json({ ok: true, saved: true, eventName }, { status: 200 }));
+    return corsify(
+      json(
+        {
+          ok: true,
+          saved: true,
+          eventName: normalizedEvent.eventName || eventName,
+          normalizedEvent,
+        },
+        { status: 200 },
+      ),
+    );
   } catch (err: any) {
     console.error("[/api/track] error:", err?.message || err);
     return corsify(json({ ok: false, error: "server error" }, { status: 500 }));
