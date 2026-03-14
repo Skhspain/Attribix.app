@@ -22,28 +22,6 @@ function pickFirstString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length ? x.trim() : null;
 }
 
-function pickFirstNumber(x: unknown): number | null {
-  if (typeof x === "number" && Number.isFinite(x)) return x;
-  if (typeof x === "string") {
-    const n = Number(x);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-function getUtmFromUrl(url: string) {
-  try {
-    const u = new URL(url);
-    return {
-      utmSource: u.searchParams.get("utm_source"),
-      utmMedium: u.searchParams.get("utm_medium"),
-      utmCampaign: u.searchParams.get("utm_campaign"),
-    };
-  } catch {
-    return { utmSource: null, utmMedium: null, utmCampaign: null };
-  }
-}
-
 function getHostFromUrl(url: string | null): string | null {
   try {
     if (!url) return null;
@@ -61,12 +39,6 @@ function getShopFromOriginOrUrl(origin: string | null, url: string | null): stri
     if (url) return new URL(url).hostname;
   } catch {}
   return null;
-}
-
-function normalizeOrderId(value: unknown): string | null {
-  const s = pickFirstString(value);
-  if (!s) return null;
-  return s;
 }
 
 function isUniqueConstraintError(err: any) {
@@ -130,35 +102,19 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!type) return corsify(new Response(null, { status: 204 }));
 
     const event = data?.event ?? null;
-    const eventSnapshot = data?.eventSnapshot ?? null;
 
-    const eventName =
-      pickFirstString(type) ??
-      pickFirstString(eventSnapshot?.name) ??
-      pickFirstString(event?.name) ??
-      pickFirstString(event?.type) ??
-      "unknown";
-
-    const url =
-      pickFirstString(data?.url) ??
-      pickFirstString(eventSnapshot?.url) ??
+    const rawUrl =
       pickFirstString(event?.context?.document?.location?.href) ??
-      pickFirstString(event?.data?.context?.document?.location?.href) ??
+      pickFirstString(data?.url) ??
       null;
 
-    const referrer =
-      pickFirstString(data?.referrer) ??
-      pickFirstString(eventSnapshot?.referrer) ??
-      null;
-
-    const host = pickFirstString(data?.host) ?? getHostFromUrl(url);
-    const originHost = origin;
+    const rawReferrer = pickFirstString(data?.referrer) ?? null;
 
     const requestedShop =
       pickFirstString(data?.shop) ||
       null;
 
-    const inferredStorefrontHost = getShopFromOriginOrUrl(origin, url);
+    const inferredStorefrontHost = getShopFromOriginOrUrl(origin, rawUrl);
     const trackingKey = getTrackingKeyFromRequest(request, data);
 
     let matchedSettings: any = null;
@@ -206,38 +162,56 @@ export async function action({ request }: ActionFunctionArgs) {
       data,
       event,
       type,
-      url,
-      referrer,
+      url: rawUrl,
+      referrer: rawReferrer,
       shop: resolvedShop,
       ip,
       userAgent: ua,
     });
 
+    const eventName = normalizedEvent.eventName;
+    const url = normalizedEvent.url;
+    const referrer = normalizedEvent.referrer;
+    const host = pickFirstString(data?.host) ?? getHostFromUrl(url);
+    const originHost = origin;
+
+    const visitorId = normalizedEvent.visitorId;
+    const sessionId = normalizedEvent.sessionId;
+    const eventId = normalizedEvent.eventId;
+    const accountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId);
+
+    const fbclid = normalizedEvent.fbclid;
+    const gclid = normalizedEvent.gclid;
+    const ttclid = normalizedEvent.ttclid;
+    const msclkid = normalizedEvent.msclkid;
+    const fbp = normalizedEvent.fbp;
+    const fbc = normalizedEvent.fbc;
+
     console.log("[/api/track] HIT", {
       origin,
       ip,
       ua: ua ? ua.slice(0, 120) : null,
-      keys: Object.keys(data || {}).slice(0, 40),
+      keys: Object.keys(data || {}).slice(0, 60),
       type: data?.type ?? null,
       accountID: data?.accountID ?? null,
-      eventType: data?.event?.type ?? data?.eventSnapshot?.type ?? null,
-      eventName: data?.event?.name ?? data?.eventSnapshot?.name ?? null,
+      eventType: data?.event?.type ?? null,
+      eventName: data?.event?.name ?? null,
       requestedShop,
       resolvedShop,
       inferredStorefrontHost,
-      visitorId: data?.visitorId ?? null,
-      sessionId: data?.sessionId ?? null,
-      eventId: data?.eventId ?? null,
-      referrer: data?.referrer ?? null,
+      visitorId,
+      sessionId,
+      eventId,
+      referrer,
       clickIds: data?.clickIds ?? null,
-      fbp: data?.fbp ?? null,
-      fbc: data?.fbc ?? null,
+      fbp,
+      fbc,
       urlFromBody: data?.url ?? null,
-      orderId: data?.orderId ?? data?.eventSnapshot?.orderId ?? null,
-      value: data?.value ?? data?.totalValue ?? data?.eventSnapshot?.totalValue ?? null,
-      currency: data?.currency ?? data?.eventSnapshot?.currency ?? null,
-      email: data?.email ?? data?.eventSnapshot?.email ?? null,
-      phone: data?.phone ?? data?.eventSnapshot?.phone ?? null,
+      orderId: normalizedEvent.orderId,
+      value: normalizedEvent.value,
+      currency: normalizedEvent.currency,
+      email: normalizedEvent.email,
+      phone: normalizedEvent.phone,
       authMode: matchedSettings
         ? matchedSettings.trackingKey
           ? "tracking_key"
@@ -246,59 +220,23 @@ export async function action({ request }: ActionFunctionArgs) {
       normalizedEvent,
     });
 
-    const normalizedUrl = normalizedEvent.url || url || null;
-    const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(normalizedUrl || "");
-
-    const visitorId = normalizedEvent.visitorId;
-    const sessionId = normalizedEvent.sessionId;
-    const eventId = normalizedEvent.eventId || pickFirstString(data?.eventId);
-    const accountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId);
-
-    const clickIds = data?.clickIds ?? {};
-    const fbclid =
-      normalizedEvent.fbclid ??
-      pickFirstString(clickIds?.fbclid) ??
-      pickFirstString(data?.fbclid) ??
-      null;
-
-    const gclid =
-      normalizedEvent.gclid ??
-      pickFirstString(clickIds?.gclid) ??
-      pickFirstString(data?.gclid) ??
-      null;
-
-    const ttclid =
-      normalizedEvent.ttclid ??
-      pickFirstString(clickIds?.ttclid) ??
-      pickFirstString(data?.ttclid) ??
-      null;
-
-    const msclkid =
-      normalizedEvent.msclkid ??
-      pickFirstString(clickIds?.msclkid) ??
-      pickFirstString(data?.msclkid) ??
-      null;
-
-    const fbp = normalizedEvent.fbp ?? pickFirstString(data?.fbp);
-    const fbc = normalizedEvent.fbc ?? pickFirstString(data?.fbc);
-
     try {
       await db.trackedEvent.create({
         data: {
-          eventName: normalizedEvent.eventName || eventName,
+          eventName,
           createdAt: new Date(),
-          url: normalizedUrl,
-          source: utmSource ?? null,
+          url,
+          source: normalizedEvent.utmSource ?? null,
           sessionId: sessionId ?? null,
-          utmSource: utmSource ?? null,
-          utmMedium: utmMedium ?? null,
-          utmCampaign: utmCampaign ?? null,
+          utmSource: normalizedEvent.utmSource ?? null,
+          utmMedium: normalizedEvent.utmMedium ?? null,
+          utmCampaign: normalizedEvent.utmCampaign ?? null,
           ip,
           userAgent: ua,
           shop: resolvedShop,
           visitorId,
           eventId,
-          referrer: normalizedEvent.referrer ?? referrer,
+          referrer,
           fbclid,
           gclid,
           ttclid,
@@ -328,60 +266,15 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    const possibleOrderId =
-      normalizedEvent.orderId ||
-      normalizeOrderId(eventSnapshot?.orderId) ||
-      normalizeOrderId(data?.orderId) ||
-      normalizeOrderId(event?.orderId) ||
-      normalizeOrderId(event?.data?.orderId) ||
-      normalizeOrderId(event?.data?.order?.id) ||
-      normalizeOrderId(event?.data?.checkout?.order?.id) ||
-      null;
-
-    const possibleTotal =
-      normalizedEvent.value ??
-      pickFirstNumber(eventSnapshot?.totalValue) ??
-      pickFirstNumber(eventSnapshot?.value) ??
-      pickFirstNumber(data?.totalValue) ??
-      pickFirstNumber(data?.value) ??
-      pickFirstNumber(event?.value) ??
-      pickFirstNumber(event?.data?.totalPrice?.amount) ??
-      pickFirstNumber(event?.data?.checkout?.totalPrice?.amount) ??
-      pickFirstNumber(event?.data?.totalPrice) ??
-      pickFirstNumber(event?.data?.checkout?.totalPrice) ??
-      null;
-
-    const possibleCurrency =
-      normalizedEvent.currency ||
-      pickFirstString(eventSnapshot?.currency) ||
-      pickFirstString(data?.currency) ||
-      pickFirstString(event?.currency) ||
-      pickFirstString(event?.data?.currency) ||
-      pickFirstString(event?.data?.checkout?.currencyCode) ||
-      pickFirstString(event?.data?.checkout?.totalPrice?.currencyCode) ||
-      null;
-
-    const possibleEmail =
-      normalizedEvent.email ||
-      pickFirstString(eventSnapshot?.email) ||
-      pickFirstString(data?.email) ||
-      pickFirstString(event?.email) ||
-      pickFirstString(event?.data?.email) ||
-      pickFirstString(event?.data?.checkout?.email) ||
-      null;
-
-    const possiblePhone =
-      normalizedEvent.phone ||
-      pickFirstString(eventSnapshot?.phone) ||
-      pickFirstString(data?.phone) ||
-      pickFirstString(event?.phone) ||
-      pickFirstString(event?.data?.phone) ||
-      pickFirstString(event?.data?.checkout?.phone) ||
-      null;
+    const possibleOrderId = normalizedEvent.orderId;
+    const possibleTotal = normalizedEvent.value;
+    const possibleCurrency = normalizedEvent.currency;
+    const possibleEmail = normalizedEvent.email;
+    const possiblePhone = normalizedEvent.phone;
 
     const isPurchaseLike =
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
-        (normalizedEvent.eventName || eventName || "").toLowerCase(),
+        (eventName || "").toLowerCase(),
       ) ||
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
         (type || "").toLowerCase(),
@@ -398,17 +291,17 @@ export async function action({ request }: ActionFunctionArgs) {
           orderId: possibleOrderId,
           visitorId,
           sessionId: sessionId ?? null,
-          utmSource: utmSource ?? null,
-          utmMedium: utmMedium ?? null,
-          utmCampaign: utmCampaign ?? null,
+          utmSource: normalizedEvent.utmSource ?? null,
+          utmMedium: normalizedEvent.utmMedium ?? null,
+          utmCampaign: normalizedEvent.utmCampaign ?? null,
           fbclid,
           gclid,
           ttclid,
           msclkid,
           fbp,
           fbc,
-          referrer: normalizedEvent.referrer ?? referrer,
-          landingPage: normalizedUrl,
+          referrer,
+          landingPage: url,
         },
         update: {
           totalValue: possibleTotal ?? undefined,
@@ -416,17 +309,17 @@ export async function action({ request }: ActionFunctionArgs) {
           shop: resolvedShop ?? undefined,
           visitorId: visitorId ?? undefined,
           sessionId: sessionId ?? undefined,
-          utmSource: utmSource ?? undefined,
-          utmMedium: utmMedium ?? undefined,
-          utmCampaign: utmCampaign ?? undefined,
+          utmSource: normalizedEvent.utmSource ?? undefined,
+          utmMedium: normalizedEvent.utmMedium ?? undefined,
+          utmCampaign: normalizedEvent.utmCampaign ?? undefined,
           fbclid: fbclid ?? undefined,
           gclid: gclid ?? undefined,
           ttclid: ttclid ?? undefined,
           msclkid: msclkid ?? undefined,
           fbp: fbp ?? undefined,
           fbc: fbc ?? undefined,
-          referrer: (normalizedEvent.referrer ?? referrer) ?? undefined,
-          landingPage: normalizedUrl ?? undefined,
+          referrer: referrer ?? undefined,
+          landingPage: url ?? undefined,
         },
       });
 
@@ -438,8 +331,8 @@ export async function action({ request }: ActionFunctionArgs) {
           orderId: possibleOrderId,
           value: possibleTotal ?? 0,
           currency: possibleCurrency ?? "USD",
-          url: normalizedUrl,
-          sourceUrl: normalizedUrl,
+          url,
+          sourceUrl: url,
           actionSource: "website",
           shop: resolvedShop,
           ip,
@@ -462,17 +355,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    return corsify(
-      json(
-        {
-          ok: true,
-          saved: true,
-          eventName: normalizedEvent.eventName || eventName,
-          normalizedEvent,
-        },
-        { status: 200 },
-      ),
-    );
+    return corsify(json({ ok: true, saved: true, eventName }, { status: 200 }));
   } catch (err: any) {
     console.error("[/api/track] error:", err?.message || err);
     return corsify(json({ ok: false, error: "server error" }, { status: 500 }));
