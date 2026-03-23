@@ -232,14 +232,20 @@ function safeGetReferrerFromEventOrDocument(ev: any): string | null {
     ];
 
     for (const candidate of candidates) {
-      if (typeof candidate === "string") return candidate;
+      if (typeof candidate === "string") {
+        const trimmed = candidate.trim();
+        return trimmed || null;
+      }
     }
   } catch {}
 
   try {
     // @ts-ignore
     const ref = globalThis?.document?.referrer;
-    if (typeof ref === "string") return ref;
+    if (typeof ref === "string") {
+      const trimmed = ref.trim();
+      return trimmed || null;
+    }
   } catch {}
 
   return null;
@@ -262,9 +268,6 @@ function safeGetCookie(name: string): string | null {
 }
 
 function getHost(url: string | null): string | null {
-  try {
-    if (!url) return new URL(url).hostname;
-  } catch {}
   try {
     if (!url) return null;
     return new URL(url).hostname;

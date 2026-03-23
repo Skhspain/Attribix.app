@@ -9,6 +9,7 @@ type EnsureResult =
       accountID: string;
       action: "created" | "updated";
       webPixelId?: string;
+      browserScriptTagId?: string;
       ms: number;
       note?: string;
     }
@@ -22,6 +23,14 @@ type EnsureResult =
       authRedirect?: string;
       ms: number;
     };
+
+type ScriptTagEnsureResult = {
+  ok: boolean;
+  action: "created" | "updated" | "unchanged" | "skipped";
+  id?: string;
+  src?: string;
+  error?: string;
+};
 
 function msSince(t0: number) {
   return Date.now() - t0;
@@ -90,6 +99,222 @@ async function runGraphql(admin: any, query: string, variables?: any) {
 
 const META_NAMESPACE = "attribix";
 const META_KEY = "web_pixel_id";
+
+function getAppOrigin(request: Request) {
+  try {
+    if (process.env.APP_URL?.trim()) {
+      return process.env.APP_URL.trim().replace(/\/$/, "");
+    }
+
+    const url = new URL(request.url);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return "https://attribix-app.fly.dev";
+  }
+}
+
+function getBrowserTrackScriptSrc(request: Request) {
+  const origin = getAppOrigin(request);
+  return `${origin}/attribix/browser-track`;
+}
+
+async function ensureBrowserContextScriptTag(
+  admin: any,
+  request: Request,
+  shop: string,
+): Promise<ScriptTagEnsureResult> {
+  try {
+    const desiredSrc = getBrowserTrackScriptSrc(request);
+
+    const LIST_QUERY = `#graphql
+      query ScriptTagsForAttribix {
+        scriptTags(first: 50) {
+          edges {
+            node {
+              id
+              src
+              displayScope
+            }
+          }
+        }
+      }
+    `;
+
+    const listRes = await runGraphql(admin, LIST_QUERY);
+
+    if (listRes.topErrorText) {
+      console.error("[webPixel] scriptTags query error", listRes.topErrorText);
+      return {
+        ok: false,
+        action: "skipped",
+        error: listRes.topErrorText,
+      };
+    }
+
+    const nodes =
+      listRes.data?.data?.scriptTags?.edges?.map((edge: any) => edge?.node).filter(Boolean) ?? [];
+
+    const existing = nodes.find((node: any) => {
+      const src = String(node?.src || "");
+      return (
+        src === desiredSrc ||
+        src.startsWith(`${desiredSrc}?`) ||
+        src.includes("/attribix/browser-track")
+      );
+    });
+
+    if (existing) {
+      const currentSrc = String(existing.src || "");
+      const currentScope = String(existing.displayScope || "");
+
+      if (currentSrc === desiredSrc && currentScope === "ONLINE_STORE") {
+        console.log("[webPixel] browser ScriptTag unchanged", {
+          shop,
+          id: existing.id,
+          src: existing.src,
+          displayScope: existing.displayScope,
+        });
+
+        return {
+          ok: true,
+          action: "unchanged",
+          id: existing.id,
+          src: existing.src,
+        };
+      }
+
+      const UPDATE_MUTATION = `#graphql
+        mutation ScriptTagUpdate($id: ID!, $input: ScriptTagInput!) {
+          scriptTagUpdate(id: $id, input: $input) {
+            scriptTag {
+              id
+              src
+              displayScope
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
+
+      const upd = await runGraphql(admin, UPDATE_MUTATION, {
+        id: existing.id,
+        input: {
+          src: desiredSrc,
+          displayScope: "ONLINE_STORE",
+          cache: false,
+        },
+      });
+
+      if (upd.topErrorText) {
+        console.error("[webPixel] scriptTagUpdate top-level error", upd.topErrorText);
+        return {
+          ok: false,
+          action: "skipped",
+          error: upd.topErrorText,
+        };
+      }
+
+      const userErrors = upd.data?.data?.scriptTagUpdate?.userErrors ?? [];
+      if (userErrors.length) {
+        const text = userErrors.map((e: any) => e?.message).filter(Boolean).join(" | ");
+        console.error("[webPixel] scriptTagUpdate userErrors", userErrors);
+        return {
+          ok: false,
+          action: "skipped",
+          error: text || "scriptTagUpdate returned userErrors",
+        };
+      }
+
+      const updated = upd.data?.data?.scriptTagUpdate?.scriptTag;
+
+      console.log("[webPixel] browser ScriptTag updated", {
+        shop,
+        id: updated?.id || existing.id,
+        src: updated?.src || desiredSrc,
+        displayScope: updated?.displayScope || "ONLINE_STORE",
+      });
+
+      return {
+        ok: true,
+        action: "updated",
+        id: updated?.id || existing.id,
+        src: updated?.src || desiredSrc,
+      };
+    }
+
+    const CREATE_MUTATION = `#graphql
+      mutation ScriptTagCreate($input: ScriptTagInput!) {
+        scriptTagCreate(input: $input) {
+          scriptTag {
+            id
+            src
+            displayScope
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+    const crt = await runGraphql(admin, CREATE_MUTATION, {
+      input: {
+        src: desiredSrc,
+        displayScope: "ONLINE_STORE",
+        cache: false,
+      },
+    });
+
+    if (crt.topErrorText) {
+      console.error("[webPixel] scriptTagCreate top-level error", crt.topErrorText);
+      return {
+        ok: false,
+        action: "skipped",
+        error: crt.topErrorText,
+      };
+    }
+
+    const userErrors = crt.data?.data?.scriptTagCreate?.userErrors ?? [];
+    if (userErrors.length) {
+      const text = userErrors.map((e: any) => e?.message).filter(Boolean).join(" | ");
+      console.error("[webPixel] scriptTagCreate userErrors", userErrors);
+      return {
+        ok: false,
+        action: "skipped",
+        error: text || "scriptTagCreate returned userErrors",
+      };
+    }
+
+    const created = crt.data?.data?.scriptTagCreate?.scriptTag;
+
+    console.log("[webPixel] browser ScriptTag created", {
+      shop,
+      id: created?.id,
+      src: created?.src || desiredSrc,
+      displayScope: created?.displayScope || "ONLINE_STORE",
+    });
+
+    return {
+      ok: true,
+      action: "created",
+      id: created?.id,
+      src: created?.src || desiredSrc,
+    };
+  } catch (e: any) {
+    const message = e?.message || String(e);
+    console.error("[webPixel] ensureBrowserContextScriptTag unexpected error", message);
+
+    return {
+      ok: false,
+      action: "skipped",
+      error: message,
+    };
+  }
+}
 
 /**
  * IMPORTANT CHANGE:
@@ -205,6 +430,10 @@ async function ensureWebPixel(request: Request, accountID: string) {
 
     const desiredSettings = settingsObject(accountID);
 
+    let finalAction: "created" | "updated" = "updated";
+    let webPixelId: string | undefined;
+    let note = "";
+
     // 2) UPDATE if stored pixel id exists
     if (storedWebPixelId) {
       const UPDATE_MUTATION_V2 = `#graphql
@@ -232,7 +461,9 @@ async function ensureWebPixel(request: Request, accountID: string) {
 
       if (
         upd.topErrorText &&
-        /missing required arguments: webPixel|Unknown argument "webPixel"|argument "webPixel"/i.test(upd.topErrorText)
+        /missing required arguments: webPixel|Unknown argument "webPixel"|argument "webPixel"/i.test(
+          upd.topErrorText
+        )
       ) {
         upd = await runGraphql(admin, UPDATE_MUTATION_V1, {
           id: storedWebPixelId,
@@ -271,167 +502,157 @@ async function ensureWebPixel(request: Request, accountID: string) {
         );
       }
 
-      const webPixelId = upd.data?.data?.webPixelUpdate?.webPixel?.id ?? storedWebPixelId;
-
+      webPixelId = upd.data?.data?.webPixelUpdate?.webPixel?.id ?? storedWebPixelId;
+      finalAction = "updated";
+      note = "Updated Web Pixel settings.";
       console.log("[webPixel] ENSURE HIT (updated)", { webPixelId, ms: msSince(t0) });
+    } else {
+      // 3) CREATE otherwise
+      const CREATE_MUTATION_V2 = `#graphql
+        mutation WebPixelCreate($webPixel: WebPixelInput!) {
+          webPixelCreate(webPixel: $webPixel) {
+            webPixel { id }
+            userErrors { field message }
+          }
+        }
+      `;
 
-      return json<EnsureResult>(
-        {
-          ok: true,
-          shop,
-          accountID,
-          action: "updated",
-          webPixelId,
-          ms: msSince(t0),
-          note: "Updated Web Pixel settings.",
-        },
-        { headers: noStoreHeaders() }
-      );
-    }
+      const CREATE_MUTATION_V1 = `#graphql
+        mutation WebPixelCreate($settings: JSON!) {
+          webPixelCreate(settings: $settings) {
+            webPixel { id }
+            userErrors { field message }
+          }
+        }
+      `;
 
-    // 3) CREATE otherwise
-    const CREATE_MUTATION_V2 = `#graphql
-      mutation WebPixelCreate($webPixel: WebPixelInput!) {
-        webPixelCreate(webPixel: $webPixel) {
-          webPixel { id }
-          userErrors { field message }
+      let crt = await runGraphql(admin, CREATE_MUTATION_V2, {
+        webPixel: { settings: desiredSettings },
+      });
+
+      if (
+        crt.topErrorText &&
+        /missing required arguments: webPixel|Unknown argument "webPixel"|argument "webPixel"/i.test(
+          crt.topErrorText
+        )
+      ) {
+        crt = await runGraphql(admin, CREATE_MUTATION_V1, { settings: desiredSettings });
+      }
+
+      if (crt.topErrorText) {
+        console.log("[webPixel] create top-level errors", crt.topErrorText);
+        return json<EnsureResult>(
+          {
+            ok: false,
+            shop,
+            accountID,
+            error: crt.topErrorText,
+            hint: "Create failed. Most commonly settings schema mismatch or missing scopes.",
+            ms: msSince(t0),
+          },
+          { status: 500, headers: noStoreHeaders() }
+        );
+      }
+
+      const createErrors = crt.data?.data?.webPixelCreate?.userErrors ?? [];
+      if (createErrors.length) {
+        console.log("[webPixel] create userErrors", createErrors);
+        return json<EnsureResult>(
+          {
+            ok: false,
+            shop,
+            accountID,
+            error: "Shopify webPixelCreate returned userErrors",
+            hint: JSON.stringify(createErrors),
+            ms: msSince(t0),
+          },
+          { status: 400, headers: noStoreHeaders() }
+        );
+      }
+
+      webPixelId = crt.data?.data?.webPixelCreate?.webPixel?.id as string | undefined;
+
+      if (!webPixelId) {
+        return json<EnsureResult>(
+          {
+            ok: false,
+            shop,
+            accountID,
+            error: "webPixelCreate returned no webPixel.id",
+            hint: "Unexpected Shopify response shape.",
+            ms: msSince(t0),
+          },
+          { status: 500, headers: noStoreHeaders() }
+        );
+      }
+
+      // 4) Store pixel id in metafield (best-effort)
+      const METAFIELDS_SET = `#graphql
+        mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { id namespace key value }
+            userErrors { field message }
+          }
+        }
+      `;
+
+      const mf = await runGraphql(admin, METAFIELDS_SET, {
+        metafields: [
+          {
+            ownerId: appInstallationId,
+            namespace: META_NAMESPACE,
+            key: META_KEY,
+            type: "single_line_text_field",
+            value: webPixelId,
+          },
+        ],
+      });
+
+      finalAction = "created";
+
+      if (mf.topErrorText) {
+        console.log("[webPixel] metafieldsSet top errors", mf.topErrorText);
+        note =
+          "Created Web Pixel, but failed to store ID in metafield (pixel still exists).";
+      } else {
+        const mfErrors = mf.data?.data?.metafieldsSet?.userErrors ?? [];
+        if (mfErrors.length) {
+          console.log("[webPixel] metafieldsSet userErrors", mfErrors);
+          note =
+            "Created Web Pixel, but metafield store returned userErrors (pixel still exists).";
+        } else {
+          note = "Created Web Pixel + stored ID.";
         }
       }
-    `;
 
-    const CREATE_MUTATION_V1 = `#graphql
-      mutation WebPixelCreate($settings: JSON!) {
-        webPixelCreate(settings: $settings) {
-          webPixel { id }
-          userErrors { field message }
-        }
+      console.log("[webPixel] ENSURE HIT (created)", { webPixelId, ms: msSince(t0) });
+    }
+
+    // 5) Ensure storefront browser helper script
+    const browserScript = await ensureBrowserContextScriptTag(admin, request, shop);
+
+    if (browserScript.ok) {
+      if (browserScript.action === "created") {
+        note += " Browser helper ScriptTag created.";
+      } else if (browserScript.action === "updated") {
+        note += " Browser helper ScriptTag updated.";
+      } else if (browserScript.action === "unchanged") {
+        note += " Browser helper ScriptTag already present.";
       }
-    `;
-
-    let crt = await runGraphql(admin, CREATE_MUTATION_V2, {
-      webPixel: { settings: desiredSettings },
-    });
-
-    if (
-      crt.topErrorText &&
-      /missing required arguments: webPixel|Unknown argument "webPixel"|argument "webPixel"/i.test(crt.topErrorText)
-    ) {
-      crt = await runGraphql(admin, CREATE_MUTATION_V1, { settings: desiredSettings });
+    } else {
+      note += ` Browser helper ScriptTag was not ensured: ${browserScript.error || "unknown error"}`;
     }
-
-    if (crt.topErrorText) {
-      console.log("[webPixel] create top-level errors", crt.topErrorText);
-      return json<EnsureResult>(
-        {
-          ok: false,
-          shop,
-          accountID,
-          error: crt.topErrorText,
-          hint: "Create failed. Most commonly settings schema mismatch or missing scopes.",
-          ms: msSince(t0),
-        },
-        { status: 500, headers: noStoreHeaders() }
-      );
-    }
-
-    const createErrors = crt.data?.data?.webPixelCreate?.userErrors ?? [];
-    if (createErrors.length) {
-      console.log("[webPixel] create userErrors", createErrors);
-      return json<EnsureResult>(
-        {
-          ok: false,
-          shop,
-          accountID,
-          error: "Shopify webPixelCreate returned userErrors",
-          hint: JSON.stringify(createErrors),
-          ms: msSince(t0),
-        },
-        { status: 400, headers: noStoreHeaders() }
-      );
-    }
-
-    const webPixelId = crt.data?.data?.webPixelCreate?.webPixel?.id as string | undefined;
-
-    if (!webPixelId) {
-      return json<EnsureResult>(
-        {
-          ok: false,
-          shop,
-          accountID,
-          error: "webPixelCreate returned no webPixel.id",
-          hint: "Unexpected Shopify response shape.",
-          ms: msSince(t0),
-        },
-        { status: 500, headers: noStoreHeaders() }
-      );
-    }
-
-    // 4) Store pixel id in metafield (best-effort)
-    const METAFIELDS_SET = `#graphql
-      mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
-        metafieldsSet(metafields: $metafields) {
-          metafields { id namespace key value }
-          userErrors { field message }
-        }
-      }
-    `;
-
-    const mf = await runGraphql(admin, METAFIELDS_SET, {
-      metafields: [
-        {
-          ownerId: appInstallationId,
-          namespace: META_NAMESPACE,
-          key: META_KEY,
-          type: "single_line_text_field",
-          value: webPixelId,
-        },
-      ],
-    });
-
-    if (mf.topErrorText) {
-      console.log("[webPixel] metafieldsSet top errors", mf.topErrorText);
-      return json<EnsureResult>(
-        {
-          ok: true,
-          shop,
-          accountID,
-          action: "created",
-          webPixelId,
-          ms: msSince(t0),
-          note: "Created Web Pixel, but failed to store ID in metafield (pixel still exists).",
-        },
-        { headers: noStoreHeaders() }
-      );
-    }
-
-    const mfErrors = mf.data?.data?.metafieldsSet?.userErrors ?? [];
-    if (mfErrors.length) {
-      console.log("[webPixel] metafieldsSet userErrors", mfErrors);
-      return json<EnsureResult>(
-        {
-          ok: true,
-          shop,
-          accountID,
-          action: "created",
-          webPixelId,
-          ms: msSince(t0),
-          note: "Created Web Pixel, but metafield store returned userErrors (pixel still exists).",
-        },
-        { headers: noStoreHeaders() }
-      );
-    }
-
-    console.log("[webPixel] ENSURE HIT (created)", { webPixelId, ms: msSince(t0) });
 
     return json<EnsureResult>(
       {
         ok: true,
         shop,
         accountID,
-        action: "created",
+        action: finalAction,
         webPixelId,
+        browserScriptTagId: browserScript.id,
         ms: msSince(t0),
-        note: "Created Web Pixel + stored ID.",
+        note,
       },
       { headers: noStoreHeaders() }
     );

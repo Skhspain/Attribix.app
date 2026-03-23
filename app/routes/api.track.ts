@@ -6,20 +6,48 @@ import { sendServerConversions } from "~/services/serverConversions.server";
 import { normalizeTrackedEvent } from "~/services/trackingNormalizer.server";
 import { touchTrackingHealth } from "~/models/trackingSettings.server";
 
-const CORS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST,OPTIONS",
-  "Access-Control-Allow-Headers": "content-type,authorization,accept",
-  "Access-Control-Max-Age": "86400",
-};
+function corsify(request: Request, res: Response) {
+  const origin = request.headers.get("origin");
 
-function corsify(res: Response) {
-  Object.entries(CORS).forEach(([k, v]) => res.headers.set(k, v));
+  if (origin) {
+    res.headers.set("Access-Control-Allow-Origin", origin);
+    res.headers.set("Vary", "Origin");
+  } else {
+    res.headers.set("Access-Control-Allow-Origin", "*");
+  }
+
+  res.headers.set("Access-Control-Allow-Methods", "POST,OPTIONS");
+  res.headers.set("Access-Control-Allow-Headers", "content-type,authorization,accept");
+  res.headers.set("Access-Control-Allow-Credentials", "true");
+  res.headers.set("Access-Control-Max-Age", "86400");
+
   return res;
 }
 
 function pickFirstString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length ? x.trim() : null;
+}
+
+function pickFirstNumber(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string") {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function getUtmFromUrl(url: string) {
+  try {
+    const u = new URL(url);
+    return {
+      utmSource: u.searchParams.get("utm_source"),
+      utmMedium: u.searchParams.get("utm_medium"),
+      utmCampaign: u.searchParams.get("utm_campaign"),
+    };
+  } catch {
+    return { utmSource: null, utmMedium: null, utmCampaign: null };
+  }
 }
 
 function getHostFromUrl(url: string | null): string | null {
@@ -39,6 +67,12 @@ function getShopFromOriginOrUrl(origin: string | null, url: string | null): stri
     if (url) return new URL(url).hostname;
   } catch {}
   return null;
+}
+
+function normalizeOrderId(value: unknown): string | null {
+  const s = pickFirstString(value);
+  if (!s) return null;
+  return s;
 }
 
 function isUniqueConstraintError(err: any) {
@@ -70,16 +104,232 @@ async function readJsonBody(request: Request) {
   }
 }
 
+function normalizeComparableUrl(url: string | null): string | null {
+  try {
+    if (!url) return null;
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
+function getUrlPath(url: string | null): string | null {
+  try {
+    if (!url) return null;
+    return new URL(url).pathname || null;
+  } catch {
+    return null;
+  }
+}
+
+function isCheckoutLikeUrl(url: string | null): boolean {
+  const path = getUrlPath(url);
+  if (!path) return false;
+  return path.includes("/checkouts/");
+}
+
+function hasAttributionSignals(row: {
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  fbclid?: string | null;
+  gclid?: string | null;
+  ttclid?: string | null;
+  msclkid?: string | null;
+  fbp?: string | null;
+  fbc?: string | null;
+}) {
+  return Boolean(
+    row.utmSource ||
+      row.utmMedium ||
+      row.utmCampaign ||
+      row.fbclid ||
+      row.gclid ||
+      row.ttclid ||
+      row.msclkid ||
+      row.fbp ||
+      row.fbc,
+  );
+}
+
+async function findLatestBrowserContext(input: {
+  shop: string | null;
+  visitorId: string | null;
+  sessionId: string | null;
+  fbp?: string | null;
+  fbc?: string | null;
+  fbclid?: string | null;
+  gclid?: string | null;
+  ttclid?: string | null;
+  msclkid?: string | null;
+  currentUrl?: string | null;
+  referrer?: string | null;
+}) {
+  const {
+    shop,
+    visitorId,
+    sessionId,
+    fbp,
+    fbc,
+    fbclid,
+    gclid,
+    ttclid,
+    msclkid,
+    currentUrl,
+    referrer,
+  } = input;
+
+  if (!shop) return null;
+
+  const comparableCurrentUrl = normalizeComparableUrl(currentUrl ?? null);
+  const comparableReferrer = normalizeComparableUrl(referrer ?? null);
+  const currentPath = getUrlPath(currentUrl ?? null);
+  const referrerPath = getUrlPath(referrer ?? null);
+
+  const orClauses = [
+    visitorId ? { visitorId } : undefined,
+    sessionId ? { sessionId } : undefined,
+    fbp ? { fbp } : undefined,
+    fbc ? { fbc } : undefined,
+    fbclid ? { fbclid } : undefined,
+    gclid ? { gclid } : undefined,
+    ttclid ? { ttclid } : undefined,
+    msclkid ? { msclkid } : undefined,
+  ].filter(Boolean) as any[];
+
+  const recentCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  const rows = await db.trackedEvent.findMany({
+    where: {
+      shop,
+      createdAt: {
+        gte: recentCutoff,
+      },
+      ...(orClauses.length ? { OR: orClauses } : {}),
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: orClauses.length ? 80 : 200,
+    select: {
+      createdAt: true,
+      eventName: true,
+      visitorId: true,
+      sessionId: true,
+      fbclid: true,
+      gclid: true,
+      ttclid: true,
+      msclkid: true,
+      fbp: true,
+      fbc: true,
+      url: true,
+      referrer: true,
+      utmSource: true,
+      utmMedium: true,
+      utmCampaign: true,
+    },
+  });
+
+  const usableRows = rows.filter((row) => {
+    return Boolean(
+      row.fbp ||
+        row.fbc ||
+        row.fbclid ||
+        row.gclid ||
+        row.ttclid ||
+        row.msclkid ||
+        row.utmSource ||
+        row.utmMedium ||
+        row.utmCampaign ||
+        row.url ||
+        row.referrer,
+    );
+  });
+
+  if (!usableRows.length) return null;
+
+  const scored = usableRows
+    .map((row) => {
+      let score = 0;
+
+      const rowComparableUrl = normalizeComparableUrl(row.url ?? null);
+      const rowComparableReferrer = normalizeComparableUrl(row.referrer ?? null);
+      const rowPath = getUrlPath(row.url ?? null);
+      const rowReferrerPath = getUrlPath(row.referrer ?? null);
+      const rowHasAttribution = hasAttributionSignals(row);
+      const rowUrlIsCheckoutLike = isCheckoutLikeUrl(row.url ?? null);
+      const rowReferrerIsCheckoutLike = isCheckoutLikeUrl(row.referrer ?? null);
+
+      if (row.eventName === "browser_context_sync") score += 200;
+      if (row.eventName === "product_viewed") score += 120;
+      if (row.eventName === "page_viewed") score += 40;
+      if (row.eventName === "checkout_started") score -= 20;
+      if (row.eventName === "checkout_completed") score -= 40;
+
+      if (visitorId && row.visitorId === visitorId) score += 20;
+      if (sessionId && row.sessionId === sessionId) score += 20;
+      if (fbp && row.fbp === fbp) score += 40;
+      if (fbc && row.fbc === fbc) score += 50;
+      if (fbclid && row.fbclid === fbclid) score += 40;
+      if (gclid && row.gclid === gclid) score += 40;
+      if (ttclid && row.ttclid === ttclid) score += 40;
+      if (msclkid && row.msclkid === msclkid) score += 40;
+
+      if (rowHasAttribution) score += 80;
+      if (row.fbclid) score += 60;
+      if (row.fbc) score += 70;
+      if (row.fbp) score += 40;
+      if (row.utmSource) score += 25;
+      if (row.utmCampaign) score += 25;
+      if (row.utmMedium) score += 10;
+
+      if (comparableCurrentUrl && rowComparableUrl === comparableCurrentUrl) score += 35;
+      if (comparableCurrentUrl && rowComparableReferrer === comparableCurrentUrl) score += 20;
+
+      if (comparableReferrer && rowComparableUrl === comparableReferrer) score += 140;
+      if (comparableReferrer && rowComparableReferrer === comparableReferrer) score += 40;
+
+      if (currentPath && rowPath === currentPath) score += 10;
+      if (currentPath && rowReferrerPath === currentPath) score += 5;
+
+      if (referrerPath && rowPath === referrerPath) score += 25;
+      if (referrerPath && rowReferrerPath === referrerPath) score += 10;
+
+      if (rowUrlIsCheckoutLike) score -= 120;
+      if (rowReferrerIsCheckoutLike) score -= 40;
+
+      if (row.url) score += 2;
+      if (row.referrer) score += 2;
+
+      return { row, score };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return Number(new Date(b.row.createdAt)) - Number(new Date(a.row.createdAt));
+    });
+
+  return scored[0]?.row || null;
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
-  if (request.method === "OPTIONS") return corsify(new Response(null, { status: 204 }));
-  return corsify(new Response("Method not allowed", { status: 405 }));
+  if (request.method === "OPTIONS") {
+    return corsify(request, new Response(null, { status: 204 }));
+  }
+
+  return corsify(request, new Response("Method not allowed", { status: 405 }));
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   const method = request.method.toUpperCase();
 
-  if (method === "OPTIONS") return corsify(new Response(null, { status: 204 }));
-  if (method !== "POST") return corsify(new Response("Method not allowed", { status: 405 }));
+  if (method === "OPTIONS") {
+    return corsify(request, new Response(null, { status: 204 }));
+  }
+
+  if (method !== "POST") {
+    return corsify(request, new Response("Method not allowed", { status: 405 }));
+  }
 
   const origin = request.headers.get("origin") || null;
   const ua = request.headers.get("user-agent") || null;
@@ -95,26 +345,47 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (!data) {
       console.error("[/api/track] invalid json body");
-      return corsify(json({ ok: false, error: "invalid json" }, { status: 400 }));
+      return corsify(request, json({ ok: false, error: "invalid json" }, { status: 400 }));
     }
 
     const type = pickFirstString(data?.type);
-    if (!type) return corsify(new Response(null, { status: 204 }));
+    if (!type) {
+      return corsify(request, new Response(null, { status: 204 }));
+    }
 
     const event = data?.event ?? null;
+    const eventSnapshot = data?.eventSnapshot ?? null;
 
-    const rawUrl =
-      pickFirstString(event?.context?.document?.location?.href) ??
+    const eventName =
+      pickFirstString(type) ??
+      pickFirstString(eventSnapshot?.name) ??
+      pickFirstString(event?.name) ??
+      pickFirstString(eventSnapshot?.type) ??
+      pickFirstString(event?.type) ??
+      "unknown";
+
+    const url =
       pickFirstString(data?.url) ??
+      pickFirstString(eventSnapshot?.url) ??
+      pickFirstString(event?.context?.document?.location?.href) ??
+      pickFirstString(event?.data?.context?.document?.location?.href) ??
+      pickFirstString(event?.data?.url) ??
       null;
 
-    const rawReferrer = pickFirstString(data?.referrer) ?? null;
-
-    const requestedShop =
-      pickFirstString(data?.shop) ||
+    const referrer =
+      pickFirstString(data?.referrer) ??
+      pickFirstString(eventSnapshot?.referrer) ??
+      pickFirstString(event?.context?.document?.referrer) ??
+      pickFirstString(event?.data?.context?.document?.referrer) ??
+      pickFirstString(event?.data?.referrer) ??
       null;
 
-    const inferredStorefrontHost = getShopFromOriginOrUrl(origin, rawUrl);
+    const host = pickFirstString(data?.host) ?? getHostFromUrl(url);
+    const originHost = origin;
+
+    const requestedShop = pickFirstString(data?.shop) || null;
+
+    const inferredStorefrontHost = getShopFromOriginOrUrl(origin, url);
     const trackingKey = getTrackingKeyFromRequest(request, data);
 
     let matchedSettings: any = null;
@@ -136,62 +407,54 @@ export async function action({ request }: ActionFunctionArgs) {
         requestedShop,
         matchedShop: matchedSettings.shop,
       });
-      return corsify(json({ ok: false, error: "shop mismatch" }, { status: 403 }));
+      return corsify(request, json({ ok: false, error: "shop mismatch" }, { status: 403 }));
     }
 
     if (matchedSettings?.trackingEnabled === false) {
-      return corsify(json({ ok: false, error: "tracking disabled" }, { status: 403 }));
+      return corsify(request, json({ ok: false, error: "tracking disabled" }, { status: 403 }));
     }
 
-    if (matchedSettings?.trackingKey && trackingKey !== matchedSettings.trackingKey) {
-      console.error("[/api/track] invalid tracking key", {
-        requestedShop,
-        matchedShop: matchedSettings.shop,
-        hasTrackingKey: Boolean(trackingKey),
-      });
-      return corsify(json({ ok: false, error: "invalid tracking key" }, { status: 403 }));
+    let authMode = "legacy_open";
+
+    if (matchedSettings?.trackingKey) {
+      if (trackingKey === matchedSettings.trackingKey) {
+        authMode = "tracking_key";
+      } else if (requestedShop && matchedSettings.shop === requestedShop) {
+        authMode = "shop_only_missing_key_allowed";
+        console.log("[/api/track] missing tracking key, allowing storefront event", {
+          requestedShop,
+          matchedShop: matchedSettings.shop,
+        });
+      } else {
+        console.error("[/api/track] invalid tracking key", {
+          requestedShop,
+          matchedShop: matchedSettings.shop,
+          hasTrackingKey: Boolean(trackingKey),
+        });
+        return corsify(request, json({ ok: false, error: "invalid tracking key" }, { status: 403 }));
+      }
+    } else if (matchedSettings) {
+      authMode = "shop_only";
     }
 
-    const resolvedShop =
-      matchedSettings?.shop ||
-      requestedShop ||
-      inferredStorefrontHost ||
-      null;
+    const resolvedShop = matchedSettings?.shop || requestedShop || inferredStorefrontHost || null;
 
     const normalizedEvent = normalizeTrackedEvent({
       data,
       event,
       type,
-      url: rawUrl,
-      referrer: rawReferrer,
+      url,
+      referrer,
       shop: resolvedShop,
       ip,
       userAgent: ua,
     });
 
-    const eventName = normalizedEvent.eventName;
-    const url = normalizedEvent.url;
-    const referrer = normalizedEvent.referrer;
-    const host = pickFirstString(data?.host) ?? getHostFromUrl(url);
-    const originHost = origin;
-
-    const visitorId = normalizedEvent.visitorId;
-    const sessionId = normalizedEvent.sessionId;
-    const eventId = normalizedEvent.eventId;
-    const accountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId);
-
-    const fbclid = normalizedEvent.fbclid;
-    const gclid = normalizedEvent.gclid;
-    const ttclid = normalizedEvent.ttclid;
-    const msclkid = normalizedEvent.msclkid;
-    const fbp = normalizedEvent.fbp;
-    const fbc = normalizedEvent.fbc;
-
     console.log("[/api/track] HIT", {
       origin,
       ip,
       ua: ua ? ua.slice(0, 120) : null,
-      keys: Object.keys(data || {}).slice(0, 60),
+      keys: Object.keys(data || {}).slice(0, 40),
       type: data?.type ?? null,
       accountID: data?.accountID ?? null,
       eventType: data?.event?.type ?? null,
@@ -199,26 +462,42 @@ export async function action({ request }: ActionFunctionArgs) {
       requestedShop,
       resolvedShop,
       inferredStorefrontHost,
-      visitorId,
-      sessionId,
-      eventId,
-      referrer,
+      visitorId: data?.visitorId ?? null,
+      sessionId: data?.sessionId ?? null,
+      eventId: data?.eventId ?? null,
+      referrer: data?.referrer ?? null,
       clickIds: data?.clickIds ?? null,
-      fbp,
-      fbc,
+      fbp: data?.fbp ?? null,
+      fbc: data?.fbc ?? null,
       urlFromBody: data?.url ?? null,
-      orderId: normalizedEvent.orderId,
-      value: normalizedEvent.value,
-      currency: normalizedEvent.currency,
-      email: normalizedEvent.email,
-      phone: normalizedEvent.phone,
-      authMode: matchedSettings
-        ? matchedSettings.trackingKey
-          ? "tracking_key"
-          : "shop_only"
-        : "legacy_open",
+      orderId: data?.orderId ?? null,
+      value: data?.value ?? data?.totalValue ?? null,
+      currency: data?.currency ?? null,
+      email: data?.email ?? null,
+      phone: data?.phone ?? null,
+      authMode,
       normalizedEvent,
     });
+
+    const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(url || "");
+
+    const visitorId = pickFirstString(data?.visitorId);
+    const sessionId = pickFirstString(data?.sessionId);
+    const eventId = pickFirstString(data?.eventId) ?? pickFirstString(eventSnapshot?.id) ?? null;
+
+    const accountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId);
+
+    const clickIds = data?.clickIds ?? {};
+    let fbclid = pickFirstString(clickIds?.fbclid) || pickFirstString(data?.fbclid) || null;
+
+    let gclid = pickFirstString(clickIds?.gclid) || pickFirstString(data?.gclid) || null;
+
+    let ttclid = pickFirstString(clickIds?.ttclid) || pickFirstString(data?.ttclid) || null;
+
+    let msclkid = pickFirstString(clickIds?.msclkid) || pickFirstString(data?.msclkid) || null;
+
+    let fbp = pickFirstString(data?.fbp);
+    let fbc = pickFirstString(data?.fbc);
 
     try {
       await db.trackedEvent.create({
@@ -226,11 +505,11 @@ export async function action({ request }: ActionFunctionArgs) {
           eventName,
           createdAt: new Date(),
           url,
-          source: normalizedEvent.utmSource ?? null,
+          source: utmSource ?? null,
           sessionId: sessionId ?? null,
-          utmSource: normalizedEvent.utmSource ?? null,
-          utmMedium: normalizedEvent.utmMedium ?? null,
-          utmCampaign: normalizedEvent.utmCampaign ?? null,
+          utmSource: utmSource ?? null,
+          utmMedium: utmMedium ?? null,
+          utmCampaign: utmCampaign ?? null,
           ip,
           userAgent: ua,
           shop: resolvedShop,
@@ -266,11 +545,50 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    const possibleOrderId = normalizedEvent.orderId;
-    const possibleTotal = normalizedEvent.value;
-    const possibleCurrency = normalizedEvent.currency;
-    const possibleEmail = normalizedEvent.email;
-    const possiblePhone = normalizedEvent.phone;
+    const possibleOrderId =
+      normalizeOrderId(data?.orderId) ||
+      normalizeOrderId(eventSnapshot?.orderId) ||
+      normalizeOrderId(event?.orderId) ||
+      normalizeOrderId(event?.data?.orderId) ||
+      normalizeOrderId(event?.data?.order?.id) ||
+      normalizeOrderId(event?.data?.checkout?.order?.id) ||
+      null;
+
+    const possibleTotal =
+      pickFirstNumber(data?.totalValue) ??
+      pickFirstNumber(data?.value) ??
+      pickFirstNumber(eventSnapshot?.totalValue) ??
+      pickFirstNumber(eventSnapshot?.value) ??
+      pickFirstNumber(event?.value) ??
+      pickFirstNumber(event?.data?.totalPrice) ??
+      pickFirstNumber(event?.data?.checkout?.totalPrice?.amount) ??
+      pickFirstNumber(event?.data?.checkout?.totalPrice) ??
+      null;
+
+    const possibleCurrency =
+      pickFirstString(data?.currency) ||
+      pickFirstString(eventSnapshot?.currency) ||
+      pickFirstString(event?.currency) ||
+      pickFirstString(event?.data?.currency) ||
+      pickFirstString(event?.data?.checkout?.currencyCode) ||
+      pickFirstString(event?.data?.checkout?.currency) ||
+      null;
+
+    const possibleEmail =
+      pickFirstString(data?.email) ||
+      pickFirstString(eventSnapshot?.email) ||
+      pickFirstString(event?.email) ||
+      pickFirstString(event?.data?.email) ||
+      pickFirstString(event?.data?.checkout?.email) ||
+      null;
+
+    const possiblePhone =
+      pickFirstString(data?.phone) ||
+      pickFirstString(eventSnapshot?.phone) ||
+      pickFirstString(event?.phone) ||
+      pickFirstString(event?.data?.phone) ||
+      pickFirstString(event?.data?.checkout?.phone) ||
+      null;
 
     const isPurchaseLike =
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
@@ -281,6 +599,63 @@ export async function action({ request }: ActionFunctionArgs) {
       );
 
     if (possibleOrderId && isPurchaseLike) {
+      const fallbackContext = await findLatestBrowserContext({
+        shop: resolvedShop,
+        visitorId,
+        sessionId,
+        fbp,
+        fbc,
+        fbclid,
+        gclid,
+        ttclid,
+        msclkid,
+        currentUrl: url,
+        referrer,
+      });
+
+      if (!fbp && fallbackContext?.fbp) fbp = fallbackContext.fbp;
+      if (!fbc && fallbackContext?.fbc) fbc = fallbackContext.fbc;
+      if (!fbclid && fallbackContext?.fbclid) fbclid = fallbackContext.fbclid;
+      if (!gclid && fallbackContext?.gclid) gclid = fallbackContext.gclid;
+      if (!ttclid && fallbackContext?.ttclid) ttclid = fallbackContext.ttclid;
+      if (!msclkid && fallbackContext?.msclkid) msclkid = fallbackContext.msclkid;
+
+      const finalUtmSource = utmSource ?? fallbackContext?.utmSource ?? null;
+      const finalUtmMedium = utmMedium ?? fallbackContext?.utmMedium ?? null;
+      const finalUtmCampaign = utmCampaign ?? fallbackContext?.utmCampaign ?? null;
+
+      const fallbackComparableUrl = normalizeComparableUrl(fallbackContext?.url ?? null);
+      const purchaseComparableReferrer = normalizeComparableUrl(referrer ?? null);
+
+      const finalLandingPage =
+        fallbackContext?.eventName === "browser_context_sync"
+          ? (fallbackContext?.url ?? url ?? null)
+          : fallbackComparableUrl && purchaseComparableReferrer && fallbackComparableUrl === purchaseComparableReferrer
+            ? (fallbackContext?.url ?? url ?? null)
+            : (url ?? fallbackContext?.url ?? null);
+
+      const safeLandingPage = isCheckoutLikeUrl(finalLandingPage)
+        ? (fallbackContext?.referrer ?? finalLandingPage ?? null)
+        : finalLandingPage;
+
+      const finalReferrer = referrer ?? fallbackContext?.referrer ?? null;
+
+      console.log("[/api/track] purchase enrichment", {
+        orderId: possibleOrderId,
+        usedFallbackContext: Boolean(fallbackContext),
+        fallbackEventName: fallbackContext?.eventName ?? null,
+        fallbackUrl: fallbackContext?.url ?? null,
+        fallbackReferrer: fallbackContext?.referrer ?? null,
+        finalFbp: Boolean(fbp),
+        finalFbc: Boolean(fbc),
+        finalFbclid: Boolean(fbclid),
+        finalGclid: Boolean(gclid),
+        finalUtmSource,
+        finalUtmMedium,
+        finalUtmCampaign,
+        safeLandingPage,
+      });
+
       await db.purchase.upsert({
         where: { orderId: possibleOrderId },
         create: {
@@ -291,17 +666,17 @@ export async function action({ request }: ActionFunctionArgs) {
           orderId: possibleOrderId,
           visitorId,
           sessionId: sessionId ?? null,
-          utmSource: normalizedEvent.utmSource ?? null,
-          utmMedium: normalizedEvent.utmMedium ?? null,
-          utmCampaign: normalizedEvent.utmCampaign ?? null,
+          utmSource: finalUtmSource,
+          utmMedium: finalUtmMedium,
+          utmCampaign: finalUtmCampaign,
           fbclid,
           gclid,
           ttclid,
           msclkid,
           fbp,
           fbc,
-          referrer,
-          landingPage: url,
+          referrer: finalReferrer,
+          landingPage: safeLandingPage,
         },
         update: {
           totalValue: possibleTotal ?? undefined,
@@ -309,17 +684,17 @@ export async function action({ request }: ActionFunctionArgs) {
           shop: resolvedShop ?? undefined,
           visitorId: visitorId ?? undefined,
           sessionId: sessionId ?? undefined,
-          utmSource: normalizedEvent.utmSource ?? undefined,
-          utmMedium: normalizedEvent.utmMedium ?? undefined,
-          utmCampaign: normalizedEvent.utmCampaign ?? undefined,
+          utmSource: finalUtmSource ?? undefined,
+          utmMedium: finalUtmMedium ?? undefined,
+          utmCampaign: finalUtmCampaign ?? undefined,
           fbclid: fbclid ?? undefined,
           gclid: gclid ?? undefined,
           ttclid: ttclid ?? undefined,
           msclkid: msclkid ?? undefined,
           fbp: fbp ?? undefined,
           fbc: fbc ?? undefined,
-          referrer: referrer ?? undefined,
-          landingPage: url ?? undefined,
+          referrer: finalReferrer ?? undefined,
+          landingPage: safeLandingPage ?? undefined,
         },
       });
 
@@ -331,8 +706,8 @@ export async function action({ request }: ActionFunctionArgs) {
           orderId: possibleOrderId,
           value: possibleTotal ?? 0,
           currency: possibleCurrency ?? "USD",
-          url,
-          sourceUrl: url,
+          url: safeLandingPage,
+          sourceUrl: safeLandingPage,
           actionSource: "website",
           shop: resolvedShop,
           ip,
@@ -355,9 +730,9 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    return corsify(json({ ok: true, saved: true, eventName }, { status: 200 }));
+    return corsify(request, json({ ok: true, saved: true, eventName }, { status: 200 }));
   } catch (err: any) {
     console.error("[/api/track] error:", err?.message || err);
-    return corsify(json({ ok: false, error: "server error" }, { status: 500 }));
+    return corsify(request, json({ ok: false, error: "server error" }, { status: 500 }));
   }
 }
