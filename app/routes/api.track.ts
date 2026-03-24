@@ -1,4 +1,3 @@
-// app/routes/api.track.ts
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { db } from "~/db.server";
