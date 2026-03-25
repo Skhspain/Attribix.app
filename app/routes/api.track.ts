@@ -128,6 +128,11 @@ function isCheckoutLikeUrl(url: string | null): boolean {
   return path.includes("/checkouts/");
 }
 
+function isWebPixelSandboxUrl(url: string | null): boolean {
+  if (!url) return false;
+  return url.includes("/web-pixels");
+}
+
 function hasAttributionSignals(row: {
   utmSource?: string | null;
   utmMedium?: string | null;
@@ -199,18 +204,25 @@ async function findLatestBrowserContext(input: {
 
   const recentCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
+  const whereOr: any[] = [
+    ...orClauses,
+    ...(comparableCurrentUrl ? [{ url: { startsWith: comparableCurrentUrl } }] : []),
+    ...(comparableReferrer ? [{ url: { startsWith: comparableReferrer } }] : []),
+    ...(comparableReferrer ? [{ referrer: { startsWith: comparableReferrer } }] : []),
+  ];
+
   const rows = await db.trackedEvent.findMany({
     where: {
       shop,
       createdAt: {
         gte: recentCutoff,
       },
-      ...(orClauses.length ? { OR: orClauses } : {}),
+      ...(whereOr.length ? { OR: whereOr } : {}),
     },
     orderBy: {
       createdAt: "desc",
     },
-    take: orClauses.length ? 80 : 200,
+    take: 300,
     select: {
       createdAt: true,
       eventName: true,
@@ -231,6 +243,12 @@ async function findLatestBrowserContext(input: {
   });
 
   const usableRows = rows.filter((row) => {
+    const rowUrl = row.url ?? "";
+
+    if (row.eventName === "pixel_boot") return false;
+    if (isWebPixelSandboxUrl(rowUrl)) return false;
+    if (isCheckoutLikeUrl(rowUrl)) return false;
+
     return Boolean(
       row.fbp ||
         row.fbc ||
@@ -286,7 +304,7 @@ async function findLatestBrowserContext(input: {
       if (comparableCurrentUrl && rowComparableUrl === comparableCurrentUrl) score += 35;
       if (comparableCurrentUrl && rowComparableReferrer === comparableCurrentUrl) score += 20;
 
-      if (comparableReferrer && rowComparableUrl === comparableReferrer) score += 140;
+      if (comparableReferrer && rowComparableUrl === comparableReferrer) score += 300;
       if (comparableReferrer && rowComparableReferrer === comparableReferrer) score += 40;
 
       if (currentPath && rowPath === currentPath) score += 10;
@@ -430,7 +448,10 @@ export async function action({ request }: ActionFunctionArgs) {
           matchedShop: matchedSettings.shop,
           hasTrackingKey: Boolean(trackingKey),
         });
-        return corsify(request, json({ ok: false, error: "invalid tracking key" }, { status: 403 }));
+        return corsify(
+          request,
+          json({ ok: false, error: "invalid tracking key" }, { status: 403 }),
+        );
       }
     } else if (matchedSettings) {
       authMode = "shop_only";
@@ -629,7 +650,9 @@ export async function action({ request }: ActionFunctionArgs) {
       const finalLandingPage =
         fallbackContext?.eventName === "browser_context_sync"
           ? (fallbackContext?.url ?? url ?? null)
-          : fallbackComparableUrl && purchaseComparableReferrer && fallbackComparableUrl === purchaseComparableReferrer
+          : fallbackComparableUrl &&
+              purchaseComparableReferrer &&
+              fallbackComparableUrl === purchaseComparableReferrer
             ? (fallbackContext?.url ?? url ?? null)
             : (url ?? fallbackContext?.url ?? null);
 
