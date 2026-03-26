@@ -49,6 +49,62 @@ function getUtmFromUrl(url: string) {
   }
 }
 
+function getClickIdsFromUrl(url: string | null) {
+  try {
+    if (!url) {
+      return {
+        fbclid: null,
+        gclid: null,
+        ttclid: null,
+        msclkid: null,
+      };
+    }
+
+    const u = new URL(url);
+    return {
+      fbclid: u.searchParams.get("fbclid"),
+      gclid: u.searchParams.get("gclid"),
+      ttclid: u.searchParams.get("ttclid"),
+      msclkid: u.searchParams.get("msclkid"),
+    };
+  } catch {
+    return {
+      fbclid: null,
+      gclid: null,
+      ttclid: null,
+      msclkid: null,
+    };
+  }
+}
+
+function buildFbcFromFbclid(fbclid: string | null): string | null {
+  if (!fbclid) return null;
+  return `fb.1.${Date.now()}.${fbclid}`;
+}
+
+function getAttributionFromUrl(url: string | null) {
+  const utm = getUtmFromUrl(url || "");
+  const clickIds = getClickIdsFromUrl(url);
+
+  return {
+    utmSource: utm.utmSource,
+    utmMedium: utm.utmMedium,
+    utmCampaign: utm.utmCampaign,
+    fbclid: clickIds.fbclid,
+    gclid: clickIds.gclid,
+    ttclid: clickIds.ttclid,
+    msclkid: clickIds.msclkid,
+    fbc: clickIds.fbclid ? buildFbcFromFbclid(clickIds.fbclid) : null,
+  };
+}
+
+function firstNonEmptyString(...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
 function getHostFromUrl(url: string | null): string | null {
   try {
     if (!url) return null;
@@ -155,6 +211,50 @@ function hasAttributionSignals(row: {
       row.fbp ||
       row.fbc,
   );
+}
+
+function urlHasAttribution(url: string | null): boolean {
+  const parsed = getAttributionFromUrl(url);
+  return Boolean(
+    parsed.utmSource ||
+      parsed.utmMedium ||
+      parsed.utmCampaign ||
+      parsed.fbclid ||
+      parsed.gclid ||
+      parsed.ttclid ||
+      parsed.msclkid ||
+      parsed.fbc,
+  );
+}
+
+function chooseBestAttributionUrl(input: {
+  currentUrl?: string | null;
+  currentReferrer?: string | null;
+  fallbackUrl?: string | null;
+  fallbackReferrer?: string | null;
+}) {
+  const { currentUrl, currentReferrer, fallbackUrl, fallbackReferrer } = input;
+
+  const candidates = [
+    currentUrl,
+    currentReferrer,
+    fallbackUrl,
+    fallbackReferrer,
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    if (!isCheckoutLikeUrl(candidate) && !isWebPixelSandboxUrl(candidate) && urlHasAttribution(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (!isCheckoutLikeUrl(candidate) && !isWebPixelSandboxUrl(candidate)) {
+      return candidate;
+    }
+  }
+
+  return firstNonEmptyString(currentUrl, currentReferrer, fallbackUrl, fallbackReferrer);
 }
 
 async function findLatestBrowserContext(input: {
@@ -509,11 +609,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const clickIds = data?.clickIds ?? {};
     let fbclid = pickFirstString(clickIds?.fbclid) || pickFirstString(data?.fbclid) || null;
-
     let gclid = pickFirstString(clickIds?.gclid) || pickFirstString(data?.gclid) || null;
-
     let ttclid = pickFirstString(clickIds?.ttclid) || pickFirstString(data?.ttclid) || null;
-
     let msclkid = pickFirstString(clickIds?.msclkid) || pickFirstString(data?.msclkid) || null;
 
     let fbp = pickFirstString(data?.fbp);
@@ -633,34 +730,128 @@ export async function action({ request }: ActionFunctionArgs) {
         referrer,
       });
 
-      if (!fbp && fallbackContext?.fbp) fbp = fallbackContext.fbp;
-      if (!fbc && fallbackContext?.fbc) fbc = fallbackContext.fbc;
-      if (!fbclid && fallbackContext?.fbclid) fbclid = fallbackContext.fbclid;
-      if (!gclid && fallbackContext?.gclid) gclid = fallbackContext.gclid;
-      if (!ttclid && fallbackContext?.ttclid) ttclid = fallbackContext.ttclid;
-      if (!msclkid && fallbackContext?.msclkid) msclkid = fallbackContext.msclkid;
+      const currentUrlAttribution = getAttributionFromUrl(url);
+      const currentReferrerAttribution = getAttributionFromUrl(referrer);
+      const fallbackUrlAttribution = getAttributionFromUrl(fallbackContext?.url ?? null);
+      const fallbackReferrerAttribution = getAttributionFromUrl(fallbackContext?.referrer ?? null);
 
-      const finalUtmSource = utmSource ?? fallbackContext?.utmSource ?? null;
-      const finalUtmMedium = utmMedium ?? fallbackContext?.utmMedium ?? null;
-      const finalUtmCampaign = utmCampaign ?? fallbackContext?.utmCampaign ?? null;
+      if (!fbp && fallbackContext?.fbp) fbp = fallbackContext.fbp;
+
+      if (!fbc) {
+        fbc =
+          fallbackContext?.fbc ||
+          currentUrlAttribution.fbc ||
+          currentReferrerAttribution.fbc ||
+          fallbackUrlAttribution.fbc ||
+          fallbackReferrerAttribution.fbc ||
+          null;
+      }
+
+      if (!fbclid) {
+        fbclid =
+          fallbackContext?.fbclid ||
+          currentUrlAttribution.fbclid ||
+          currentReferrerAttribution.fbclid ||
+          fallbackUrlAttribution.fbclid ||
+          fallbackReferrerAttribution.fbclid ||
+          null;
+      }
+
+      if (!gclid) {
+        gclid =
+          fallbackContext?.gclid ||
+          currentUrlAttribution.gclid ||
+          currentReferrerAttribution.gclid ||
+          fallbackUrlAttribution.gclid ||
+          fallbackReferrerAttribution.gclid ||
+          null;
+      }
+
+      if (!ttclid) {
+        ttclid =
+          fallbackContext?.ttclid ||
+          currentUrlAttribution.ttclid ||
+          currentReferrerAttribution.ttclid ||
+          fallbackUrlAttribution.ttclid ||
+          fallbackReferrerAttribution.ttclid ||
+          null;
+      }
+
+      if (!msclkid) {
+        msclkid =
+          fallbackContext?.msclkid ||
+          currentUrlAttribution.msclkid ||
+          currentReferrerAttribution.msclkid ||
+          fallbackUrlAttribution.msclkid ||
+          fallbackReferrerAttribution.msclkid ||
+          null;
+      }
+
+      if (!fbc && fbclid) {
+        fbc = buildFbcFromFbclid(fbclid);
+      }
+
+      const finalUtmSource =
+        utmSource ??
+        fallbackContext?.utmSource ??
+        currentUrlAttribution.utmSource ??
+        currentReferrerAttribution.utmSource ??
+        fallbackUrlAttribution.utmSource ??
+        fallbackReferrerAttribution.utmSource ??
+        null;
+
+      const finalUtmMedium =
+        utmMedium ??
+        fallbackContext?.utmMedium ??
+        currentUrlAttribution.utmMedium ??
+        currentReferrerAttribution.utmMedium ??
+        fallbackUrlAttribution.utmMedium ??
+        fallbackReferrerAttribution.utmMedium ??
+        null;
+
+      const finalUtmCampaign =
+        utmCampaign ??
+        fallbackContext?.utmCampaign ??
+        currentUrlAttribution.utmCampaign ??
+        currentReferrerAttribution.utmCampaign ??
+        fallbackUrlAttribution.utmCampaign ??
+        fallbackReferrerAttribution.utmCampaign ??
+        null;
+
+      const attributedLandingPage = chooseBestAttributionUrl({
+        currentUrl: url,
+        currentReferrer: referrer,
+        fallbackUrl: fallbackContext?.url ?? null,
+        fallbackReferrer: fallbackContext?.referrer ?? null,
+      });
 
       const fallbackComparableUrl = normalizeComparableUrl(fallbackContext?.url ?? null);
       const purchaseComparableReferrer = normalizeComparableUrl(referrer ?? null);
 
       const finalLandingPage =
-        fallbackContext?.eventName === "browser_context_sync"
+        attributedLandingPage ||
+        (fallbackContext?.eventName === "browser_context_sync"
           ? (fallbackContext?.url ?? url ?? null)
           : fallbackComparableUrl &&
               purchaseComparableReferrer &&
               fallbackComparableUrl === purchaseComparableReferrer
             ? (fallbackContext?.url ?? url ?? null)
-            : (url ?? fallbackContext?.url ?? null);
+            : (url ?? fallbackContext?.url ?? null));
 
       const safeLandingPage = isCheckoutLikeUrl(finalLandingPage)
-        ? (fallbackContext?.referrer ?? finalLandingPage ?? null)
+        ? firstNonEmptyString(
+            attributedLandingPage,
+            fallbackContext?.referrer ?? null,
+            referrer,
+            finalLandingPage ?? null,
+          )
         : finalLandingPage;
 
-      const finalReferrer = referrer ?? fallbackContext?.referrer ?? null;
+      const finalReferrer = firstNonEmptyString(
+        referrer,
+        fallbackContext?.referrer ?? null,
+        null,
+      );
 
       console.log("[/api/track] purchase enrichment", {
         orderId: possibleOrderId,
@@ -668,6 +859,10 @@ export async function action({ request }: ActionFunctionArgs) {
         fallbackEventName: fallbackContext?.eventName ?? null,
         fallbackUrl: fallbackContext?.url ?? null,
         fallbackReferrer: fallbackContext?.referrer ?? null,
+        currentUrlAttribution,
+        currentReferrerAttribution,
+        fallbackUrlAttribution,
+        fallbackReferrerAttribution,
         finalFbp: Boolean(fbp),
         finalFbc: Boolean(fbc),
         finalFbclid: Boolean(fbclid),
