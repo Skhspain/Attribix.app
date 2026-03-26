@@ -43,7 +43,7 @@ COPY --from=builder /app/build ./build
 # copy prisma schema
 COPY --from=builder /app/prisma ./prisma
 
-# ✅ IMPORTANT: copy extensions (pixel dist lives here)
+# IMPORTANT: copy extensions (pixel dist lives here)
 COPY --from=builder /app/extensions ./extensions
 
 # copy package files
@@ -54,5 +54,5 @@ RUN npx prisma generate --schema=prisma/schema.postgres.prisma
 
 EXPOSE 3000
 
-# ✅ Force bind + log env to confirm runtime behavior on Fly
+# Force bind + log env to confirm runtime behavior on Fly
 CMD ["sh", "-lc", "echo \"BOOT: HOST=$HOST PORT=$PORT NODE_ENV=$NODE_ENV\" && HOST=0.0.0.0 PORT=${PORT:-3000} npm run start"]
