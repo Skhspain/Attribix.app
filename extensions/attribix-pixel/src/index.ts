@@ -16,6 +16,7 @@ import { register } from "@shopify/web-pixels-extension";
  * - Subscribe to checkout_completed so purchases can be captured
  * - Make checkout flow session IDs more stable by deriving a checkout session key
  * - Preserve multi-shop fields (trackingShop / trackingKey) when available
+ * - Use the same visitor/session identity logic as attribix.browser-track.jsx
  */
 
 type Settings = {
@@ -113,7 +114,7 @@ function uuid(): string {
   return `ev_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
-function getStorage(): Storage | null {
+function getLocalStorage(): Storage | null {
   try {
     // @ts-ignore
     return globalThis?.localStorage ?? null;
@@ -142,7 +143,7 @@ function safePickNumber(value: any): number | null {
 
 function getOrCreateVisitorId(): string {
   try {
-    const ls = getStorage();
+    const ls = getLocalStorage();
     if (ls) {
       const existing = ls.getItem(VISITOR_KEY);
       if (existing && existing.length > 10) return existing;
@@ -158,7 +159,7 @@ function getOrCreateVisitorId(): string {
 
 function getOrCreateSessionId(): string {
   try {
-    const ls = getStorage();
+    const ls = getLocalStorage();
     if (ls) {
       const existingSessionId = ls.getItem(SESSION_KEY);
       const existingTouchRaw = ls.getItem(SESSION_TOUCH_KEY);
@@ -188,7 +189,7 @@ function getOrCreateSessionId(): string {
 
 function touchSession(sessionId: string) {
   try {
-    const ls = getStorage();
+    const ls = getLocalStorage();
     if (!ls) return;
     ls.setItem(SESSION_KEY, sessionId);
     ls.setItem(SESSION_TOUCH_KEY, String(nowMs()));
@@ -333,9 +334,7 @@ function buildCheckoutScopedSessionId(type: string, ev: any, url: string | null)
   if (!checkoutId) return null;
 
   const lowerType = String(type || "").toLowerCase();
-  const isCheckoutFlow =
-    lowerType.includes("checkout") ||
-    (url ? /\/checkouts\//i.test(url) : false);
+  const isCheckoutFlow = lowerType.includes("checkout") || (url ? /\/checkouts\//i.test(url) : false);
 
   if (!isCheckoutFlow) return null;
 
@@ -351,35 +350,22 @@ function buildEventSnapshot(
   const checkoutId = getBestCheckoutId(ev, resolvedUrl);
 
   return {
-    id:
-      safePickString(ev?.id) ??
-      safePickString(ev?.data?.id) ??
-      null,
+    id: safePickString(ev?.id) ?? safePickString(ev?.data?.id) ?? null,
 
-    name:
-      safePickString(ev?.name) ??
-      safePickString(ev?.data?.name) ??
-      safePickString(type) ??
-      null,
+    name: safePickString(ev?.name) ?? safePickString(ev?.data?.name) ?? safePickString(type) ?? null,
 
-    type:
-      safePickString(ev?.type) ??
-      safePickString(ev?.data?.type) ??
-      "standard",
+    type: safePickString(ev?.type) ?? safePickString(ev?.data?.type) ?? "standard",
 
-    timestamp:
-      safePickString(ev?.timestamp) ??
-      safePickString(ev?.data?.timestamp) ??
-      null,
+    timestamp: safePickString(ev?.timestamp) ?? safePickString(ev?.data?.timestamp) ?? null,
 
     url: resolvedUrl,
     referrer: resolvedReferrer,
 
     orderId:
-      safePickString(ev?.data?.orderId) ??
-      safePickString(ev?.data?.order?.id) ??
-      safePickString(ev?.data?.checkout?.order?.id) ??
-      safePickString(ev?.orderId) ??
+      safePickString(ev?.data?.orderId) ||
+      safePickString(ev?.data?.order?.id) ||
+      safePickString(ev?.data?.checkout?.order?.id) ||
+      safePickString(ev?.orderId) ||
       null,
 
     checkoutId,
@@ -404,23 +390,23 @@ function buildEventSnapshot(
       null,
 
     currency:
-      safePickString(ev?.data?.currency) ??
-      safePickString(ev?.data?.checkout?.currencyCode) ??
-      safePickString(ev?.data?.checkout?.totalPrice?.currencyCode) ??
-      safePickString(ev?.data?.totalPrice?.currencyCode) ??
-      safePickString(ev?.currency) ??
+      safePickString(ev?.data?.currency) ||
+      safePickString(ev?.data?.checkout?.currencyCode) ||
+      safePickString(ev?.data?.checkout?.totalPrice?.currencyCode) ||
+      safePickString(ev?.data?.totalPrice?.currencyCode) ||
+      safePickString(ev?.currency) ||
       null,
 
     email:
-      safePickString(ev?.data?.email) ??
-      safePickString(ev?.data?.checkout?.email) ??
-      safePickString(ev?.email) ??
+      safePickString(ev?.data?.email) ||
+      safePickString(ev?.data?.checkout?.email) ||
+      safePickString(ev?.email) ||
       null,
 
     phone:
-      safePickString(ev?.data?.phone) ??
-      safePickString(ev?.data?.checkout?.phone) ??
-      safePickString(ev?.phone) ??
+      safePickString(ev?.data?.phone) ||
+      safePickString(ev?.data?.checkout?.phone) ||
+      safePickString(ev?.phone) ||
       null,
   };
 }
