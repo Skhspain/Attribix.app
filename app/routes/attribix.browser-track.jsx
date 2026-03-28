@@ -1,5 +1,3 @@
-// app/routes/attribix.browser-track.jsx
-
 const SCRIPT = String.raw`(() => {
   const TRACK_URL = "https://attribix-app.fly.dev/api/track";
   const VISITOR_KEY = "attribix_visitor_id";

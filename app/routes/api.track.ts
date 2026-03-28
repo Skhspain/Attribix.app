@@ -599,7 +599,23 @@ export async function action({ request }: ActionFunctionArgs) {
       normalizedEvent,
     });
 
-    const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(url || "");
+    const urlAttribution = getAttributionFromUrl(url);
+    const referrerAttribution = getAttributionFromUrl(referrer);
+
+    const utmSource =
+      urlAttribution.utmSource ??
+      referrerAttribution.utmSource ??
+      null;
+
+    const utmMedium =
+      urlAttribution.utmMedium ??
+      referrerAttribution.utmMedium ??
+      null;
+
+    const utmCampaign =
+      urlAttribution.utmCampaign ??
+      referrerAttribution.utmCampaign ??
+      null;
 
     const visitorId = pickFirstString(data?.visitorId);
     const sessionId = pickFirstString(data?.sessionId);
@@ -608,13 +624,41 @@ export async function action({ request }: ActionFunctionArgs) {
     const accountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId);
 
     const clickIds = data?.clickIds ?? {};
-    let fbclid = pickFirstString(clickIds?.fbclid) || pickFirstString(data?.fbclid) || null;
-    let gclid = pickFirstString(clickIds?.gclid) || pickFirstString(data?.gclid) || null;
-    let ttclid = pickFirstString(clickIds?.ttclid) || pickFirstString(data?.ttclid) || null;
-    let msclkid = pickFirstString(clickIds?.msclkid) || pickFirstString(data?.msclkid) || null;
+    let fbclid =
+      pickFirstString(clickIds?.fbclid) ||
+      pickFirstString(data?.fbclid) ||
+      urlAttribution.fbclid ||
+      referrerAttribution.fbclid ||
+      null;
+    let gclid =
+      pickFirstString(clickIds?.gclid) ||
+      pickFirstString(data?.gclid) ||
+      urlAttribution.gclid ||
+      referrerAttribution.gclid ||
+      null;
+    let ttclid =
+      pickFirstString(clickIds?.ttclid) ||
+      pickFirstString(data?.ttclid) ||
+      urlAttribution.ttclid ||
+      referrerAttribution.ttclid ||
+      null;
+    let msclkid =
+      pickFirstString(clickIds?.msclkid) ||
+      pickFirstString(data?.msclkid) ||
+      urlAttribution.msclkid ||
+      referrerAttribution.msclkid ||
+      null;
 
     let fbp = pickFirstString(data?.fbp);
-    let fbc = pickFirstString(data?.fbc);
+    let fbc =
+      pickFirstString(data?.fbc) ||
+      urlAttribution.fbc ||
+      referrerAttribution.fbc ||
+      null;
+
+    if (!fbc && fbclid) {
+      fbc = buildFbcFromFbclid(fbclid);
+    }
 
     try {
       await db.trackedEvent.create({

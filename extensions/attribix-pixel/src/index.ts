@@ -1,4 +1,3 @@
-// extensions/attribix-pixel/src/index.ts
 import { register } from "@shopify/web-pixels-extension";
 
 /**
