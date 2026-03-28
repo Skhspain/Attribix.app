@@ -109,18 +109,35 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const { utmSource, utmMedium, utmCampaign } = getUtmFromUrl(url || "");
 
+    // For checkout events: capture the checkout token as sessionId so we can
+    // match it to the Shopify order's checkout_token when the order comes in.
+    let sessionId: string | null = null;
+    if (eventName === "checkout_started" || eventName === "checkout_completed") {
+      sessionId =
+        pickFirstString(event?.data?.checkout?.token) ??
+        pickFirstString(event?.checkout?.token) ??
+        null;
+    }
+
+    // For checkout events: capture customer email for fallback attribution
+    const email =
+      pickFirstString(event?.data?.checkout?.email) ??
+      pickFirstString(event?.checkout?.email) ??
+      null;
+
     await db.trackedEvent.create({
       data: {
         eventName,
         createdAt: new Date(),
         url,
         source: utmSource ?? null,
-        sessionId: null,
+        sessionId,
         utmSource: utmSource ?? null,
         utmMedium: utmMedium ?? null,
         utmCampaign: utmCampaign ?? null,
         ip,
         userAgent: ua,
+        email,
       },
     });
 

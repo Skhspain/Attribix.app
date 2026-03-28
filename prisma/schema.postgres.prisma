@@ -7,6 +7,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+
+  @@index([shop])
+}
+
 model TrackedEvent {
   id          String   @id @default(cuid())
   eventName   String
@@ -19,45 +39,14 @@ model TrackedEvent {
   utmCampaign String?
   utmMedium   String?
   utmSource   String?
+  email       String?
+  phone       String?
+  orderId     String?
 
   @@index([createdAt])
   @@index([eventName])
   @@index([sessionId])
   @@index([utmSource])
-}
-
-model Session {
-  id            String   @id
-  shop          String
-  state         String
-  isOnline      Boolean  @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean  @default(false)
-  locale        String?
-  collaborator  Boolean? @default(false)
-  emailVerified Boolean? @default(false)
-
-  @@index([shop])
-}
-
-
-model Purchase {
-  id         String   @id @default(cuid())
-  createdAt  DateTime @default(now())
-  totalValue Float
-  currency   String   @default("USD")
-}
-
-model AdSpendDaily {
-  id    String   @id @default(cuid())
-  date  DateTime
-  spend Float
 }
 
 model TrackingSettings {
@@ -69,4 +58,88 @@ model TrackingSettings {
   fbToken   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/* ============================== Purchases ============================== */
+
+model Purchase {
+  id                String        @id @default(cuid())
+  createdAt         DateTime      @default(now())
+  shop              String        @default("")
+  shopifyOrderId    String?       @unique
+  totalValue        Float
+  currency          String        @default("USD")
+  customerEmailHash String?
+  utmSource         String?
+  utmMedium         String?
+  utmCampaign       String?
+  gclid             String?
+  fbclid            String?
+  sessionId         String?
+  items             PurchaseItem[]
+
+  @@index([createdAt])
+  @@index([utmSource, utmMedium, utmCampaign])
+}
+
+model PurchaseItem {
+  id          String   @id @default(cuid())
+  purchaseId  String
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  productId   String
+  productName String
+  quantity    Int
+  price       Float
+  category    String?
+  brand       String?
+
+  @@index([productId])
+}
+
+/* ============================== Ad Spend ============================== */
+
+model AdSpendDaily {
+  id       String   @id @default(cuid())
+  shop     String   @default("")
+  date     DateTime
+  platform String   @default("meta")
+  campaign String?
+  adset    String?
+  ad       String?
+  spend    Float
+
+  @@unique([shop, date])
+  @@index([date])
+  @@index([platform, date])
+}
+
+/* ============================== Meta Integration ============================== */
+
+model MetaConnection {
+  id          String    @id @default(cuid())
+  shop        String    @unique
+  accessToken String
+  tokenType   String?
+  expiresAt   DateTime?
+  adAccountId String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model MetaCampaignDailyInsight {
+  id            String   @id @default(cuid())
+  shop          String
+  date          DateTime
+  adAccountId   String
+  campaignId    String
+  campaignName  String?
+  spend         Float    @default(0)
+  purchases     Int      @default(0)
+  purchaseValue Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, date, campaignId])
+  @@index([shop, date])
+  @@index([shop, campaignId])
 }

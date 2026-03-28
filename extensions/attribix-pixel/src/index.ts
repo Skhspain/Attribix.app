@@ -132,7 +132,5 @@ export default register(({ analytics, settings }) => {
   sub("collection_viewed");
   sub("search_submitted");
   sub("checkout_started");
-
-  // Optional:
-  // sub("cart_viewed");
+  sub("checkout_completed");
 });
