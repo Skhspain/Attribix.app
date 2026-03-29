@@ -6,6 +6,10 @@ import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 
 import * as shopifyServer from "./shopify.server";
+import { startMetaSyncCron } from "./services/metaSync.server";
+
+// Start background sync cron once on server boot
+startMetaSyncCron();
 
 const ABORT_DELAY = 5000;
 

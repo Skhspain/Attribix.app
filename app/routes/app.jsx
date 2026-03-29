@@ -40,7 +40,7 @@ export default function AppRoute() {
       {/* ui-nav-menu is an App Bridge web component — renders the embedded app sidebar nav */}
       <ui-nav-menu>
         <a href="/app" rel="home">Overview</a>
-        <a href="/app/analytics">Attribution</a>
+        <a href="/app/analytics">Analytics</a>
         <a href="/app/orders">Orders</a>
         <a href="/app/ads">Integrations</a>
         <a href="/app/settings">Settings</a>

@@ -145,13 +145,14 @@ model TrackingSettings {
 }
 
 model MetaConnection {
-  id          String   @id @default(cuid())
-  shop        String   @unique
-  accessToken String
-  expiresAt   DateTime?
-  adAccountId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String    @id @default(cuid())
+  shop         String    @unique
+  accessToken  String
+  expiresAt    DateTime?
+  adAccountId  String?
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([shop])
 }

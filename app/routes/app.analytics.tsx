@@ -539,7 +539,7 @@ export default function AppAnalytics() {
   return (
     <Page
       fullWidth
-      title="Attribution Analytics"
+      title="Analytics"
       subtitle={`${windowDays}-day window · Shop: ${data.shop}`}
       primaryAction={
         <Select
