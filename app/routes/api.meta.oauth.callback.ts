@@ -85,10 +85,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  // ✅ IMPORTANT:
-  // Do NOT go through /auth here (it can drop context and end at /auth/login without ?shop).
-  // Redirect directly back to the embedded app route with shop/host/embedded intact.
-  const returnTo = ensureEmbeddedParams(returnToRaw, shop, host, embedded);
-  return redirect(returnTo);
+  // After external OAuth the browser is in a top-level context (not inside the Shopify
+  // iframe). Redirecting to our own /app/... routes causes authenticate.admin to intercept
+  // and bounce to /auth/login (blank page). Instead, redirect to the Shopify Admin URL for
+  // the embedded app — Shopify will load our app in the iframe and then route normally.
+  //
+  // URL format: https://{shop}/admin/apps/{api_key}{internal-path}
+  // Our internal routes use /app/... prefix; Shopify admin strips that — so
+  // /app/integrations/meta → /integrations/meta in the admin URL.
+  const apiKey = process.env.SHOPIFY_API_KEY || "";
+  const appPath = returnToRaw.replace(/^\/app/, "") || "/integrations/meta";
+  return redirect(`https://${shop}/admin/apps/${apiKey}${appPath}`);
 }
   
