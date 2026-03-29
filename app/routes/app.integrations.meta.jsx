@@ -1,5 +1,5 @@
 // app/routes/app.integrations.meta.jsx
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
 import { useLoaderData, useRevalidator } from "@remix-run/react";
 import {
@@ -101,6 +101,11 @@ function MetaIntegrationsInner({ data }) {
   const [saveError, setSaveError] = useState(null);
   const [saveOk, setSaveOk] = useState(false);
 
+  const [syncDays, setSyncDays] = useState("30");
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncError, setSyncError] = useState(null);
+  const [syncOk, setSyncOk] = useState(null);
+
   const connected = !!data.connected;
 
   async function fetchAdAccounts() {
@@ -170,6 +175,33 @@ function MetaIntegrationsInner({ data }) {
       setSaveError(String(e?.message || e));
     } finally {
       setSaveLoading(false);
+    }
+  }
+
+  async function syncSpend() {
+    try {
+      setSyncOk(null);
+      setSyncError(null);
+      setSyncLoading(true);
+
+      const form = new FormData();
+      form.set("days", syncDays);
+
+      const res = await authFetch("/api/meta/sync", { method: "POST", body: form });
+
+      const text = await res.text();
+      let payload = null;
+      try { payload = JSON.parse(text); } catch {}
+
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(payload?.error || `HTTP ${res.status}`);
+      }
+
+      setSyncOk({ rows: payload.rows, days: payload.days });
+    } catch (e) {
+      setSyncError(String(e?.message || e));
+    } finally {
+      setSyncLoading(false);
     }
   }
 
@@ -305,6 +337,61 @@ function MetaIntegrationsInner({ data }) {
                 {saveError && (
                   <Banner tone="critical" title="Failed to save">
                     <Text as="p">{saveError}</Text>
+                  </Banner>
+                )}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
+
+        {/* Spend sync */}
+        {connected && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Sync ad spend</Text>
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Pull campaign-level spend, purchases, and purchase value from Meta Ads Manager
+                  into your database. Run this manually or it will sync automatically each day.
+                </Text>
+
+                <Divider />
+
+                <InlineStack gap="200" blockAlign="end">
+                  <div style={{ minWidth: 180 }}>
+                    <Select
+                      label="Date range"
+                      options={[
+                        { label: "Last 7 days", value: "7" },
+                        { label: "Last 14 days", value: "14" },
+                        { label: "Last 30 days", value: "30" },
+                        { label: "Last 90 days", value: "90" },
+                      ]}
+                      value={syncDays}
+                      onChange={setSyncDays}
+                    />
+                  </div>
+                  <Button
+                    variant="primary"
+                    onClick={syncSpend}
+                    loading={syncLoading}
+                    disabled={!data.adAccountId}
+                  >
+                    Sync now
+                  </Button>
+                </InlineStack>
+
+                {syncOk && (
+                  <Banner tone="success" title="Sync complete">
+                    <Text as="p">
+                      Synced {syncOk.rows} campaign day-rows for the last {syncOk.days} days.
+                    </Text>
+                  </Banner>
+                )}
+
+                {syncError && (
+                  <Banner tone="critical" title="Sync failed">
+                    <Text as="p">{syncError}</Text>
                   </Banner>
                 )}
               </BlockStack>
