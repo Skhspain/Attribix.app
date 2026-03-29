@@ -87,3 +87,4 @@ prisma/prisma/dev.db
 prisma/prisma/*.db
 prisma/prisma/*.db-journal
 >>>>>>> e75cd57 (chore: restore proper gitignore)
+.claude/
