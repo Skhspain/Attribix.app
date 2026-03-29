@@ -145,21 +145,102 @@ export async function googleAdsSearchStream(args: {
 /**
  * Backwards compat for older route: app/routes/api.google.sync-spend.ts
  * If you already store spend in your DB, keep this as your server-side hook.
- * Otherwise keep it as a safe placeholder that doesn't break builds.
  */
 export async function syncGoogleSpendDaily(args: {
   shop: string;
   accessToken: string;
   customerId: string;
+  days?: number;
+  developerToken?: string;
+  loginCustomerId?: string;
 }) {
-  // TODO: implement real spend query (GAQL) and persistence.
-  // For now: return a consistent result so UI/actions can proceed without crashing.
-  return {
-    ok: true,
-    shop: args.shop,
-    customerId: args.customerId,
-    message: "syncGoogleSpendDaily placeholder (not implemented yet)",
-  };
+  const developerToken = args.developerToken ?? process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+  const loginCustomerId = args.loginCustomerId ?? process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+  const days = Math.min(args.days ?? 7, 30);
+  const customerId = args.customerId.replace(/-/g, "");
+
+  if (!developerToken) throw new Error("Missing GOOGLE_ADS_DEVELOPER_TOKEN");
+
+  const today = new Date();
+  const since = new Date(today);
+  since.setDate(today.getDate() - (days - 1));
+
+  function fmt(d: Date) {
+    return d.toISOString().slice(0, 10);
+  }
+
+  const query = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      metrics.cost_micros,
+      segments.date
+    FROM campaign
+    WHERE segments.date BETWEEN '${fmt(since)}' AND '${fmt(today)}'
+      AND campaign.status != 'REMOVED'
+    ORDER BY segments.date DESC
+  `;
+
+  const streamResults = await googleAdsSearchStream({
+    accessToken: args.accessToken,
+    customerId,
+    query,
+    developerToken,
+    loginCustomerId,
+  });
+
+  // searchStream returns array of response objects each with a .results array
+  const rows: Array<{
+    campaign: { id: string; name: string };
+    metrics: { costMicros: string };
+    segments: { date: string };
+  }> = streamResults.flatMap((chunk: any) => chunk?.results ?? []);
+
+  if (!rows.length) {
+    return { ok: true, shop: args.shop, upserted: 0, message: "No campaign data returned" };
+  }
+
+  const { db } = await import("~/db.server");
+  let upserted = 0;
+
+  for (const row of rows) {
+    const campaignId = row.campaign?.id ?? "unknown";
+    const campaignName = row.campaign?.name ?? null;
+    const spendMicros = Number(row.metrics?.costMicros ?? 0);
+    const spend = spendMicros / 1_000_000;
+    const dateStr = row.segments?.date;
+
+    if (!dateStr) continue;
+
+    const date = new Date(dateStr + "T00:00:00Z");
+
+    try {
+      await (db as any).adSpendDaily.upsert({
+        where: {
+          shop_platform_date: {
+            shop: args.shop,
+            platform: "google",
+            date,
+          },
+        },
+        update: { spend, campaign: campaignName },
+        create: {
+          shop: args.shop,
+          platform: "google",
+          date,
+          campaign: campaignName,
+          spend,
+          adset: null,
+          ad: campaignId,
+        },
+      });
+      upserted++;
+    } catch (upsertErr: any) {
+      // Skip individual row errors (e.g. unique constraint race conditions)
+    }
+  }
+
+  return { ok: true, shop: args.shop, upserted, total: rows.length };
 }
 
 // Backwards compatible alias (some routes still import syncGoogleSpend)

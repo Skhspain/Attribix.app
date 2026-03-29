@@ -16,12 +16,18 @@ import {
 } from "@shopify/polaris";
 import db from "../db.server";
 
-export async function loader({}: LoaderFunctionArgs) {
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { authenticate } = await import("../shopify.server");
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+
   const anyDb = db as any;
 
   const since30 = new Date();
   since30.setDate(since30.getDate() - 30);
   since30.setHours(0, 0, 0, 0);
+
+  const shopFilter = { shop };
 
   const [
     events,
@@ -34,22 +40,24 @@ export async function loader({}: LoaderFunctionArgs) {
     recentTrackedEvents,
     recentPurchases,
   ] = await Promise.all([
-    anyDb.trackedEvent?.count?.().catch(() => 0),
-    anyDb.purchase?.count?.().catch(() => 0),
+    anyDb.trackedEvent?.count?.({ where: shopFilter }).catch(() => 0),
+    anyDb.purchase?.count?.({ where: shopFilter }).catch(() => 0),
     anyDb.purchase
-      ?.aggregate?.({ _sum: { totalValue: true } })
+      ?.aggregate?.({ where: shopFilter, _sum: { totalValue: true } })
       .catch(() => ({ _sum: { totalValue: 0 } })),
     anyDb.adSpendDaily
-      ?.aggregate?.({ _sum: { spend: true } })
+      ?.aggregate?.({ where: shopFilter, _sum: { spend: true } })
       .catch(() => ({ _sum: { spend: 0 } })),
     anyDb.purchase
       ?.findMany?.({
+        where: shopFilter,
         orderBy: { createdAt: "desc" },
         take: 10,
       })
       .catch(() => []),
     anyDb.purchase
       ?.findMany?.({
+        where: shopFilter,
         orderBy: { createdAt: "desc" },
         select: {
           id: true,
@@ -72,6 +80,7 @@ export async function loader({}: LoaderFunctionArgs) {
       .catch(() => []),
     anyDb.adSpendDaily
       ?.findMany?.({
+        where: shopFilter,
         orderBy: { date: "desc" },
         select: {
           platform: true,
@@ -84,9 +93,8 @@ export async function loader({}: LoaderFunctionArgs) {
     anyDb.trackedEvent
       ?.findMany?.({
         where: {
-          createdAt: {
-            gte: since30,
-          },
+          shop,
+          createdAt: { gte: since30 },
         },
         select: {
           eventName: true,
@@ -103,9 +111,8 @@ export async function loader({}: LoaderFunctionArgs) {
     anyDb.purchase
       ?.findMany?.({
         where: {
-          createdAt: {
-            gte: since30,
-          },
+          shop,
+          createdAt: { gte: since30 },
         },
         select: {
           id: true,
@@ -127,6 +134,7 @@ export async function loader({}: LoaderFunctionArgs) {
   ]);
 
   return json({
+    shop,
     events: events ?? 0,
     orders: orders ?? 0,
     revenue: revenue?._sum?.totalValue ?? 0,

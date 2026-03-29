@@ -2,10 +2,11 @@
 import { json } from "@remix-run/node";
 import { Outlet, useLoaderData } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
-import { authenticate } from "~/shopify.server";
+import shopify, { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+  await shopify.registerWebhooks({ session });
 
   return json({
     apiKey:

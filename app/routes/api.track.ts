@@ -283,6 +283,8 @@ async function findLatestBrowserContext(input: {
   currentUrl?: string | null;
   referrer?: string | null;
   ip?: string | null;
+  attributionWindowDays?: number | null;
+  attributionModel?: string | null;
 }) {
   const {
     shop,
@@ -297,6 +299,8 @@ async function findLatestBrowserContext(input: {
     currentUrl,
     referrer,
     ip,
+    attributionWindowDays,
+    attributionModel,
   } = input;
 
   if (!shop) return null;
@@ -305,6 +309,10 @@ async function findLatestBrowserContext(input: {
   const comparableReferrer = normalizeComparableUrl(referrer ?? null);
   const currentPath = getUrlPath(currentUrl ?? null);
   const referrerPath = getUrlPath(referrer ?? null);
+
+  // IP correlation uses a shorter 2-hour window to avoid false positives
+  // on shared IPs (NAT, office networks, mobile carriers).
+  const ipCutoff = new Date(Date.now() - 2 * 60 * 60 * 1000);
 
   const orClauses = [
     visitorId ? { visitorId } : undefined,
@@ -316,12 +324,12 @@ async function findLatestBrowserContext(input: {
     ttclid ? { ttclid } : undefined,
     msclkid ? { msclkid } : undefined,
     // IP-based correlation: bridges pixel sandbox visitorId fragmentation.
-    // Each pixel sandbox instance creates a fresh visitorId, but the client IP
-    // is consistent across page_viewed and checkout_completed events.
-    ip ? { ip } : undefined,
+    // Uses a short 2-hour window to limit false positives on shared IPs.
+    ip ? { ip, createdAt: { gte: ipCutoff } } : undefined,
   ].filter(Boolean) as any[];
 
-  const recentCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const windowDays = Math.max(1, Math.min(90, attributionWindowDays ?? 7));
+  const recentCutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
 
   const whereOr: any[] = [
     ...orClauses,
@@ -441,11 +449,18 @@ async function findLatestBrowserContext(input: {
       if (row.referrer) score += 2;
 
       return { row, score };
-    })
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return Number(new Date(b.row.createdAt)) - Number(new Date(a.row.createdAt));
     });
+
+  // For first-touch: among equally-scored rows, prefer the OLDEST (first entry point).
+  // For last-touch (default): prefer the NEWEST.
+  const isFirstTouch = attributionModel === "first_touch";
+
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const aTime = Number(new Date(a.row.createdAt));
+    const bTime = Number(new Date(b.row.createdAt));
+    return isFirstTouch ? aTime - bTime : bTime - aTime;
+  });
 
   return scored[0]?.row || null;
 }
@@ -794,6 +809,8 @@ export async function action({ request }: ActionFunctionArgs) {
         currentUrl: url,
         referrer,
         ip,
+        attributionWindowDays: matchedSettings?.attributionWindowDays ?? 7,
+        attributionModel: matchedSettings?.attributionModel ?? "last_touch",
       });
 
       const currentUrlAttribution = getAttributionFromUrl(url);

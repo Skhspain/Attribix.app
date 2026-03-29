@@ -30,6 +30,8 @@ function buildFormState(settings) {
     fbPixelId: settings?.fbPixelId ?? "",
     fbToken: settings?.fbToken ?? "",
     trackingEnabled: settings?.trackingEnabled !== false,
+    attributionModel: settings?.attributionModel ?? "last_touch",
+    attributionWindowDays: String(settings?.attributionWindowDays ?? "7"),
   };
 }
 
@@ -43,6 +45,8 @@ function getSettingsSignature(settings) {
     trackingKey: settings?.trackingKey ?? null,
     pixelLastSeenAt: settings?.pixelLastSeenAt ?? null,
     lastEventAt: settings?.lastEventAt ?? null,
+    attributionModel: settings?.attributionModel ?? "last_touch",
+    attributionWindowDays: settings?.attributionWindowDays ?? 7,
   });
 }
 
@@ -117,6 +121,8 @@ export const action = async ({ request }) => {
     fbPixelId: (formData.get("fbPixelId") || "").toString().trim() || null,
     fbToken: (formData.get("fbToken") || "").toString().trim() || null,
     trackingEnabled: formData.get("trackingEnabled") === "on",
+    attributionModel: (formData.get("attributionModel") || "last_touch").toString().trim(),
+    attributionWindowDays: Math.max(1, Math.min(90, Number(formData.get("attributionWindowDays") || "7") || 7)),
   };
 
   console.log("[app.settings] saving settings", { shop, input });
@@ -523,6 +529,43 @@ export default function AppSettingsRoute() {
             />
             Enable tracking for this shop
           </label>
+        </fieldset>
+
+        <fieldset
+          style={{
+            border: "1px solid #ddd",
+            borderRadius: 8,
+            padding: 16,
+            marginBottom: 16,
+          }}
+        >
+          <legend style={{ padding: "0 8px" }}>Attribution</legend>
+          <div style={{ display: "grid", gap: 12 }}>
+            <label>
+              <div style={{ marginBottom: 4 }}>Attribution model</div>
+              <select
+                name="attributionModel"
+                value={formState.attributionModel}
+                onChange={onFieldChange}
+                style={{ width: "100%", padding: 8 }}
+              >
+                <option value="last_touch">Last touch (default)</option>
+                <option value="first_touch">First touch</option>
+              </select>
+            </label>
+            <label>
+              <div style={{ marginBottom: 4 }}>Attribution window (days, 1–90)</div>
+              <input
+                type="number"
+                name="attributionWindowDays"
+                value={formState.attributionWindowDays}
+                onChange={onFieldChange}
+                min={1}
+                max={90}
+                style={{ width: "100%", padding: 8 }}
+              />
+            </label>
+          </div>
         </fieldset>
 
         <button

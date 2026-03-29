@@ -105,6 +105,7 @@ model Purchase {
 
 model AdSpendDaily {
   id        String   @id @default(cuid())
+  shop      String   @default("")
   date      DateTime
   platform  String
   campaign  String?
@@ -112,6 +113,8 @@ model AdSpendDaily {
   ad        String?
   spend     Float    @default(0)
 
+  @@unique([shop, platform, date], name: "shop_platform_date")
+  @@index([shop])
   @@index([date])
   @@index([platform, date])
 }
@@ -132,6 +135,9 @@ model TrackingSettings {
   lastEventAt     DateTime?
   installedAt     DateTime?
   uninstalledAt   DateTime?
+
+  attributionModel      String  @default("last_touch")
+  attributionWindowDays Int     @default(7)
 
   @@index([shop])
   @@index([trackingKey])
