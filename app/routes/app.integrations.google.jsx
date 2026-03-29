@@ -109,7 +109,7 @@ function GoogleIntegrationsInner({ data }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.adCustomerId]);
 
-  function startGoogleOAuthTopLevel() {
+  function startGoogleOAuth() {
     const returnTo = "/app/integrations/google";
     const startUrl = apiUrl(
       `/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(
@@ -148,7 +148,7 @@ function GoogleIntegrationsInner({ data }) {
       setCustomers(list);
 
       if (!Array.isArray(payload?.customers)) {
-        throw new Error("No customers returned (unexpected response).");
+        throw new Error("No customers returned — unexpected response.");
       }
     } catch (e) {
       setCustomers([]);
@@ -236,134 +236,173 @@ function GoogleIntegrationsInner({ data }) {
       label: c.name ? `${c.name} (${c.id})` : c.id,
       value: c.id,
     }));
-    return [{ label: "Select an ad accountâ€¦", value: "" }, ...opts];
+    return [{ label: "Select an ad account…", value: "" }, ...opts];
   }, [customers]);
 
   return (
-    <Page title="Google Ads">
+    <Page
+      title="Google Ads"
+      subtitle="Connect Google Ads to sync daily spend and upload offline conversions."
+      backAction={{ content: "Integrations", url: "/app/ads" }}
+    >
       <Layout>
+        {/* Connection card */}
         <Layout.Section>
           <Card>
-            <BlockStack gap="300">
-              <Banner tone="info" title="Google OAuth must open in a new top-level navigation">
-                <Text as="p">
-                  This button forces a top-level redirect (outside Shopify iframe), which is required for Google OAuth.
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">
+                  Connection
                 </Text>
-              </Banner>
-
-              <InlineStack gap="200" blockAlign="center">
-                <Button variant="primary" onClick={startGoogleOAuthTopLevel}>
-                  {data.connected ? "Reconnect Google (top-level)" : "Connect Google (top-level)"}
-                </Button>
-
-                {data.connected ? (
-                  <Badge tone="success">Connected</Badge>
-                ) : (
-                  <Badge tone="warning">Not connected</Badge>
-                )}
-
-                {data.developerTokenConfigured ? (
-                  <Badge tone="success">Developer token: OK</Badge>
-                ) : (
-                  <Badge tone="critical">Developer token: Missing</Badge>
-                )}
+                <InlineStack gap="200" blockAlign="center">
+                  {data.developerTokenConfigured ? (
+                    <Badge tone="success">Developer token: OK</Badge>
+                  ) : (
+                    <Badge tone="critical">Developer token: missing</Badge>
+                  )}
+                  {data.connected ? (
+                    <Badge tone="success">Connected</Badge>
+                  ) : (
+                    <Badge tone="warning">Not connected</Badge>
+                  )}
+                </InlineStack>
               </InlineStack>
 
-              <BlockStack gap="100">
-                <Text as="p" tone="subdued">Shop: {data.shop}</Text>
-                <Text as="p" tone="subdued">Token expiry: {data.expiresAt ?? "â€”"}</Text>
-                <Text as="p" tone="subdued">Selected ad account: {data.adCustomerId || "â€”"}</Text>
-              </BlockStack>
+              {!data.connected && (
+                <Text as="p" tone="subdued">
+                  Click "Connect Google Ads" to complete OAuth. You'll be redirected to Google and
+                  then returned here automatically.
+                </Text>
+              )}
 
-              <Divider />
+              {data.connected && data.expiresAt && (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Token expires: {new Date(data.expiresAt).toLocaleDateString()}
+                </Text>
+              )}
 
-              {!data.connected ? (
-                <Banner tone="warning" title="Step 1 required: connect Google first">
-                  <Text as="p">You must connect Google OAuth before loading ad accounts.</Text>
-                </Banner>
-              ) : !data.developerTokenConfigured ? (
-                <Banner tone="critical" title="Developer token missing">
+              {!data.developerTokenConfigured && (
+                <Banner tone="critical" title="Developer token not configured">
                   <Text as="p">
-                    You need a Google Ads Developer Token set on the server (Fly secret) before this works.
+                    A Google Ads Developer Token must be set as a Fly secret
+                    (GOOGLE_ADS_DEVELOPER_TOKEN) before ad account loading and spend sync will work.
                   </Text>
                 </Banner>
-              ) : null}
+              )}
 
-              <InlineStack gap="200" blockAlign="end" wrap>
-                <Button
-                  onClick={loadAdAccounts}
-                  disabled={!data.connected || !data.developerTokenConfigured}
-                  loading={customersLoading}
-                >
-                  {customersLoading ? "Loading ad accounts..." : "Load ad accounts"}
-                </Button>
-
-                <div style={{ minWidth: 420 }}>
-                  <Select
-                    label="Ad account (customer)"
-                    options={customerOptions}
-                    value={selectedCustomerId}
-                    onChange={setSelectedCustomerId}
-                    disabled={customers.length === 0}
-                  />
-                </div>
-
-                <Button
-                  variant="primary"
-                  onClick={saveSelectedAccount}
-                  disabled={!selectedCustomerId || saveLoading}
-                  loading={saveLoading}
-                >
-                  Save selection
-                </Button>
-
-                <Button
-                  onClick={syncSpendLast30Days}
-                  disabled={!selectedCustomerId || syncLoading}
-                  loading={syncLoading}
-                >
-                  Sync spend (last 30 days)
+              <InlineStack gap="200">
+                <Button variant="primary" onClick={startGoogleOAuth}>
+                  {data.connected ? "Reconnect Google Ads" : "Connect Google Ads"}
                 </Button>
               </InlineStack>
-
-              {customersError ? (
-                <Banner tone="critical" title="Failed to load ad accounts">
-                  <Text as="p">{customersError}</Text>
-                </Banner>
-              ) : null}
-
-              {saveOk ? (
-                <Banner tone="success" title="Saved">
-                  <Text as="p">Ad account saved.</Text>
-                </Banner>
-              ) : null}
-
-              {saveError ? (
-                <Banner tone="critical" title="Failed to save selection">
-                  <Text as="p">{saveError}</Text>
-                </Banner>
-              ) : null}
-
-              {syncOk ? (
-                <Banner tone="success" title="Sync started">
-                  <Text as="p">Spend sync triggered.</Text>
-                </Banner>
-              ) : null}
-
-              {syncError ? (
-                <Banner tone="critical" title="Failed to sync spend">
-                  <Text as="p">{syncError}</Text>
-                </Banner>
-              ) : null}
-
-              <Divider />
-
-              <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify({ appOrigin: data.appOrigin, customersLoaded: customers.length }, null, 2)}
-              </pre>
             </BlockStack>
           </Card>
         </Layout.Section>
+
+        {/* Ad account selection */}
+        {data.connected && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Ad account
+                </Text>
+
+                {data.adCustomerId && (
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Current selection:{" "}
+                    <Text as="span" fontWeight="semibold">
+                      {data.adCustomerId}
+                    </Text>
+                  </Text>
+                )}
+
+                <Divider />
+
+                <InlineStack gap="200" blockAlign="end" wrap>
+                  <Button
+                    onClick={loadAdAccounts}
+                    disabled={!data.developerTokenConfigured}
+                    loading={customersLoading}
+                  >
+                    {customersLoading ? "Loading…" : "Refresh ad accounts"}
+                  </Button>
+
+                  <div style={{ minWidth: 360 }}>
+                    <Select
+                      label="Ad account"
+                      options={customerOptions}
+                      value={selectedCustomerId}
+                      onChange={setSelectedCustomerId}
+                      disabled={customers.length === 0}
+                    />
+                  </div>
+
+                  <Button
+                    variant="primary"
+                    onClick={saveSelectedAccount}
+                    disabled={!selectedCustomerId || saveLoading}
+                    loading={saveLoading}
+                  >
+                    Save
+                  </Button>
+
+                  <Button
+                    onClick={syncSpendLast30Days}
+                    disabled={!selectedCustomerId || syncLoading}
+                    loading={syncLoading}
+                  >
+                    Sync spend (last 30 days)
+                  </Button>
+                </InlineStack>
+
+                {customersError && (
+                  <Banner tone="critical" title="Failed to load ad accounts">
+                    <Text as="p">{customersError}</Text>
+                  </Banner>
+                )}
+
+                {saveOk && (
+                  <Banner tone="success" title="Saved">
+                    <Text as="p">Ad account saved.</Text>
+                  </Banner>
+                )}
+
+                {saveError && (
+                  <Banner tone="critical" title="Failed to save">
+                    <Text as="p">{saveError}</Text>
+                  </Banner>
+                )}
+
+                {syncOk && (
+                  <Banner tone="success" title="Sync complete">
+                    <Text as="p">Spend data synced for the last 30 days.</Text>
+                  </Banner>
+                )}
+
+                {syncError && (
+                  <Banner tone="critical" title="Sync failed">
+                    <Text as="p">{syncError}</Text>
+                  </Banner>
+                )}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
+
+        {/* Not connected info */}
+        {!data.connected && (
+          <Layout.Section>
+            <Banner tone="info" title="How it works">
+              <Text as="p">
+                After connecting, Attribix will pull daily spend from Google Ads and report ROAS on
+                your Attribution dashboard. When an order is attributed to a Google click (gclid),
+                an offline conversion is automatically uploaded to Google Ads — improving your
+                Smart Bidding signals without relying on browser pixels.
+              </Text>
+            </Banner>
+          </Layout.Section>
+        )}
       </Layout>
     </Page>
   );
@@ -381,9 +420,9 @@ export default function GoogleIntegrationsPage() {
         <Layout>
           <Layout.Section>
             <Card>
-              <BlockStack gap="300">
-                <Text as="p">Loadingâ€¦</Text>
+              <BlockStack gap="300" inlineAlign="center">
                 <Spinner />
+                <Text as="p" tone="subdued">Loading…</Text>
               </BlockStack>
             </Card>
           </Layout.Section>

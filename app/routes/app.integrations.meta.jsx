@@ -13,6 +13,7 @@ import {
   InlineStack,
   Badge,
   Select,
+  Divider,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
@@ -30,7 +31,6 @@ function isResponseLike(x) {
 function getAppOrigin(request) {
   const url = new URL(request.url);
 
-  // Fly/Proxy correct origin (avoid "http://" inside Shopify Admin)
   const proto =
     request.headers.get("x-forwarded-proto") ||
     request.headers.get("fly-forwarded-proto") ||
@@ -48,9 +48,6 @@ function getAppOrigin(request) {
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
 
-  // ✅ Embedded refresh fix (robust):
-  // If Shopify auth returns a redirect to /auth..., do NOT return the 302 to the iframe.
-  // Return 401 + reauthorize headers so App Bridge can do the correct top-level reauth.
   if (isResponseLike(result)) {
     const location = result.headers.get("Location") || result.headers.get("location") || "";
     if (location.startsWith("/auth")) {
@@ -129,26 +126,19 @@ export default function MetaIntegrationsPage() {
   const [saveError, setSaveError] = React.useState(null);
   const [saveOk, setSaveOk] = React.useState(false);
 
-  const [debugStep, setDebugStep] = React.useState("");
-
   const connected = !!data.connected;
 
   async function authedFetch(path, init = {}) {
-    setDebugStep("session-token:starting");
-
     const token = await getShopifySessionToken({
       apiKey: data.apiKey,
       host: data.host,
     });
 
     if (!token) {
-      setDebugStep("session-token:missing");
       throw new Error(
-        "Missing Shopify session token (apiKey/host missing or App Bridge not available)."
+        "Missing Shopify session token — try refreshing the page."
       );
     }
-
-    setDebugStep("session-token:ok");
 
     const url = apiUrl(path);
 
@@ -184,21 +174,19 @@ export default function MetaIntegrationsPage() {
       }
 
       if (!payload?.accounts || !Array.isArray(payload.accounts)) {
-        throw new Error("No accounts returned (unexpected response).");
+        throw new Error("No accounts returned — unexpected response.");
       }
 
       setAccounts(payload.accounts);
-      setDebugStep("adaccounts:ok");
     } catch (e) {
       setAccounts([]);
       setAccountsError(String(e?.message || e));
-      setDebugStep("adaccounts:error");
     } finally {
       setAccountsLoading(false);
     }
   }
 
-  // ✅ AUTO-FETCH accounts on load when connected
+  // Auto-fetch accounts on load when connected
   React.useEffect(() => {
     if (connected) {
       fetchAdAccounts();
@@ -216,8 +204,6 @@ export default function MetaIntegrationsPage() {
 
       const form = new FormData();
       form.set("adAccountId", selected);
-
-      // include shop explicitly
       form.set("shop", data.shop);
 
       const res = await authedFetch("/api/meta/adaccount/select", {
@@ -236,20 +222,16 @@ export default function MetaIntegrationsPage() {
       }
 
       setSaveOk(true);
-      setDebugStep("adaccount:save:ok");
-
-      // ✅ Revalidate loader so "Saved ad account (loader)" updates immediately
       revalidator.revalidate();
     } catch (e) {
       setSaveOk(false);
       setSaveError(String(e?.message || e));
-      setDebugStep("adaccount:save:error");
     } finally {
       setSaveLoading(false);
     }
   }
 
-  function startMetaOAuthTopLevel() {
+  function startMetaOAuth() {
     const returnTo = "/app/integrations/meta";
 
     const startUrl =
@@ -265,7 +247,6 @@ export default function MetaIntegrationsPage() {
     }
   }
 
-  // ✅ FALLBACK option: if accounts haven't loaded yet, still show the saved selection
   const hasSelectedInAccounts = !!selected && accounts.some((a) => a?.id === selected);
 
   const options = [
@@ -280,61 +261,20 @@ export default function MetaIntegrationsPage() {
   ];
 
   return (
-    <Page title="Meta">
+    <Page
+      title="Meta"
+      subtitle="Connect Facebook & Instagram Ads to sync campaign spend and enable server-side conversions."
+      backAction={{ content: "Integrations", url: "/app/ads" }}
+    >
       <Layout>
+        {/* Connection card */}
         <Layout.Section>
           <Card>
-            <BlockStack gap="300">
-              <Banner tone="info" title="Debug mode enabled">
-                <Text as="p">
-                  Use “Connect Meta (top-level)”. This must navigate to Facebook, not /auth/login,
-                  and not use fetcher/POST.
-                </Text>
-              </Banner>
-
-              <Text as="p">
-                Connect your Meta account to sync campaigns and enable Meta-related features.
-              </Text>
-
-              <InlineStack gap="200">
-                <Button variant="primary" onClick={startMetaOAuthTopLevel}>
-                  {connected ? "Reconnect Meta (top-level)" : "Connect Meta (top-level)"}
-                </Button>
-              </InlineStack>
-
-              <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
-                {JSON.stringify(
-                  {
-                    shop: data.shop,
-                    host: data.host,
-                    embedded: data.embedded,
-                    appOrigin: data.appOrigin,
-                    connected: data.connected,
-                    expiresAt: data.expiresAt,
-                    debugStep,
-                    hasApiKey: Boolean(data.apiKey),
-
-                    // extra visibility:
-                    loaderAdAccountId: data.adAccountId || null,
-                    selectedState: selected || null,
-                    revalidatorState: revalidator.state,
-                  },
-                  null,
-                  2
-                )}
-              </pre>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="300">
+            <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
                 <Text as="h2" variant="headingMd">
-                  Connection status
+                  Connection
                 </Text>
-
                 {connected ? (
                   <Badge tone="success">Connected</Badge>
                 ) : (
@@ -342,74 +282,112 @@ export default function MetaIntegrationsPage() {
                 )}
               </InlineStack>
 
-              <BlockStack gap="100">
+              {!connected && (
                 <Text as="p" tone="subdued">
-                  Shop: {data.shop}
+                  Click "Connect Meta" to complete OAuth with Facebook. You'll be redirected back
+                  here automatically.
                 </Text>
-                <Text as="p" tone="subdued">
-                  Token expiry: {data.expiresAt ?? "—"}
-                </Text>
-                <Text as="p" tone="subdued">
-                  Saved ad account (loader): {data.adAccountId || "—"}
-                </Text>
-                <Text as="p" tone="subdued">
-                  Selected (local state): {selected || "—"}
-                </Text>
-              </BlockStack>
-
-              {!connected ? (
-                <Banner tone="warning" title="Meta not connected">
-                  <Text as="p">Click “Connect Meta (top-level)”, complete OAuth, then come back here.</Text>
-                </Banner>
-              ) : (
-                <BlockStack gap="300">
-                  <InlineStack gap="200" blockAlign="center">
-                    <Button onClick={fetchAdAccounts} loading={accountsLoading}>
-                      Fetch ad accounts
-                    </Button>
-                  </InlineStack>
-
-                  {accountsError ? (
-                    <Banner tone="critical" title="Failed to load ad accounts">
-                      <Text as="p">{accountsError}</Text>
-                    </Banner>
-                  ) : null}
-
-                  <Select
-                    label="Ad account"
-                    options={options}
-                    value={selected}
-                    onChange={setSelected}
-                    helpText="Attribix needs an ad account (act_...) to pull campaign insights."
-                  />
-
-                  <InlineStack gap="200" blockAlign="center">
-                    <Button
-                      variant="primary"
-                      onClick={saveAdAccount}
-                      disabled={!selected || saveLoading}
-                      loading={saveLoading}
-                    >
-                      Save ad account
-                    </Button>
-                  </InlineStack>
-
-                  {saveOk ? (
-                    <Banner tone="success" title="Saved">
-                      <Text as="p">Ad account saved successfully.</Text>
-                    </Banner>
-                  ) : null}
-
-                  {saveError ? (
-                    <Banner tone="critical" title="Failed to save selection">
-                      <Text as="p">{saveError}</Text>
-                    </Banner>
-                  ) : null}
-                </BlockStack>
               )}
+
+              {connected && data.expiresAt && (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Token expires: {new Date(data.expiresAt).toLocaleDateString()}
+                </Text>
+              )}
+
+              <InlineStack gap="200">
+                <Button variant="primary" onClick={startMetaOAuth}>
+                  {connected ? "Reconnect Meta" : "Connect Meta"}
+                </Button>
+              </InlineStack>
             </BlockStack>
           </Card>
         </Layout.Section>
+
+        {/* Ad account selection */}
+        {connected && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Ad account
+                </Text>
+
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Attribix needs an ad account (<code>act_…</code>) to pull campaign insights and
+                  match attribution data.
+                </Text>
+
+                {data.adAccountId && (
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Current selection:{" "}
+                    <Text as="span" fontWeight="semibold">
+                      {data.adAccountId}
+                    </Text>
+                  </Text>
+                )}
+
+                <Divider />
+
+                <InlineStack gap="200" blockAlign="center">
+                  <Button onClick={fetchAdAccounts} loading={accountsLoading}>
+                    Refresh ad accounts
+                  </Button>
+                </InlineStack>
+
+                {accountsError && (
+                  <Banner tone="critical" title="Failed to load ad accounts">
+                    <Text as="p">{accountsError}</Text>
+                  </Banner>
+                )}
+
+                <Select
+                  label="Select ad account"
+                  options={options}
+                  value={selected}
+                  onChange={setSelected}
+                />
+
+                <InlineStack gap="200" blockAlign="center">
+                  <Button
+                    variant="primary"
+                    onClick={saveAdAccount}
+                    disabled={!selected || saveLoading}
+                    loading={saveLoading}
+                  >
+                    Save
+                  </Button>
+                </InlineStack>
+
+                {saveOk && (
+                  <Banner tone="success" title="Saved">
+                    <Text as="p">Ad account saved successfully.</Text>
+                  </Banner>
+                )}
+
+                {saveError && (
+                  <Banner tone="critical" title="Failed to save">
+                    <Text as="p">{saveError}</Text>
+                  </Banner>
+                )}
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
+
+        {/* Not connected prompt */}
+        {!connected && (
+          <Layout.Section>
+            <Banner tone="info" title="How it works">
+              <Text as="p">
+                After connecting, Attribix will pull campaign-level spend daily and report ROAS on
+                your Attribution dashboard. Server-side conversion events will also be sent to Meta
+                for every attributed order, improving tracking accuracy on iOS and ad-blocked
+                browsers.
+              </Text>
+            </Banner>
+          </Layout.Section>
+        )}
       </Layout>
     </Page>
   );
