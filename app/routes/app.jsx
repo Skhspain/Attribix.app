@@ -1,8 +1,7 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
-import { Link, Outlet, useLoaderData } from "@remix-run/react";
+import { Outlet, useLoaderData } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
-import { NavMenu } from "@shopify/app-bridge-react";
 import shopify, { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }) => {
@@ -38,13 +37,14 @@ export default function AppRoute() {
 
   return (
     <AppProvider apiKey={apiKey} isEmbeddedApp>
-      <NavMenu>
-        <Link to="/app" rel="home">Overview</Link>
-        <Link to="/app/analytics">Attribution</Link>
-        <Link to="/app/orders">Orders</Link>
-        <Link to="/app/ads">Integrations</Link>
-        <Link to="/app/settings">Settings</Link>
-      </NavMenu>
+      {/* ui-nav-menu is an App Bridge web component — renders the embedded app sidebar nav */}
+      <ui-nav-menu>
+        <a href="/app" rel="home">Overview</a>
+        <a href="/app/analytics">Attribution</a>
+        <a href="/app/orders">Orders</a>
+        <a href="/app/ads">Integrations</a>
+        <a href="/app/settings">Settings</a>
+      </ui-nav-menu>
       <Outlet />
     </AppProvider>
   );
