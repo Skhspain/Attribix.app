@@ -82,42 +82,44 @@ export async function fetchUserAdAccounts(args: { accessToken: string }) {
  *
  * We accept BOTH adAccountId and campaignId so your route won't type-error.
  */
+const CAMPAIGN_FIELDS = [
+  "date_start", "date_stop",
+  "campaign_id", "campaign_name",
+  "impressions", "clicks", "spend", "cpm", "cpc", "ctr",
+  "actions", "action_values", "purchase_roas",
+];
+
+const AD_FIELDS = [
+  "date_start", "date_stop",
+  "campaign_id", "campaign_name",
+  "adset_id", "adset_name",
+  "ad_id", "ad_name",
+  "impressions", "clicks", "spend", "cpm", "cpc", "ctr",
+  "actions", "action_values",
+];
+
 export async function fetchCampaignDailyInsights(args: {
   accessToken: string;
-  adAccountId?: string; // "act_123..."
-  campaignId?: string;  // "123..."
-  since: string;        // YYYY-MM-DD
-  until: string;        // YYYY-MM-DD
+  adAccountId?: string;
+  campaignId?: string;
+  since: string;
+  until: string;
+  level?: "campaign" | "adset" | "ad";
   fields?: string[];
 }) {
   const id = args.campaignId ?? args.adAccountId;
-  if (!id) {
-    throw new Response("Missing campaignId or adAccountId", { status: 400 });
-  }
+  if (!id) throw new Response("Missing campaignId or adAccountId", { status: 400 });
 
-  const fields = (args.fields && args.fields.length > 0)
-    ? args.fields
-    : [
-        "date_start",
-        "date_stop",
-        "campaign_id",
-        "campaign_name",
-        "impressions",
-        "clicks",
-        "spend",
-        "cpm",
-        "cpc",
-        "ctr",
-        "actions",
-        "action_values",
-        "purchase_roas",
-      ];
+  const fields = args.fields?.length ? args.fields
+    : args.level === "ad" ? AD_FIELDS
+    : CAMPAIGN_FIELDS;
 
   const url = new URL(`https://graph.facebook.com/v20.0/${encodeURIComponent(id)}/insights`);
   url.searchParams.set("access_token", args.accessToken);
   url.searchParams.set("fields", fields.join(","));
   url.searchParams.set("time_increment", "1");
   url.searchParams.set("time_range", JSON.stringify({ since: args.since, until: args.until }));
+  if (args.level) url.searchParams.set("level", args.level);
 
   return metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
 }

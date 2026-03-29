@@ -176,6 +176,31 @@ model MetaCampaignDailyInsight {
   @@index([date])
 }
 
+model MetaAdDailyInsight {
+  id            String   @id @default(cuid())
+  shop          String
+  date          DateTime
+  campaignId    String
+  campaignName  String?
+  adSetId       String
+  adSetName     String?
+  adId          String
+  adName        String?
+  spend         Float    @default(0)
+  impressions   Int      @default(0)
+  clicks        Int      @default(0)
+  ctr           Float    @default(0)
+  cpc           Float    @default(0)
+  purchases     Int      @default(0)
+  purchaseValue Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, date, adId], name: "shop_date_adId")
+  @@index([shop, date])
+  @@index([campaignId])
+}
+
 model GoogleConnection {
   id           String   @id @default(cuid())
   shop         String   @unique

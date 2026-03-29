@@ -40,6 +40,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     adSpend30d,
     trackedEvents30d,
     metaCampaigns30d,
+    metaAds,
   ] = await Promise.all([
     // All purchases last 30 days for KPIs + charts
     anyDb.purchase
@@ -102,7 +103,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     anyDb.metaCampaignDailyInsight
       ?.findMany?.({
         where: { shop, date: { gte: since30 } },
-        select: { campaignId: true, campaignName: true, spend: true, purchases: true, purchaseValue: true, date: true },
+        select: { campaignId: true, campaignName: true, spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true, date: true },
+        orderBy: { date: "desc" },
+      })
+      .catch(() => []),
+
+    // Meta ad-level insights last 30 days
+    anyDb.metaAdDailyInsight
+      ?.findMany?.({
+        where: { shop, date: { gte: since30 } },
+        select: { adId: true, adName: true, adSetName: true, campaignName: true, spend: true, impressions: true, clicks: true, ctr: true, cpc: true, purchases: true, purchaseValue: true, date: true },
         orderBy: { date: "desc" },
       })
       .catch(() => []),
@@ -115,6 +125,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     adSpend30d: adSpend30d ?? [],
     trackedEvents30d: trackedEvents30d ?? [],
     metaCampaigns30d: metaCampaigns30d ?? [],
+    metaAds30d: (metaAds as any) ?? [],
   });
 }
 
@@ -327,6 +338,67 @@ export default function AppAnalytics() {
         ];
       });
   }, [metaCampaigns, currency]);
+
+  // ── Meta ad-level table ──
+  const metaAdRows = useMemo(() => {
+    const map = new Map<string, { name: string; adSet: string; campaign: string; spend: number; impressions: number; clicks: number; purchases: number; value: number }>();
+    for (const r of (data as any).metaAds30d ?? []) {
+      if (new Date((r as any).date) < windowCutoff) continue;
+      const id = String((r as any).adId);
+      const cur = map.get(id) || { name: (r as any).adName || id, adSet: (r as any).adSetName || "—", campaign: (r as any).campaignName || "—", spend: 0, impressions: 0, clicks: 0, purchases: 0, value: 0 };
+      cur.spend += safeNum((r as any).spend);
+      cur.impressions += safeNum((r as any).impressions);
+      cur.clicks += safeNum((r as any).clicks);
+      cur.purchases += safeNum((r as any).purchases);
+      cur.value += safeNum((r as any).purchaseValue);
+      map.set(id, cur);
+    }
+    return Array.from(map.values())
+      .sort((a, b) => b.spend - a.spend)
+      .map((a) => {
+        const roas = a.spend > 0 ? (a.value / a.spend).toFixed(2) : "—";
+        const ctr = a.impressions > 0 ? ((a.clicks / a.impressions) * 100).toFixed(2) + "%" : "—";
+        const cpc = a.clicks > 0 ? fmtDecimal(a.spend / a.clicks, currency) : "—";
+        const cpa = a.purchases > 0 ? fmtDecimal(a.spend / a.purchases, currency) : "—";
+        return [a.name, a.adSet, a.campaign, fmtDecimal(a.spend, currency), String(a.impressions.toLocaleString()), ctr, cpc, String(a.purchases), fmtDecimal(a.value, currency), roas, cpa];
+      });
+  }, [(data as any).metaAds30d, windowCutoff, currency]);
+
+  // ── Top performers (best ROAS campaign + ad) ──
+  const topCampaign = useMemo(() => {
+    const rows = Array.from((() => {
+      const map = new Map<string, { name: string; spend: number; value: number; purchases: number }>();
+      for (const r of metaCampaigns) {
+        const id = String((r as any).campaignId);
+        const cur = map.get(id) || { name: (r as any).campaignName || id, spend: 0, value: 0, purchases: 0 };
+        cur.spend += safeNum((r as any).spend);
+        cur.value += safeNum((r as any).purchaseValue);
+        cur.purchases += safeNum((r as any).purchases);
+        map.set(id, cur);
+      }
+      return map;
+    })().values()).filter((c) => c.spend > 0);
+    if (!rows.length) return null;
+    return rows.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0];
+  }, [metaCampaigns]);
+
+  const topAd = useMemo(() => {
+    const filtered = ((data as any).metaAds30d ?? []).filter((r: any) => new Date(r.date) >= windowCutoff);
+    const map = new Map<string, { name: string; spend: number; value: number; purchases: number; clicks: number; impressions: number }>();
+    for (const r of filtered) {
+      const id = String(r.adId);
+      const cur = map.get(id) || { name: r.adName || id, spend: 0, value: 0, purchases: 0, clicks: 0, impressions: 0 };
+      cur.spend += safeNum(r.spend);
+      cur.value += safeNum(r.purchaseValue);
+      cur.purchases += safeNum(r.purchases);
+      cur.clicks += safeNum(r.clicks);
+      cur.impressions += safeNum(r.impressions);
+      map.set(id, cur);
+    }
+    const rows = Array.from(map.values()).filter((a) => a.spend > 0);
+    if (!rows.length) return null;
+    return rows.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0];
+  }, [(data as any).metaAds30d, windowCutoff]);
 
   // ── Attribution by source ──
   const sourceRows = useMemo(() => {
@@ -569,6 +641,48 @@ export default function AppAnalytics() {
 
               <Divider />
 
+              {/* ── Top performer highlights ── */}
+              {(topCampaign || topAd) && (
+                <Grid>
+                  {topCampaign && (
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <Box background="bg-surface-success" padding="400" borderRadius="200">
+                        <BlockStack gap="100">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Badge tone="success">🏆 Best campaign</Badge>
+                          </InlineStack>
+                          <Text as="p" variant="headingMd">{topCampaign.name}</Text>
+                          <InlineStack gap="400">
+                            <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}</Text></Text>
+                            <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topCampaign.spend, currency)}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued">Value: {fmtDecimal(topCampaign.value, currency)}</Text>
+                          </InlineStack>
+                        </BlockStack>
+                      </Box>
+                    </Grid.Cell>
+                  )}
+                  {topAd && (
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <Box background="bg-surface-success" padding="400" borderRadius="200">
+                        <BlockStack gap="100">
+                          <InlineStack gap="200" blockAlign="center">
+                            <Badge tone="success">🏆 Best ad</Badge>
+                          </InlineStack>
+                          <Text as="p" variant="headingMd">{topAd.name}</Text>
+                          <InlineStack gap="400">
+                            <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? (topAd.value / topAd.spend).toFixed(2) + "×" : "—"}</Text></Text>
+                            <Text as="p" variant="bodySm" tone="subdued">CTR: {topAd.impressions > 0 ? ((topAd.clicks / topAd.impressions) * 100).toFixed(2) + "%" : "—"}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topAd.spend, currency)}</Text>
+                          </InlineStack>
+                        </BlockStack>
+                      </Box>
+                    </Grid.Cell>
+                  )}
+                </Grid>
+              )}
+
+              <Divider />
+
               <Text as="h3" variant="headingSm">Campaign breakdown (Ads Manager)</Text>
               <DataTable
                 columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
@@ -576,6 +690,20 @@ export default function AppAnalytics() {
                 rows={metaCampaignRows}
                 increasedTableDensity
               />
+
+              <Divider />
+
+              <Text as="h3" variant="headingSm">Ad breakdown (Ads Manager)</Text>
+              {metaAdRows.length > 0 ? (
+                <DataTable
+                  columnContentTypes={["text", "text", "text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"]}
+                  headings={["Ad name", "Ad set", "Campaign", "Spend", "Impressions", "CTR", "CPC", "Purchases", "Value", "ROAS", "CPA"]}
+                  rows={metaAdRows}
+                  increasedTableDensity
+                />
+              ) : (
+                <Text as="p" tone="subdued" variant="bodySm">Ad-level data will appear after the next sync.</Text>
+              )}
             </BlockStack>
           </Card>
         )}
