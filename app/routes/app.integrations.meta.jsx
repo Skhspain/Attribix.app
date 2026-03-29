@@ -1,5 +1,5 @@
 // app/routes/app.integrations.meta.jsx
-import React from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { json } from "@remix-run/node";
 import { useLoaderData, useRevalidator } from "@remix-run/react";
 import {
@@ -14,9 +14,11 @@ import {
   Badge,
   Select,
   Divider,
+  Spinner,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 
 function isResponseLike(x) {
   return (
@@ -30,18 +32,15 @@ function isResponseLike(x) {
 
 function getAppOrigin(request) {
   const url = new URL(request.url);
-
   const proto =
     request.headers.get("x-forwarded-proto") ||
     request.headers.get("fly-forwarded-proto") ||
     url.protocol.replace(":", "") ||
     "https";
-
   const host =
     request.headers.get("x-forwarded-host") ||
     request.headers.get("host") ||
     url.host;
-
   return `${proto}://${host}`;
 }
 
@@ -63,13 +62,10 @@ export async function loader({ request }) {
   }
 
   const url = new URL(request.url);
-
   const shop = result.session.shop;
   const host = url.searchParams.get("host") || "";
   const embedded = url.searchParams.get("embedded") || "1";
-
   const appOrigin = getAppOrigin(request);
-  const apiKey = process.env.SHOPIFY_API_KEY || "";
 
   const conn = await db.metaConnection
     .findUnique({ where: { shop } })
@@ -84,76 +80,28 @@ export async function loader({ request }) {
     host,
     embedded,
     appOrigin,
-    apiKey,
     connected,
     adAccountId,
     expiresAt,
   });
 }
 
-async function getShopifySessionToken({ apiKey, host }) {
-  if (typeof window === "undefined") return null;
-  if (!apiKey || !host) return null;
+// ─── Inner component (only rendered client-side after mount) ─────────────────
 
-  const { default: createApp } = await import("@shopify/app-bridge");
-  const { getSessionToken } = await import("@shopify/app-bridge/utilities");
-
-  const app = createApp({
-    apiKey,
-    host,
-    forceRedirect: true,
-  });
-
-  const token = await getSessionToken(app);
-  return token;
-}
-
-export default function MetaIntegrationsPage() {
-  const data = useLoaderData();
+function MetaIntegrationsInner({ data }) {
+  const authFetch = useAuthenticatedFetch();
   const revalidator = useRevalidator();
 
-  const apiUrl = React.useCallback(
-    (path) => new URL(path, data.appOrigin).toString(),
-    [data.appOrigin]
-  );
+  const [accounts, setAccounts] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(false);
+  const [accountsError, setAccountsError] = useState(null);
 
-  const [accounts, setAccounts] = React.useState([]);
-  const [accountsLoading, setAccountsLoading] = React.useState(false);
-  const [accountsError, setAccountsError] = React.useState(null);
-
-  const [selected, setSelected] = React.useState(data.adAccountId || "");
-  const [saveLoading, setSaveLoading] = React.useState(false);
-  const [saveError, setSaveError] = React.useState(null);
-  const [saveOk, setSaveOk] = React.useState(false);
+  const [selected, setSelected] = useState(data.adAccountId || "");
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saveOk, setSaveOk] = useState(false);
 
   const connected = !!data.connected;
-
-  async function authedFetch(path, init = {}) {
-    const token = await getShopifySessionToken({
-      apiKey: data.apiKey,
-      host: data.host,
-    });
-
-    if (!token) {
-      throw new Error(
-        "Missing Shopify session token — try refreshing the page."
-      );
-    }
-
-    const url = apiUrl(path);
-
-    const headers = new Headers(init.headers || {});
-    headers.set("Accept", "application/json");
-    headers.set("Authorization", `Bearer ${token}`);
-
-    const res = await fetch(url, {
-      ...init,
-      headers,
-      credentials: "include",
-    });
-
-    return res;
-  }
 
   async function fetchAdAccounts() {
     try {
@@ -161,13 +109,11 @@ export default function MetaIntegrationsPage() {
       setAccountsError(null);
       setAccountsLoading(true);
 
-      const res = await authedFetch("/api/meta/adaccounts", { method: "GET" });
+      const res = await authFetch("/api/meta/adaccounts", { method: "GET" });
 
       const text = await res.text();
       let payload = null;
-      try {
-        payload = JSON.parse(text);
-      } catch {}
+      try { payload = JSON.parse(text); } catch {}
 
       if (!res.ok) {
         throw new Error(payload?.error || `HTTP ${res.status}: ${text.slice(0, 160)}`);
@@ -187,10 +133,8 @@ export default function MetaIntegrationsPage() {
   }
 
   // Auto-fetch accounts on load when connected
-  React.useEffect(() => {
-    if (connected) {
-      fetchAdAccounts();
-    }
+  useEffect(() => {
+    if (connected) fetchAdAccounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
 
@@ -206,16 +150,14 @@ export default function MetaIntegrationsPage() {
       form.set("adAccountId", selected);
       form.set("shop", data.shop);
 
-      const res = await authedFetch("/api/meta/adaccount/select", {
+      const res = await authFetch("/api/meta/adaccount/select", {
         method: "POST",
         body: form,
       });
 
       const text = await res.text();
       let payload = null;
-      try {
-        payload = JSON.parse(text);
-      } catch {}
+      try { payload = JSON.parse(text); } catch {}
 
       if (!res.ok) {
         throw new Error(payload?.error || `HTTP ${res.status}: ${text.slice(0, 160)}`);
@@ -233,9 +175,10 @@ export default function MetaIntegrationsPage() {
 
   function startMetaOAuth() {
     const returnTo = "/app/integrations/meta";
+    const base = data.appOrigin || window.location.origin;
 
     const startUrl =
-      apiUrl(`/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}`) +
+      `${base}/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}` +
       `&host=${encodeURIComponent(data.host || "")}` +
       `&embedded=${encodeURIComponent(data.embedded || "1")}` +
       `&returnTo=${encodeURIComponent(returnTo)}`;
@@ -272,9 +215,7 @@ export default function MetaIntegrationsPage() {
           <Card>
             <BlockStack gap="400">
               <InlineStack align="space-between" blockAlign="center">
-                <Text as="h2" variant="headingMd">
-                  Connection
-                </Text>
+                <Text as="h2" variant="headingMd">Connection</Text>
                 {connected ? (
                   <Badge tone="success">Connected</Badge>
                 ) : (
@@ -309,9 +250,7 @@ export default function MetaIntegrationsPage() {
           <Layout.Section>
             <Card>
               <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">
-                  Ad account
-                </Text>
+                <Text as="h2" variant="headingMd">Ad account</Text>
 
                 <Text as="p" tone="subdued" variant="bodySm">
                   Attribix needs an ad account (<code>act_…</code>) to pull campaign insights and
@@ -321,9 +260,7 @@ export default function MetaIntegrationsPage() {
                 {data.adAccountId && (
                   <Text as="p" tone="subdued" variant="bodySm">
                     Current selection:{" "}
-                    <Text as="span" fontWeight="semibold">
-                      {data.adAccountId}
-                    </Text>
+                    <Text as="span" fontWeight="semibold">{data.adAccountId}</Text>
                   </Text>
                 )}
 
@@ -375,7 +312,7 @@ export default function MetaIntegrationsPage() {
           </Layout.Section>
         )}
 
-        {/* Not connected prompt */}
+        {/* Not connected info */}
         {!connected && (
           <Layout.Section>
             <Banner tone="info" title="How it works">
@@ -391,4 +328,31 @@ export default function MetaIntegrationsPage() {
       </Layout>
     </Page>
   );
+}
+
+// ─── Page wrapper with SSR-safe mount guard ───────────────────────────────────
+
+export default function MetaIntegrationsPage() {
+  const data = useLoaderData();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted) {
+    return (
+      <Page title="Meta">
+        <Layout>
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="300" inlineAlign="center">
+                <Spinner />
+                <Text as="p" tone="subdued">Loading…</Text>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
+
+  return <MetaIntegrationsInner data={data} />;
 }
