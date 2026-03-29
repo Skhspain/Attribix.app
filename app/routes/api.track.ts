@@ -282,6 +282,7 @@ async function findLatestBrowserContext(input: {
   msclkid?: string | null;
   currentUrl?: string | null;
   referrer?: string | null;
+  ip?: string | null;
 }) {
   const {
     shop,
@@ -295,6 +296,7 @@ async function findLatestBrowserContext(input: {
     msclkid,
     currentUrl,
     referrer,
+    ip,
   } = input;
 
   if (!shop) return null;
@@ -313,6 +315,10 @@ async function findLatestBrowserContext(input: {
     gclid ? { gclid } : undefined,
     ttclid ? { ttclid } : undefined,
     msclkid ? { msclkid } : undefined,
+    // IP-based correlation: bridges pixel sandbox visitorId fragmentation.
+    // Each pixel sandbox instance creates a fresh visitorId, but the client IP
+    // is consistent across page_viewed and checkout_completed events.
+    ip ? { ip } : undefined,
   ].filter(Boolean) as any[];
 
   const recentCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -352,6 +358,7 @@ async function findLatestBrowserContext(input: {
       utmSource: true,
       utmMedium: true,
       utmCampaign: true,
+      ip: true,
     },
   });
 
@@ -399,6 +406,7 @@ async function findLatestBrowserContext(input: {
 
       if (visitorId && row.visitorId === visitorId) score += 20;
       if (sessionId && row.sessionId === sessionId) score += 20;
+      if (ip && (row as any).ip === ip) score += 15;
       if (fbp && row.fbp === fbp) score += 40;
       if (fbc && row.fbc === fbc) score += 50;
       if (fbclid && row.fbclid === fbclid) score += 40;
@@ -785,6 +793,7 @@ export async function action({ request }: ActionFunctionArgs) {
         msclkid,
         currentUrl: url,
         referrer,
+        ip,
       });
 
       const currentUrlAttribution = getAttributionFromUrl(url);
@@ -916,6 +925,7 @@ export async function action({ request }: ActionFunctionArgs) {
         fallbackEventName: fallbackContext?.eventName ?? null,
         fallbackUrl: fallbackContext?.url ?? null,
         fallbackReferrer: fallbackContext?.referrer ?? null,
+        fallbackMatchedByIp: fallbackContext != null && (fallbackContext as any).ip === ip && ip != null,
         currentUrlAttribution,
         currentReferrerAttribution,
         fallbackUrlAttribution,
