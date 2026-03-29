@@ -39,6 +39,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     spendRows,
     recentTrackedEvents,
     recentPurchases,
+    metaCampaigns,
   ] = await Promise.all([
     anyDb.trackedEvent?.count?.({ where: shopFilter }).catch(() => 0),
     anyDb.purchase?.count?.({ where: shopFilter }).catch(() => 0),
@@ -131,6 +132,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
         },
       })
       .catch(() => []),
+    // Meta campaign-level data from Ads Manager sync
+    anyDb.metaCampaignDailyInsight
+      ?.findMany?.({
+        where: { shop, date: { gte: since30 } },
+        select: {
+          campaignId: true,
+          campaignName: true,
+          spend: true,
+          purchases: true,
+          purchaseValue: true,
+          date: true,
+        },
+        orderBy: { date: "desc" },
+      })
+      .catch(() => []),
   ]);
 
   return json({
@@ -144,6 +160,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     spendRows: spendRows ?? [],
     recentTrackedEvents: recentTrackedEvents ?? [],
     recentPurchases: recentPurchases ?? [],
+    metaCampaigns: metaCampaigns ?? [],
   });
 }
 
@@ -652,6 +669,25 @@ export default function AppAnalytics() {
     ]);
   }, [campaignSummary]);
 
+  // Meta Ads Manager: aggregate campaign rows by campaignId (last 30 days)
+  const metaCampaignTableRows = useMemo(() => {
+    const map = new Map<string, { name: string; spend: number; purchases: number; value: number }>();
+    for (const row of (data as any).metaCampaigns ?? []) {
+      const id = String(row.campaignId);
+      const cur = map.get(id) || { name: row.campaignName || id, spend: 0, purchases: 0, value: 0 };
+      cur.spend += safeNumber(row.spend);
+      cur.purchases += safeNumber(row.purchases);
+      cur.value += safeNumber(row.purchaseValue);
+      map.set(id, cur);
+    }
+    return Array.from(map.values())
+      .sort((a, b) => b.spend - a.spend)
+      .map((c) => {
+        const roas = c.spend > 0 ? (c.value / c.spend).toFixed(2) : "—";
+        return [c.name, formatMoney(c.spend), String(c.purchases), formatMoney(c.value), roas];
+      });
+  }, [(data as any).metaCampaigns]);
+
   const mediumRows = useMemo(() => {
     return mediumSummary.map((item) => [
       item.medium,
@@ -759,6 +795,7 @@ export default function AppAnalytics() {
 
   return (
     <Page
+      fullWidth
       title="Analytics"
       subtitle="Live overview of tracked events, attributed purchases, and revenue."
     >
@@ -973,6 +1010,32 @@ export default function AppAnalytics() {
             ) : (
               <Text as="p" variant="bodyMd" tone="subdued">
                 No campaign ROAS data available yet.
+              </Text>
+            )}
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                Meta Ads Manager — campaigns (last 30 days)
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Spend &amp; conversions from your synced Ads Manager data
+              </Text>
+            </InlineStack>
+
+            {metaCampaignTableRows.length > 0 ? (
+              <DataTable
+                columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric"]}
+                headings={["Campaign", "Spend", "Purchases (Meta)", "Purchase value", "ROAS"]}
+                rows={metaCampaignTableRows}
+                increasedTableDensity
+              />
+            ) : (
+              <Text as="p" variant="bodyMd" tone="subdued">
+                No Ads Manager data yet — go to Integrations → Meta → Sync ad spend.
               </Text>
             )}
           </BlockStack>

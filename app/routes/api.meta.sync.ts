@@ -85,15 +85,7 @@ export async function action({ request }: ActionFunctionArgs) {
     });
   }
 
-  // Recalc AdSpendDaily per date (sum campaigns -> daily spend)
-  //
-  // IMPORTANT:
-  // Your AdSpendDaily model (per your schema) is:
-  //   (date, platform, campaign?, adset?, ad?, spend)
-  // It does NOT have `shop`, and it does NOT have a unique key `shop_date`.
-  //
-  // So we store one aggregate row per day for platform="meta" with campaign/adset/ad = null,
-  // by deleting any existing aggregate row for that date and inserting a fresh one.
+  // Upsert AdSpendDaily aggregate per (shop, date, platform)
   const byDate = new Map<string, number>();
   for (const r of rows) {
     const k = String(r.date_start);
@@ -103,25 +95,12 @@ export async function action({ request }: ActionFunctionArgs) {
   for (const [k, v] of byDate.entries()) {
     const date = new Date(k);
 
-    await db.adSpendDaily.deleteMany({
+    await (db as any).adSpendDaily.upsert({
       where: {
-        date,
-        platform: "meta",
-        campaign: null,
-        adset: null,
-        ad: null,
+        shop_platform_date: { shop, platform: "meta", date },
       },
-    });
-
-    await db.adSpendDaily.create({
-      data: {
-        date,
-        platform: "meta",
-        campaign: null,
-        adset: null,
-        ad: null,
-        spend: v,
-      },
+      create: { shop, date, platform: "meta", campaign: null, adset: null, ad: null, spend: v },
+      update: { spend: v },
     });
   }
 
