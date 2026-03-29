@@ -52,12 +52,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const META_APP_ID = mustEnv("META_APP_ID");
   const META_REDIRECT_URI = mustEnv("META_REDIRECT_URI");
 
-  const state = JSON.stringify({
-    shop,
-    host,
-    embedded,
-    returnTo,
-  });
+  const state = Buffer.from(
+    JSON.stringify({ shop, host, embedded, returnTo }),
+    "utf8"
+  ).toString("base64url");
 
   const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
   authUrl.searchParams.set("client_id", META_APP_ID);
