@@ -85,16 +85,46 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  // After external OAuth the browser is in a top-level context (not inside the Shopify
-  // iframe). Redirecting to our own /app/... routes causes authenticate.admin to intercept
-  // and bounce to /auth/login (blank page). Instead, redirect to the Shopify Admin URL for
-  // the embedded app — Shopify will load our app in the iframe and then route normally.
-  //
-  // URL format: https://{shop}/admin/apps/{api_key}{internal-path}
-  // Our internal routes use /app/... prefix; Shopify admin strips that — so
-  // /app/integrations/meta → /integrations/meta in the admin URL.
-  const apiKey = process.env.SHOPIFY_API_KEY || "";
-  const appPath = returnToRaw.replace(/^\/app/, "") || "/integrations/meta";
-  return redirect(`https://${shop}/admin/apps/${apiKey}${appPath}`);
+  // After external OAuth the browser is in a top-level context — NOT inside the Shopify
+  // iframe. We cannot redirect to our own /app/* routes (authenticate.admin bounces to
+  // /auth/login). We also can't reliably construct the embedded app admin URL without the
+  // app handle. Instead, serve a lightweight success page that auto-redirects to the
+  // Shopify Admin. From there, the user navigates into the embedded app normally.
+  const adminRoot = `https://${shop}/admin`;
+
+  return new Response(
+    `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Meta connected – Attribix</title>
+  <meta http-equiv="refresh" content="3;url=${adminRoot}" />
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:#f6f6f7;display:flex;align-items:center;justify-content:center;
+         min-height:100vh}
+    .card{background:#fff;border-radius:12px;padding:40px 48px;text-align:center;
+          box-shadow:0 2px 8px rgba(0,0,0,.08);max-width:420px;width:90%}
+    .icon{font-size:48px;margin-bottom:16px}
+    h1{font-size:22px;font-weight:600;color:#1a1a1a;margin-bottom:8px}
+    p{color:#6d7175;font-size:15px;line-height:1.5;margin-bottom:24px}
+    a{display:inline-block;background:#008060;color:#fff;text-decoration:none;
+      padding:12px 28px;border-radius:8px;font-weight:500;font-size:15px}
+    a:hover{background:#006e52}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Meta connected!</h1>
+    <p>Your Meta account has been linked to Attribix.<br>
+       Redirecting you to Shopify in a moment…</p>
+    <a href="${adminRoot}">Return to Shopify Admin</a>
+  </div>
+</body>
+</html>`,
+    { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
+  );
 }
   
