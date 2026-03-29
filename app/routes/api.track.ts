@@ -184,6 +184,19 @@ function isCheckoutLikeUrl(url: string | null): boolean {
   return path.includes("/checkouts/");
 }
 
+// Cart and thank-you pages are transactional — not useful as attribution landing pages
+function isTransactionalUrl(url: string | null): boolean {
+  const path = getUrlPath(url);
+  if (!path) return false;
+  return (
+    path === "/cart" ||
+    path.startsWith("/cart/") ||
+    path.includes("/checkouts/") ||
+    path.includes("/thank_you") ||
+    path.includes("/orders/")
+  );
+}
+
 function isWebPixelSandboxUrl(url: string | null): boolean {
   if (!url) return false;
   return url.includes("/web-pixels");
@@ -243,13 +256,13 @@ function chooseBestAttributionUrl(input: {
   ].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
-    if (!isCheckoutLikeUrl(candidate) && !isWebPixelSandboxUrl(candidate) && urlHasAttribution(candidate)) {
+    if (!isTransactionalUrl(candidate) && !isWebPixelSandboxUrl(candidate) && urlHasAttribution(candidate)) {
       return candidate;
     }
   }
 
   for (const candidate of candidates) {
-    if (!isCheckoutLikeUrl(candidate) && !isWebPixelSandboxUrl(candidate)) {
+    if (!isTransactionalUrl(candidate) && !isWebPixelSandboxUrl(candidate)) {
       return candidate;
     }
   }
@@ -347,7 +360,7 @@ async function findLatestBrowserContext(input: {
 
     if (row.eventName === "pixel_boot") return false;
     if (isWebPixelSandboxUrl(rowUrl)) return false;
-    if (isCheckoutLikeUrl(rowUrl)) return false;
+    if (isTransactionalUrl(rowUrl)) return false;
 
     return Boolean(
       row.fbp ||
@@ -375,8 +388,8 @@ async function findLatestBrowserContext(input: {
       const rowPath = getUrlPath(row.url ?? null);
       const rowReferrerPath = getUrlPath(row.referrer ?? null);
       const rowHasAttribution = hasAttributionSignals(row);
-      const rowUrlIsCheckoutLike = isCheckoutLikeUrl(row.url ?? null);
-      const rowReferrerIsCheckoutLike = isCheckoutLikeUrl(row.referrer ?? null);
+      const rowUrlIsCheckoutLike = isTransactionalUrl(row.url ?? null);
+      const rowReferrerIsCheckoutLike = isTransactionalUrl(row.referrer ?? null);
 
       if (row.eventName === "browser_context_sync") score += 200;
       if (row.eventName === "product_viewed") score += 120;
@@ -882,7 +895,7 @@ export async function action({ request }: ActionFunctionArgs) {
             ? (fallbackContext?.url ?? url ?? null)
             : (url ?? fallbackContext?.url ?? null));
 
-      const safeLandingPage = isCheckoutLikeUrl(finalLandingPage)
+      const safeLandingPage = isTransactionalUrl(finalLandingPage)
         ? firstNonEmptyString(
             attributedLandingPage,
             fallbackContext?.referrer ?? null,
