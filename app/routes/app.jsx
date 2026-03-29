@@ -1,7 +1,8 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
+import { Link, Outlet, useLoaderData } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
+import { NavMenu } from "@shopify/app-bridge-react";
 import shopify, { authenticate } from "~/shopify.server";
 
 export const loader = async ({ request }) => {
@@ -16,10 +17,6 @@ export const loader = async ({ request }) => {
   });
 };
 
-/**
- * Avoid revalidating the authenticated app shell after settings fetcher posts.
- * The settings route action already returns the updated data needed by the UI.
- */
 export function shouldRevalidate({
   formAction,
   formMethod,
@@ -28,16 +25,11 @@ export function shouldRevalidate({
 }) {
   const normalizedMethod =
     typeof formMethod === "string" ? formMethod.toUpperCase() : "";
-
   const isSettingsPost =
     normalizedMethod === "POST" &&
     typeof formAction === "string" &&
     formAction.includes("/app/settings");
-
-  if (isSettingsPost && actionResult?.ok) {
-    return false;
-  }
-
+  if (isSettingsPost && actionResult?.ok) return false;
   return defaultShouldRevalidate;
 }
 
@@ -46,6 +38,13 @@ export default function AppRoute() {
 
   return (
     <AppProvider apiKey={apiKey} isEmbeddedApp>
+      <NavMenu>
+        <Link to="/app" rel="home">Overview</Link>
+        <Link to="/app/analytics">Attribution</Link>
+        <Link to="/app/orders">Orders</Link>
+        <Link to="/app/ads">Integrations</Link>
+        <Link to="/app/settings">Settings</Link>
+      </NavMenu>
       <Outlet />
     </AppProvider>
   );
