@@ -60,7 +60,8 @@ export default function NewCampaignGallery() {
   return (
     <div style={{ minHeight: "100vh", background: "#f6f6f7", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
       {/* ── Top bar ── */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #e1e3e5", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100 }}>
+      <div style={{ background: "#fff", borderBottom: "1px solid #e1e3e5", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <a href="/app/newsletter/campaigns" style={{ color: "#6b7280", fontSize: 13, textDecoration: "none" }}>← Campaigns</a>
           <span style={{ color: "#d1d5db" }}>/</span>
@@ -91,10 +92,11 @@ export default function NewCampaignGallery() {
             Next →
           </button>
         </div>
+        </div>
       </div>
 
       {/* ── Category tabs ── */}
-      <div style={{ background: "#fff", borderBottom: "1px solid #e1e3e5", padding: "0 32px", display: "flex", gap: 0, overflowX: "auto" }}>
+      <div style={{ background: "#fff", borderBottom: "1px solid #e1e3e5", display: "flex", gap: 0, overflowX: "auto", justifyContent: "center" }}>
         {["All", ...TEMPLATE_CATEGORIES.filter((c) => c !== "All")].map((cat) => {
           const count = cat === "All" ? EMAIL_TEMPLATES.length : EMAIL_TEMPLATES.filter((t) => t.category === cat).length;
           const active = activeCategory === cat;
@@ -122,7 +124,8 @@ export default function NewCampaignGallery() {
       </div>
 
       {/* ── Grid ── */}
-      <div style={{ padding: "32px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 20 }}>
+      <div style={{ padding: "32px 24px" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 20 }}>
 
         {/* Blank — always first in "All" and when no category filter matches */}
         {(activeCategory === "All") && (
@@ -149,6 +152,7 @@ export default function NewCampaignGallery() {
             onSelect={() => setSelectedId(tpl.id)}
           />
         ))}
+      </div>
       </div>
 
       {/* Hidden form that POSTs to the action */}
