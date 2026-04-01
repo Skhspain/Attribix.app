@@ -213,11 +213,21 @@ export async function sendCampaign(campaignId: string): Promise<{
       .replace(/\{\{first_name\}\}/gi, firstName)
       .replace(/\{\{email\}\}/gi, sub.email);
 
-    // Inject unsubscribe footer before </body> if present, otherwise append
+    // Wrap all http(s) links with click-tracking redirect (skip mailto: and #)
+    html = html.replace(
+      /href="(https?:\/\/[^"]+)"/g,
+      (_, url) =>
+        `href="${APP_URL}/api/newsletter/track?type=click&cid=${campaignId}&url=${encodeURIComponent(url)}"`
+    );
+
+    // Open-tracking pixel
+    const openPixel = `<img src="${APP_URL}/api/newsletter/track?type=open&cid=${campaignId}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;padding:0;margin:0;">`;
+
+    // Inject unsubscribe footer and open pixel before </body> if present, otherwise append
     if (html.includes("</body>")) {
-      html = html.replace("</body>", `${footer}</body>`);
+      html = html.replace("</body>", `${footer}${openPixel}</body>`);
     } else {
-      html += footer;
+      html += footer + openPixel;
     }
 
     return {
