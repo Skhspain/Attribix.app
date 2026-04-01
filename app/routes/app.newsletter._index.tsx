@@ -1,5 +1,5 @@
 // app/routes/app.newsletter._index.tsx
-// Newsletter analytics dashboard — KPI cards, growth sparkline, source breakdown, campaign table.
+// Newsletter compact overview — 4 stat cards, mini sparkline, quick-action cards.
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
@@ -95,7 +95,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return { date: dateStr, count };
   });
 
-  // Compute average open/click/delivery rates from sent campaigns
+  // Compute average open/click rates from sent campaigns
   const totalCampaignsSent = sentCampaigns.length;
   let avgOpenRate = 0;
   let avgClickRate = 0;
@@ -152,22 +152,10 @@ function statusBadge(status: string) {
   return <Badge tone={map[status] ?? "new"}>{status}</Badge>;
 }
 
-function rateBadge(rate: number | null) {
-  if (rate === null) return <Text as="span" variant="bodySm" tone="subdued">—</Text>;
-  const tone = rate >= 20 ? "success" : rate >= 10 ? "warning" : undefined;
-  return (
-    <Badge tone={tone}>
-      {rate}%
-    </Badge>
-  );
-}
-
 export default function NewsletterOverview() {
   const {
     totalSubscribers,
     newSubscribers30d,
-    unsubscribed30d,
-    netGrowth30d,
     avgOpenRate,
     avgClickRate,
     recentCampaigns,
@@ -181,11 +169,14 @@ export default function NewsletterOverview() {
   const startDate = dailyGrowth[0]?.date ?? "";
   const endDate = dailyGrowth[dailyGrowth.length - 1]?.date ?? "";
 
+  // Last 3 campaigns for quick-actions card
+  const last3Campaigns = recentCampaigns.slice(0, 3);
+
   return (
     <BlockStack gap="500">
-      {/* Row 1 — 6 KPI cards */}
+      {/* Section A — 4 stat cards in 2x2 grid */}
       <Grid>
-        <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 2, lg: 2, xl: 2 }}>
+        <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
           <Card>
             <BlockStack gap="100">
               <Text as="p" variant="bodySm" tone="subdued">Total subscribers</Text>
@@ -194,7 +185,7 @@ export default function NewsletterOverview() {
           </Card>
         </Grid.Cell>
 
-        <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 2, lg: 2, xl: 2 }}>
+        <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
           <Card>
             <BlockStack gap="100">
               <Text as="p" variant="bodySm" tone="subdued">New last 30 days</Text>
@@ -203,31 +194,7 @@ export default function NewsletterOverview() {
           </Card>
         </Grid.Cell>
 
-        <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 2, lg: 2, xl: 2 }}>
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Unsubscribed 30d</Text>
-              <Text as="p" variant="headingXl" tone="critical">-{unsubscribed30d.toLocaleString()}</Text>
-            </BlockStack>
-          </Card>
-        </Grid.Cell>
-
-        <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 2, lg: 2, xl: 2 }}>
-          <Card>
-            <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Net growth 30d</Text>
-              <Text
-                as="p"
-                variant="headingXl"
-                tone={netGrowth30d >= 0 ? "success" : "critical"}
-              >
-                {netGrowth30d >= 0 ? "+" : ""}{netGrowth30d.toLocaleString()}
-              </Text>
-            </BlockStack>
-          </Card>
-        </Grid.Cell>
-
-        <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 2, lg: 2, xl: 2 }}>
+        <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
           <Card>
             <BlockStack gap="100">
               <Text as="p" variant="bodySm" tone="subdued">Avg open rate</Text>
@@ -238,7 +205,7 @@ export default function NewsletterOverview() {
           </Card>
         </Grid.Cell>
 
-        <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 2, lg: 2, xl: 2 }}>
+        <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
           <Card>
             <BlockStack gap="100">
               <Text as="p" variant="bodySm" tone="subdued">Avg click rate</Text>
@@ -250,45 +217,78 @@ export default function NewsletterOverview() {
         </Grid.Cell>
       </Grid>
 
-      {/* Row 2 — Growth sparkline + Source breakdown */}
+      {/* Section B — Mini sparkline card */}
+      <Card>
+        <BlockStack gap="300">
+          <Text as="h2" variant="headingSm">Subscriber growth — last 30 days</Text>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 48 }}>
+            {dailyGrowth.map(({ date, count }) => (
+              <div
+                key={date}
+                title={`${date}: ${count}`}
+                style={{
+                  flex: 1,
+                  height:
+                    maxDailyCount > 0
+                      ? `${Math.max(4, Math.round((count / maxDailyCount) * 48))}px`
+                      : "4px",
+                  background: count > 0 ? "#008060" : "#e5e7eb",
+                  borderRadius: "2px 2px 0 0",
+                }}
+              />
+            ))}
+          </div>
+          <InlineStack align="space-between">
+            <Text as="p" variant="bodySm" tone="subdued">{startDate}</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{endDate}</Text>
+          </InlineStack>
+          <Button variant="plain" url="/app/newsletter/analytics">View full newsletter analytics →</Button>
+        </BlockStack>
+      </Card>
+
+      {/* Section C — Quick actions: Recent campaigns + Subscriber sources */}
       <Grid>
-        <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 8, lg: 8, xl: 8 }}>
+        <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
           <Card>
             <BlockStack gap="300">
-              <Text as="h2" variant="headingSm">Subscriber growth — last 30 days</Text>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 60 }}>
-                {dailyGrowth.map(({ date, count }) => (
-                  <div
-                    key={date}
-                    title={`${date}: ${count}`}
-                    style={{
-                      flex: 1,
-                      height:
-                        maxDailyCount > 0
-                          ? `${Math.max(4, Math.round((count / maxDailyCount) * 60))}px`
-                          : "4px",
-                      background: count > 0 ? "#008060" : "#e5e7eb",
-                      borderRadius: "2px 2px 0 0",
-                    }}
-                  />
-                ))}
-              </div>
               <InlineStack align="space-between">
-                <Text as="p" variant="bodySm" tone="subdued">{startDate}</Text>
-                <Text as="p" variant="bodySm" tone="subdued">{endDate}</Text>
+                <Text as="h2" variant="headingSm">Recent campaigns</Text>
+                <Button variant="plain" url="/app/newsletter/campaigns">View all →</Button>
               </InlineStack>
+              {last3Campaigns.length === 0 ? (
+                <Text as="p" tone="subdued">No campaigns yet.</Text>
+              ) : (
+                <BlockStack gap="200">
+                  {last3Campaigns.map((c: any) => (
+                    <div key={c.id}>
+                      <InlineStack align="space-between" blockAlign="center">
+                        <BlockStack gap="050">
+                          <Text as="p" variant="bodySm" fontWeight="semibold">{c.name}</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            {c.sentAt
+                              ? new Date(c.sentAt).toLocaleDateString()
+                              : "Draft"}
+                          </Text>
+                        </BlockStack>
+                        {statusBadge(c.status)}
+                      </InlineStack>
+                      <Divider />
+                    </div>
+                  ))}
+                </BlockStack>
+              )}
             </BlockStack>
           </Card>
         </Grid.Cell>
 
-        <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 4, lg: 4, xl: 4 }}>
+        <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
           <Card>
-            <BlockStack gap="400">
+            <BlockStack gap="300">
               <Text as="h2" variant="headingSm">Subscriber sources</Text>
               {sources.length === 0 ? (
                 <Text as="p" tone="subdued">No subscribers yet.</Text>
               ) : (
-                <BlockStack gap="300">
+                <BlockStack gap="200">
                   {sources.map((s: any) => {
                     const pct =
                       totalSourceCount > 0
@@ -321,67 +321,6 @@ export default function NewsletterOverview() {
           </Card>
         </Grid.Cell>
       </Grid>
-
-      {/* Row 3 — Recent campaigns */}
-      <Card>
-        <BlockStack gap="400">
-          <InlineStack align="space-between">
-            <Text as="h2" variant="headingSm">Recent campaigns</Text>
-            <Button variant="plain" url="/app/newsletter/campaigns">View all</Button>
-          </InlineStack>
-
-          {recentCampaigns.length === 0 ? (
-            <Text as="p" tone="subdued">
-              No campaigns yet.{" "}
-              <Button variant="plain" url="/app/newsletter/campaigns/new">
-                Create your first one →
-              </Button>
-            </Text>
-          ) : (
-            <BlockStack gap="300">
-              {recentCampaigns.map((c: any) => {
-                const delivered = c.deliveredCount ?? 0;
-                const openRate =
-                  c.status === "sent" && delivered > 0
-                    ? Math.round(((c.openCount ?? 0) / delivered) * 100)
-                    : null;
-                const clickRate =
-                  c.status === "sent" && delivered > 0
-                    ? Math.round(((c.clickCount ?? 0) / delivered) * 100)
-                    : null;
-
-                return (
-                  <div key={c.id}>
-                    <InlineStack align="space-between" blockAlign="center">
-                      <BlockStack gap="050">
-                        <Text as="p" variant="bodyMd" fontWeight="semibold">{c.name}</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          {c.sentAt
-                            ? `Sent ${new Date(c.sentAt).toLocaleDateString()} · ${(c.recipientCount ?? 0).toLocaleString()} recipients`
-                            : "Draft"}
-                        </Text>
-                      </BlockStack>
-                      <InlineStack gap="200" blockAlign="center">
-                        {statusBadge(c.status)}
-                        <InlineStack gap="100" blockAlign="center">
-                          <Text as="span" variant="bodySm" tone="subdued">Opens:</Text>
-                          {rateBadge(openRate)}
-                        </InlineStack>
-                        <InlineStack gap="100" blockAlign="center">
-                          <Text as="span" variant="bodySm" tone="subdued">Clicks:</Text>
-                          {rateBadge(clickRate)}
-                        </InlineStack>
-                        <Button variant="plain" url={`/app/newsletter/campaigns/${c.id}`}>Edit</Button>
-                      </InlineStack>
-                    </InlineStack>
-                    <Divider />
-                  </div>
-                );
-              })}
-            </BlockStack>
-          )}
-        </BlockStack>
-      </Card>
 
       {/* Getting started */}
       {totalSubscribers === 0 && (

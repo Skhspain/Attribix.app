@@ -33,9 +33,12 @@ export default function NewsletterLayout() {
     { id: "overview", content: "Overview", url: "/app/newsletter" },
     { id: "subscribers", content: `Subscribers (${subscriberCount})`, url: "/app/newsletter/subscribers" },
     { id: "campaigns", content: "Campaigns", url: "/app/newsletter/campaigns" },
+    { id: "analytics", content: "Analytics", url: "/app/newsletter/analytics" },
   ];
 
-  const selected = location.pathname.includes("/subscribers")
+  const selected = location.pathname.includes("/analytics")
+    ? 3
+    : location.pathname.includes("/subscribers")
     ? 1
     : location.pathname.includes("/campaigns")
     ? 2
