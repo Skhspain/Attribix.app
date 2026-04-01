@@ -1,160 +1,223 @@
 // app/routes/webhooks.orders_create.ts
-//
-// Attribution pipeline: when a Shopify order comes in, find the web session
-// that led to it and record the UTM source alongside the purchase.
-//
-// Attribution strategy (in priority order):
-//   1. Checkout token match — the pixel sends checkout.token as sessionId on
-//      checkout_started. Shopify includes the same token in the order payload
-//      as checkout_token. Best match: direct 1-to-1 link.
-//   2. Email fallback — if no checkout token match, look for the most recent
-//      checkout_started event that recorded the customer's email within 30 days.
-
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { createHash } from "crypto";
-import shopify from "~/shopify.server";
 import { db } from "~/db.server";
+import shopify from "~/shopify.server";
+import { sendServerConversions } from "~/services/serverConversions.server";
 
-function hashEmail(email: string): string {
-  return createHash("sha256").update(email.trim().toLowerCase()).digest("hex");
+function pickFirstString(x: unknown): string | null {
+  return typeof x === "string" && x.trim().length ? x.trim() : null;
+}
+
+function pickFirstNumber(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string") {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function getUtmFromUrl(url: string) {
+  try {
+    const u = new URL(url);
+    return {
+      utmSource: u.searchParams.get("utm_source"),
+      utmMedium: u.searchParams.get("utm_medium"),
+      utmCampaign: u.searchParams.get("utm_campaign"),
+      fbclid: u.searchParams.get("fbclid"),
+      gclid: u.searchParams.get("gclid"),
+      ttclid: u.searchParams.get("ttclid"),
+      msclkid: u.searchParams.get("msclkid"),
+    };
+  } catch {
+    return {
+      utmSource: null,
+      utmMedium: null,
+      utmCampaign: null,
+      fbclid: null,
+      gclid: null,
+      ttclid: null,
+      msclkid: null,
+    };
+  }
+}
+
+function findNoteAttribute(payload: any, name: string): string | null {
+  const attrs = Array.isArray(payload?.note_attributes) ? payload.note_attributes : [];
+  const found = attrs.find(
+    (item: any) => String(item?.name || "").toLowerCase() === name.toLowerCase(),
+  );
+  return pickFirstString(found?.value);
 }
 
 export async function action({ request }: ActionFunctionArgs) {
   try {
     const { topic, shop, payload } = await shopify.authenticate.webhook(request);
 
-    if (topic !== "ORDERS_CREATE") {
-      return json({ ok: true, skipped: true });
-    }
+    const orderId =
+      pickFirstString(payload?.admin_graphql_api_id) ||
+      pickFirstString(payload?.id?.toString?.()) ||
+      pickFirstString(payload?.order_number?.toString?.()) ||
+      null;
 
-    const order = payload as any;
+    const totalValue =
+      pickFirstNumber(payload?.current_total_price) ??
+      pickFirstNumber(payload?.total_price) ??
+      0;
 
-    const shopifyOrderId = String(order.id);
-    const checkoutToken = order.checkout_token as string | null | undefined;
-    const customerEmail = (order.email as string | null | undefined)?.trim().toLowerCase() || null;
-    const totalPrice = parseFloat(order.total_price || "0");
-    const currency = order.currency || "USD";
+    const currency =
+      pickFirstString(payload?.currency) ||
+      pickFirstString(payload?.presentment_currency) ||
+      "USD";
 
-    // Idempotency: skip if already recorded
-    const existing = await db.purchase.findUnique({
-      where: { shopifyOrderId },
-      select: { id: true },
-    });
-    if (existing) {
-      console.log("[orders_create] already recorded, skipping", shopifyOrderId);
-      return json({ ok: true, skipped: true });
-    }
+    const landingUrl =
+      pickFirstString(payload?.landing_site) ||
+      pickFirstString(payload?.landing_site_ref) ||
+      null;
 
-    // ── 1. Checkout token match ──────────────────────────────────────────────
-    let attributionEvent: {
-      utmSource: string | null;
-      utmMedium: string | null;
-      utmCampaign: string | null;
-      gclid: string | null;
-      fbclid: string | null;
-      sessionId: string | null;
-    } | null = null;
+    const referringSite = pickFirstString(payload?.referring_site) || null;
 
-    if (checkoutToken) {
-      const ev = await db.trackedEvent.findFirst({
-        where: {
-          sessionId: checkoutToken,
-          eventName: { in: ["checkout_started", "checkout_completed"] },
+    const email =
+      pickFirstString(payload?.email) ||
+      pickFirstString(payload?.customer?.email) ||
+      null;
+
+    const phone =
+      pickFirstString(payload?.phone) ||
+      pickFirstString(payload?.customer?.phone) ||
+      null;
+
+    const ip =
+      pickFirstString(payload?.browser_ip) ||
+      pickFirstString(payload?.client_details?.browser_ip) ||
+      null;
+
+    const country =
+      pickFirstString(payload?.billing_address?.country_code) ||
+      pickFirstString(payload?.shipping_address?.country_code) ||
+      null;
+
+    const city =
+      pickFirstString(payload?.billing_address?.city) ||
+      pickFirstString(payload?.shipping_address?.city) ||
+      null;
+
+    const userAgent =
+      pickFirstString(payload?.client_details?.user_agent) ||
+      null;
+
+    const utm = getUtmFromUrl(landingUrl || "");
+
+    const visitorId =
+      findNoteAttribute(payload, "attribix_visitor_id") ||
+      findNoteAttribute(payload, "visitorId") ||
+      null;
+
+    const sessionId =
+      findNoteAttribute(payload, "attribix_session_id") ||
+      findNoteAttribute(payload, "sessionId") ||
+      null;
+
+    if (orderId) {
+      await db.purchase.upsert({
+        where: { orderId },
+        create: {
+          createdAt: new Date(payload?.created_at || Date.now()),
+          totalValue,
+          currency,
+          shop,
+          orderId,
+          visitorId,
+          sessionId,
+          utmSource: utm.utmSource,
+          utmMedium: utm.utmMedium,
+          utmCampaign: utm.utmCampaign,
+          fbclid: utm.fbclid,
+          gclid: utm.gclid,
+          ttclid: utm.ttclid,
+          msclkid: utm.msclkid,
+          country,
+          city,
         },
-        orderBy: { createdAt: "desc" },
-        select: {
-          utmSource: true,
-          utmMedium: true,
-          utmCampaign: true,
-          gclid: true,
-          fbclid: true,
-          sessionId: true,
+        update: {
+          totalValue,
+          currency,
+          shop,
+          visitorId: visitorId ?? undefined,
+          sessionId: sessionId ?? undefined,
+          utmSource: utm.utmSource ?? undefined,
+          utmMedium: utm.utmMedium ?? undefined,
+          utmCampaign: utm.utmCampaign ?? undefined,
+          fbclid: utm.fbclid ?? undefined,
+          gclid: utm.gclid ?? undefined,
+          ttclid: utm.ttclid ?? undefined,
+          msclkid: utm.msclkid ?? undefined,
+          country: country ?? undefined,
+          city: city ?? undefined,
         },
       });
 
-      if (ev) {
-        attributionEvent = ev;
-        console.log("[orders_create] attributed via checkout token", checkoutToken);
+      try {
+        const conversionResult = await sendServerConversions({
+          eventName: "Purchase",
+          eventTime: Math.floor(
+            new Date(payload?.created_at || Date.now()).getTime() / 1000,
+          ),
+          eventId: `shopify_order_${orderId}`,
+          orderId,
+          value: totalValue,
+          currency,
+          url: landingUrl,
+          sourceUrl: landingUrl || referringSite,
+          actionSource: "website",
+          shop,
+          ip,
+          userAgent,
+          email,
+          phone,
+          fbclid: utm.fbclid,
+          externalId: visitorId || email || null,
+        });
+
+        console.log("[webhooks.orders_create] server conversions", conversionResult);
+      } catch (conversionError: any) {
+        console.error(
+          "[webhooks.orders_create] server conversion error:",
+          conversionError?.message || conversionError,
+        );
       }
     }
 
-    // ── 2. Email fallback ────────────────────────────────────────────────────
-    if (!attributionEvent && customerEmail) {
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-      const ev = await db.trackedEvent.findFirst({
-        where: {
-          email: customerEmail,
-          eventName: { in: ["checkout_started", "checkout_completed"] },
-          createdAt: { gte: thirtyDaysAgo },
-        },
-        orderBy: { createdAt: "desc" },
-        select: {
-          utmSource: true,
-          utmMedium: true,
-          utmCampaign: true,
-          gclid: true,
-          fbclid: true,
-          sessionId: true,
-        },
-      });
-
-      if (ev) {
-        attributionEvent = ev;
-        console.log("[orders_create] attributed via email fallback", customerEmail);
+    // Auto-subscribe to newsletter if customer accepted marketing
+    if (email && payload?.buyer_accepts_marketing === true) {
+      try {
+        const { subscribeEmail } = await import("~/services/newsletter.server");
+        await subscribeEmail({
+          shop,
+          email,
+          firstName: payload?.customer?.first_name || undefined,
+          lastName: payload?.customer?.last_name || undefined,
+          source: "shopify_order",
+          utmSource: utm.utmSource || undefined,
+          utmMedium: utm.utmMedium || undefined,
+          utmCampaign: utm.utmCampaign || undefined,
+          gclid: utm.gclid || undefined,
+          fbclid: utm.fbclid || undefined,
+        });
+      } catch (subErr: any) {
+        console.error("[webhooks.orders_create] newsletter subscribe error:", subErr?.message);
       }
     }
 
-    if (!attributionEvent) {
-      console.log("[orders_create] no attribution found for order", shopifyOrderId);
-    }
-
-    // ── Build line items ─────────────────────────────────────────────────────
-    const lineItems: Array<{
-      productId: string;
-      productName: string;
-      quantity: number;
-      price: number;
-    }> = (order.line_items || []).map((item: any) => ({
-      productId: String(item.product_id || item.variant_id || "unknown"),
-      productName: String(item.title || item.name || "Unknown product"),
-      quantity: Number(item.quantity || 1),
-      price: parseFloat(item.price || "0"),
-    }));
-
-    // ── Persist ──────────────────────────────────────────────────────────────
-    const purchase = await db.purchase.create({
-      data: {
-        shop,
-        shopifyOrderId,
-        totalValue: totalPrice,
-        currency,
-        customerEmailHash: customerEmail ? hashEmail(customerEmail) : null,
-        utmSource: attributionEvent?.utmSource ?? null,
-        utmMedium: attributionEvent?.utmMedium ?? null,
-        utmCampaign: attributionEvent?.utmCampaign ?? null,
-        gclid: attributionEvent?.gclid ?? null,
-        fbclid: attributionEvent?.fbclid ?? null,
-        sessionId: attributionEvent?.sessionId ?? null,
-        items: {
-          create: lineItems,
-        },
-      },
+    return json({
+      ok: true,
+      topic,
+      shop,
+      saved: Boolean(orderId),
+      orderId,
     });
-
-    console.log("[orders_create] recorded purchase", {
-      id: purchase.id,
-      shopifyOrderId,
-      totalValue: totalPrice,
-      utmSource: purchase.utmSource,
-      utmMedium: purchase.utmMedium,
-      utmCampaign: purchase.utmCampaign,
-    });
-
-    return json({ ok: true, purchaseId: purchase.id });
   } catch (err: any) {
-    console.error("[orders_create] error:", err?.message ?? err);
     return json({ ok: false, error: String(err?.message ?? err) }, { status: 500 });
   }
 }
