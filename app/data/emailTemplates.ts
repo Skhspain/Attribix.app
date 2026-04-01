@@ -37,10 +37,13 @@ function dividerFooter(msg = "Questions? Just reply to this email.", borderColor
   return `<tr><td style="border-top:1px solid ${borderColor};padding:20px 40px 28px;text-align:center;"><p style="margin:0;color:#9ca3af;font-size:12px;">${msg}</p></td></tr>`;
 }
 
-function productRow(items: Array<{label: string; price: string; bg: string}>): string {
+function productRow(items: Array<{label: string; price: string; bg: string; img?: string}>): string {
   const cols = items.map(i => `<td style="padding:6px;text-align:center;width:${Math.floor(100/items.length)}%;">
-    <div style="background:${i.bg};border-radius:8px;height:100px;margin-bottom:8px;"></div>
-    <p style="margin:0 0 2px;font-size:12px;font-weight:600;color:#111827;">${i.label}</p>
+    ${i.img
+      ? `<img src="${i.img}" width="${Math.floor(520/items.length)}" height="100" alt="${i.label}" style="border-radius:8px;width:100%;max-width:${Math.floor(520/items.length)}px;height:100px;object-fit:cover;display:block;">`
+      : `<div style="background:${i.bg};border-radius:8px;height:100px;"></div>`
+    }
+    <p style="margin:6px 0 2px;font-size:12px;font-weight:600;color:#111827;">${i.label}</p>
     <p style="margin:0;font-size:13px;font-weight:700;color:#374151;">${i.price}</p>
   </td>`).join('');
   return `<tr><td style="padding:8px 16px;"><table width="100%" cellpadding="0" cellspacing="0"><tr>${cols}</tr></table></td></tr>`;
@@ -62,6 +65,7 @@ add({ id: "welcome_classic", name: "Welcome — Classic", category: "Welcome", d
 html: wrap(`
 ${header("#008060", `<p style="margin:0 0 6px;color:rgba(255,255,255,0.7);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Welcome</p>
 <h1 style="margin:0;color:#fff;font-size:32px;font-weight:700;">Welcome to the family! 👋</h1>`)}
+<tr><td style="padding:0;"><img src="https://picsum.photos/seed/welcome9/600/220" width="600" height="220" alt="Welcome" style="width:100%;max-width:600px;height:220px;object-fit:cover;display:block;"></td></tr>
 ${body(`<p style="margin:0;color:#6b7280;font-size:15px;line-height:1.7;text-align:center;">You're in. Thanks for subscribing — we're so glad you're here. Expect early access, exclusive deals, and zero spam.</p>`)}
 ${btn("Explore the store", "#008060")}
 ${dividerFooter()}`)}
@@ -112,10 +116,10 @@ html: wrap(`
 ${header("#111827", `<p style="margin:0 0 6px;color:#9ca3af;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:3px;">Just dropped</p>
 <h1 style="margin:0;color:#fff;font-size:34px;font-weight:900;">The New Collection 🔥</h1>`)}
 ${productRow([
-  { label: "Signature Tee", price: "$49", bg: "#e5e7eb" },
-  { label: "Classic Cap", price: "$35", bg: "#d1d5db" },
-  { label: "Varsity Jacket", price: "$129", bg: "#e5e7eb" },
-  { label: "Cargo Pants", price: "$89", bg: "#d1d5db" },
+  { label: "Signature Tee", price: "$49", bg: "#e5e7eb", img: "https://picsum.photos/seed/tshirt1/130/100" },
+  { label: "Classic Cap", price: "$35", bg: "#d1d5db", img: "https://picsum.photos/seed/cap2/130/100" },
+  { label: "Varsity Jacket", price: "$129", bg: "#e5e7eb", img: "https://picsum.photos/seed/jacket3/130/100" },
+  { label: "Cargo Pants", price: "$89", bg: "#d1d5db", img: "https://picsum.photos/seed/pants4/130/100" },
 ])}
 ${btn("Shop the full drop", "#111827")}`, "#f9fafb")}
 );
@@ -128,7 +132,7 @@ html: wrap(`
   <p style="margin:0;color:rgba(255,255,255,0.85);font-size:14px;line-height:1.6;">Made from 100% organic cotton. Designed to last a lifetime.</p>
 </td></tr>
 <tr><td style="padding:0 40px 16px;">
-  <div style="background:#f0f9ff;border-radius:10px;height:160px;margin-top:24px;"></div>
+  <img src="https://picsum.photos/seed/hoodie5/520/200" width="520" height="200" alt="Product" style="border-radius:10px;width:100%;max-width:520px;height:200px;object-fit:cover;display:block;margin-top:24px;">
 </td></tr>
 ${body(`<p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#0c4a6e;">$79 <span style="font-size:15px;font-weight:400;color:#9ca3af;text-decoration:line-through;">$99</span></p>
 <p style="margin:0;color:#64748b;font-size:14px;line-height:1.6;">Available in 6 colours and sizes XS–3XL. Free shipping on orders over $60.</p>`, "0 40px 8px")}
@@ -141,9 +145,9 @@ ${header("#16a34a", `<p style="margin:0 0 6px;color:#bbf7d0;font-size:12px;font-
 <h1 style="margin:0 0 8px;color:#fff;font-size:28px;font-weight:700;">Your favourites are back! 🎉</h1>
 <p style="margin:0;color:rgba(255,255,255,0.85);font-size:14px;">And they're selling fast — don't wait this time.</p>`)}
 ${productRow([
-  { label: "Favourite Item", price: "$59", bg: "#dcfce7" },
-  { label: "Classic Style", price: "$79", bg: "#bbf7d0" },
-  { label: "Limited Stock", price: "$45", bg: "#dcfce7" },
+  { label: "Favourite Item", price: "$59", bg: "#dcfce7", img: "https://picsum.photos/seed/fav1/170/100" },
+  { label: "Classic Style", price: "$79", bg: "#bbf7d0", img: "https://picsum.photos/seed/classic2/170/100" },
+  { label: "Limited Stock", price: "$45", bg: "#dcfce7", img: "https://picsum.photos/seed/limited3/170/100" },
 ])}
 <tr><td style="padding:0 40px 8px;text-align:center;">
   <div style="background:#dcfce7;border-radius:8px;padding:12px;display:inline-block;">
@@ -162,9 +166,9 @@ html: wrap(`
   <p style="margin:0;color:#6b7280;font-size:15px;line-height:1.6;">Fresh styles, light fabrics, and everything you need for the new season.</p>
 </td></tr>
 ${productRow([
-  { label: "Linen Shirt", price: "$65", bg: "#fce7f3" },
-  { label: "Floral Dress", price: "$89", bg: "#fdf2f8" },
-  { label: "Sun Hat", price: "$35", bg: "#fce7f3" },
+  { label: "Linen Shirt", price: "$65", bg: "#fce7f3", img: "https://picsum.photos/seed/linen6/170/100" },
+  { label: "Floral Dress", price: "$89", bg: "#fdf2f8", img: "https://picsum.photos/seed/dress7/170/100" },
+  { label: "Sun Hat", price: "$35", bg: "#fce7f3", img: "https://picsum.photos/seed/hat8/170/100" },
 ])}
 ${btn("Shop spring collection", "#db2777")}`, "#fff5f7")}
 );
@@ -263,12 +267,12 @@ html: wrap(`
 ${header("#0f766e", `<p style="margin:0 0 4px;color:#99f6e4;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">Curated for you</p>
 <h1 style="margin:0;color:#fff;font-size:22px;font-weight:700;">This Week's Highlights 🌿</h1>`)}
 ${[
-  { title: "The future of sustainable fashion", tag: "Industry", time: "4 min read" },
-  { title: "How to build a brand people love", tag: "Business", time: "6 min read" },
-  { title: "Our top product picks this season", tag: "Products", time: "2 min read" },
+  { title: "The future of sustainable fashion", tag: "Industry", time: "4 min read", img: "https://picsum.photos/seed/fashion10/70/70" },
+  { title: "How to build a brand people love", tag: "Business", time: "6 min read", img: "https://picsum.photos/seed/brand11/70/70" },
+  { title: "Our top product picks this season", tag: "Products", time: "2 min read", img: "https://picsum.photos/seed/picks12/70/70" },
 ].map(item => `<tr><td style="padding:16px 40px 0;">
   <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td width="70" style="vertical-align:top;padding-right:16px;"><div style="background:#ccfbf1;border-radius:8px;height:70px;"></div></td>
+    <td width="70" style="vertical-align:top;padding-right:16px;"><img src="${item.img}" width="70" height="70" alt="${item.tag}" style="border-radius:8px;width:70px;height:70px;object-fit:cover;display:block;"></td>
     <td><p style="margin:0 0 4px;font-size:11px;color:#0f766e;font-weight:700;text-transform:uppercase;">${item.tag} · ${item.time}</p>
     <p style="margin:0 0 6px;font-size:14px;font-weight:600;color:#111827;">${item.title}</p>
     <a href="{{shop_url}}" style="font-size:12px;color:#0f766e;font-weight:600;text-decoration:none;">Read More →</a></td>
