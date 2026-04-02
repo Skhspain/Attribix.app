@@ -54,7 +54,11 @@ export default function NewCampaignGallery() {
       : EMAIL_TEMPLATES.filter((t) => t.category === activeCategory);
 
   function submit() {
-    formRef.current?.submit();
+    if (!formRef.current) return;
+    // Ensure the hidden input has the latest value before submitting
+    const htmlInput = formRef.current.querySelector('input[name="html"]') as HTMLInputElement | null;
+    if (htmlInput) htmlInput.value = selectedTemplate?.html ?? "";
+    formRef.current.submit();
   }
 
   return (
@@ -205,7 +209,7 @@ function TemplateCard({
       }}
     >
       {/* Preview area */}
-      <div style={{ width: CARD_W, height: CARD_H, overflow: "hidden", position: "relative", background: html ? "#f4f4f4" : "#f9fafb" }}>
+      <div style={{ width: "100%", height: CARD_H, overflow: "hidden", position: "relative", background: html ? "#f4f4f4" : "#f9fafb" }}>
         {html ? (
           <iframe
             srcDoc={html}
@@ -213,10 +217,12 @@ function TemplateCard({
               width: IFRAME_W,
               height: IFRAME_H,
               border: "none",
+              position: "absolute",
+              top: 0,
+              left: 0,
               transformOrigin: "top left",
               transform: `scale(${SCALE})`,
               pointerEvents: "none",
-              display: "block",
             }}
             title={name}
             sandbox="allow-same-origin"

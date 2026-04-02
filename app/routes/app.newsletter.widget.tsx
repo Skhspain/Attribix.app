@@ -401,7 +401,7 @@ export default function NewsletterWidget() {
               {/* Scaled preview */}
               <div
                 style={{
-                  width: CARD_W,
+                  width: "100%",
                   height: CARD_H,
                   overflow: "hidden",
                   position: "relative",
