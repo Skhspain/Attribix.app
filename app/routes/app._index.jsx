@@ -29,6 +29,10 @@ export async function loader({ request }) {
   since7.setDate(since7.getDate() - 7);
   since7.setHours(0, 0, 0, 0);
 
+  const since14 = new Date();
+  since14.setDate(since14.getDate() - 14);
+  since14.setHours(0, 0, 0, 0);
+
   const [
     settings,
     metaConn,
@@ -39,6 +43,8 @@ export async function loader({ request }) {
     metaAds30,
     trackedEvents30,
     recentPurchases,
+    purchases14,
+    adSpendPrev7,
   ] = await Promise.all([
     db.trackingSettings.findUnique({ where: { shop } }).catch(() => null),
     db.metaConnection.findUnique({ where: { shop } }).catch(() => null),
@@ -85,6 +91,18 @@ export async function loader({ request }) {
       orderBy: { createdAt: "desc" },
       take: 6,
       select: { orderId: true, totalValue: true, currency: true, utmSource: true, utmCampaign: true, createdAt: true },
+    }).catch(() => []),
+
+    // Purchases from 14→7 days ago (previous week, for WoW comparison)
+    db.purchase.findMany({
+      where: { shop, createdAt: { gte: since14, lt: since7 } },
+      select: { id: true, totalValue: true, utmSource: true, fbclid: true, gclid: true, ttclid: true, msclkid: true },
+    }).catch(() => []),
+
+    // Ad spend previous week (14→7 days ago)
+    db.adSpendDaily.findMany({
+      where: { shop, date: { gte: since14, lt: since7 } },
+      select: { platform: true, spend: true, date: true },
     }).catch(() => []),
   ]);
 
@@ -177,6 +195,49 @@ export async function loader({ request }) {
   const metaBudget = metaConn?.monthlyBudget ?? 0;
   const googleBudget = googleConn?.monthlyBudget ?? 0;
 
+  // Current week ad-attributed orders
+  const adOrders7Current = purchases30.filter(p => {
+    if (new Date(p.createdAt) < since7) return false;
+    const s = String(p.utmSource || "").toLowerCase();
+    return s.includes("meta") || s.includes("facebook") || s.includes("google") || s.includes("tiktok") || p.fbclid || p.gclid || p.ttclid;
+  }).length;
+
+  // Previous week aggregates
+  const ordersP7 = purchases14.length;
+  const adOrdersP7 = purchases14.filter(p => {
+    const s = String(p.utmSource || "").toLowerCase();
+    return s.includes("meta") || s.includes("facebook") || s.includes("google") || s.includes("tiktok") || p.fbclid || p.gclid || p.ttclid;
+  }).length;
+  const adSpendP7 = adSpendPrev7.reduce((s, r) => s + Number(r.spend || 0), 0);
+
+  function wowPct(current, previous) {
+    if (previous === 0) return current > 0 ? 100 : 0;
+    return Math.round(((current - previous) / previous) * 100);
+  }
+
+  const wowOrders = wowPct(orders7, ordersP7);
+  const wowAdOrders = wowPct(adOrders7Current, adOrdersP7);
+  const wowAdSpend = wowPct(adSpend7Total, adSpendP7);
+
+  // 7-day source summary
+  const sourceMap7 = new Map();
+  for (const p of purchases30.filter(p => new Date(p.createdAt) >= since7)) {
+    const src = normalizeSource(p);
+    const cur = sourceMap7.get(src) || { orders: 0, revenue: 0 };
+    cur.orders++;
+    cur.revenue += Number(p.totalValue || 0);
+    sourceMap7.set(src, cur);
+  }
+  const rev7Total = purchases30.filter(p => new Date(p.createdAt) >= since7).reduce((s, p) => s + Number(p.totalValue || 0), 0);
+  const sourceSummary7 = Array.from(sourceMap7.entries())
+    .sort((a, b) => b[1].revenue - a[1].revenue)
+    .map(([src, r]) => ({
+      source: src,
+      orders: r.orders,
+      revenue: r.revenue,
+      share: rev7Total > 0 ? Math.round((r.revenue / rev7Total) * 100) : 0,
+    }));
+
   return json({
     shop,
     rev30, rev7, orders30, orders7,
@@ -184,6 +245,7 @@ export async function loader({ request }) {
     metaKpis,
     bestAd,
     sourceSummary,
+    sourceSummary7,
     pixelStatus,
     pixelLastSeen: pixelLastSeen?.toISOString() ?? null,
     metaConnected,
@@ -194,6 +256,9 @@ export async function loader({ request }) {
     adSpend7Total,
     metaBudget: metaBudget || 0,
     googleBudget: googleBudget || 0,
+    adOrders7: adOrders7Current,
+    wowOrders, wowAdOrders, wowAdSpend,
+    ordersP7, adOrdersP7, adSpendP7,
   });
 }
 
@@ -363,11 +428,7 @@ export default function AppIndex() {
   const metaRoas = data.metaKpis.spend > 0 ? data.metaKpis.value / data.metaKpis.spend : null;
   const aov = data.orders30 > 0 ? data.rev30 / data.orders30 : 0;
   const orders7 = data.orders7;
-  const adOrders7 = data.sourceSummary
-    .filter(s => ["meta","google","tiktok","microsoft"].includes(s.source))
-    .reduce((n, s) => n + s.orders, 0);
-  // approximate to 7d ratio
-  const adOrders7Approx = data.orders30 > 0 ? Math.round(adOrders7 * (orders7 / data.orders30)) : 0;
+  const { wowOrders, wowAdOrders, wowAdSpend, adOrders7 } = data;
   const totalBudget = (data.metaBudget || 0) + (data.googleBudget || 0);
 
   return (
@@ -413,20 +474,23 @@ export default function AppIndex() {
               value: String(orders7),
               sub: `${data.orders30} last 30 days`,
               icon: "🛒",
+              wow: data.wowOrders,
             },
             {
               label: "Orders from ads",
-              value: String(adOrders7Approx),
-              sub: adOrders7Approx > 0
-                ? `${Math.round((adOrders7Approx / Math.max(orders7, 1)) * 100)}% of total`
+              value: String(adOrders7),
+              sub: adOrders7 > 0
+                ? `${Math.round((adOrders7 / Math.max(orders7, 1)) * 100)}% of total`
                 : "No ad-attributed orders",
               icon: "📢",
+              wow: data.wowAdOrders,
             },
             {
               label: "Ad spend (7d)",
               value: data.adSpend7Total > 0 ? fmt(data.adSpend7Total, currency) : "—",
               sub: data.totalSpend > 0 ? `${fmt(data.totalSpend, currency)} last 30d` : "No spend tracked",
               icon: "💸",
+              wow: data.wowAdSpend,
             },
             {
               label: "Total budget",
@@ -435,6 +499,7 @@ export default function AppIndex() {
                 ? `Meta ${fmt(data.metaBudget || 0, currency)} · Google ${fmt(data.googleBudget || 0, currency)}`
                 : "Set budgets in Integrations",
               icon: "🎯",
+              wow: null,
             },
           ].map(kpi => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
@@ -446,6 +511,18 @@ export default function AppIndex() {
                   </InlineStack>
                   <Text as="p" variant="heading2xl">{kpi.value}</Text>
                   <Text as="p" variant="bodySm" tone="subdued">{kpi.sub}</Text>
+                  {kpi.wow !== null && kpi.wow !== undefined && (
+                    <div style={{ marginTop: 4 }}>
+                      <span style={{
+                        fontSize: 12, fontWeight: 700,
+                        color: kpi.wow > 0 ? "#15803d" : kpi.wow < 0 ? "#dc2626" : "#6b7280",
+                        background: kpi.wow > 0 ? "#f0fdf4" : kpi.wow < 0 ? "#fff1f2" : "#f3f4f6",
+                        borderRadius: 6, padding: "2px 8px",
+                      }}>
+                        {kpi.wow > 0 ? "↑" : kpi.wow < 0 ? "↓" : "→"} {Math.abs(kpi.wow)}% vs last week
+                      </span>
+                    </div>
+                  )}
                 </BlockStack>
               </Card>
             </Grid.Cell>
@@ -455,36 +532,48 @@ export default function AppIndex() {
         {/* ── REVENUE MIX SECTION HEADER ── */}
         <div style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 12, marginTop: 8 }}>
           <Text as="h2" variant="headingMd">Revenue mix</Text>
-          <Text as="p" variant="bodySm" tone="subdued">Where your sales come from — last 30 days</Text>
+          <Text as="p" variant="bodySm" tone="subdued">Where your sales come from — last 7 days</Text>
         </div>
 
         {/* ── CHANNEL MIX HEALTH ── */}
         <Card>
           <BlockStack gap="400">
             {(() => {
-              // Bucket into Ads / Newsletter / Organic
-              let adsRev = 0, emailRev = 0, organicRev = 0;
-              for (const s of data.sourceSummary) {
+              // Bucket into Ads / Newsletter / Organic, excluding unknown
+              let adsRev = 0, emailRev = 0, organicRev = 0, unknownRev = 0;
+              for (const s of data.sourceSummary7) {
+                if (s.source === "unknown") { unknownRev += s.revenue; continue; }
                 if (["meta","google","tiktok","microsoft","snapchat"].includes(s.source)) adsRev += s.revenue;
                 else if (["email","newsletter"].includes(s.source) || s.source?.includes("email")) emailRev += s.revenue;
                 else organicRev += s.revenue;
               }
-              const total = adsRev + emailRev + organicRev || 1;
-              const adsPct = Math.round((adsRev / total) * 100);
-              const emailPct = Math.round((emailRev / total) * 100);
-              const organicPct = Math.round((organicRev / total) * 100);
+              // Base percentages on KNOWN revenue only
+              const knownTotal = adsRev + emailRev + organicRev || 1;
+              const totalWithUnknown = knownTotal + unknownRev;
+              const adsPct = Math.round((adsRev / knownTotal) * 100);
+              const emailPct = Math.round((emailRev / knownTotal) * 100);
+              const organicPct = Math.round((organicRev / knownTotal) * 100);
+              // Unknown % of total (for display warning)
+              const unknownPct = Math.round((unknownRev / totalWithUnknown) * 100);
 
               // Detect stage
-              let stageEmoji, stageLabel, stageBg, stageBorder, stageText;
-              if (adsPct >= 80) {
+              let stageEmoji, stageLabel, stageBg, stageBorder, stageText, stageAdvice;
+              if (unknownPct >= 50) {
+                stageEmoji = "⚠️"; stageLabel = "High untracked traffic";
+                stageBg = "#fffbeb"; stageBorder = "#d97706"; stageText = "#b45309";
+                stageAdvice = `${unknownPct}% of revenue has no tracked source. Add UTM parameters to all your ad links to get accurate channel data.`;
+              } else if (adsPct >= 70) {
                 stageEmoji = "🟢"; stageLabel = "Early stage";
                 stageBg = "#f0fdf4"; stageBorder = "#16a34a"; stageText = "#15803d";
+                stageAdvice = "You're buying most of your revenue. Focus on building email and organic channels.";
               } else if (adsPct >= 50) {
                 stageEmoji = "🟡"; stageLabel = "Growth stage";
                 stageBg = "#fffbeb"; stageBorder = "#d97706"; stageText = "#b45309";
+                stageAdvice = "Good balance forming. Keep growing email and organic to reduce ad dependency.";
               } else {
                 stageEmoji = "🔵"; stageLabel = "Mature brand";
                 stageBg = "#eff6ff"; stageBorder = "#2563eb"; stageText = "#1d4ed8";
+                stageAdvice = "Excellent channel diversity. This is where real profit comes from.";
               }
 
               const channels = [
@@ -521,13 +610,24 @@ export default function AppIndex() {
                   barColor: "#10b981",
                   targetLabel: "Target: min 10%",
                 },
+                ...(unknownPct > 10 ? [{
+                  key: "unknown",
+                  label: "Untracked",
+                  icon: "❓",
+                  pct: unknownPct,
+                  value: unknownRev,
+                  min: 0, max: 20,
+                  barColor: "#9ca3af",
+                  targetLabel: "Add UTM tags to reduce this",
+                  isUntracked: true,
+                }] : []),
               ];
 
               return (
                 <BlockStack gap="400">
                   {/* Stage badge */}
                   <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h3" variant="headingSm">Channel health</Text>
+                    <Text as="h3" variant="headingSm">Website status</Text>
                     <span style={{
                       fontSize: 13, fontWeight: 700,
                       background: stageBg, color: stageText,
@@ -538,9 +638,12 @@ export default function AppIndex() {
                     </span>
                   </InlineStack>
 
+                  {/* Section subtitle */}
+                  <Text as="p" variant="bodySm" tone="subdued">Where your sales come from — last 7 days</Text>
+
                   {/* Source mini-cards row */}
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    {data.sourceSummary.slice(0, 6).map(({ source, orders, revenue, share }) => {
+                    {data.sourceSummary7.slice(0, 6).map(({ source, orders, revenue, share }) => {
                       const spend = source === "meta" ? data.metaSpend : source === "google" ? data.googleSpend : 0;
                       const srcRoas = spend > 0 ? (revenue / spend).toFixed(2) + "×" : null;
                       return (
@@ -563,11 +666,18 @@ export default function AppIndex() {
                   {/* Health bars */}
                   <BlockStack gap="200">
                     {channels.map(ch => {
-                      const inZone = ch.pct >= ch.min && ch.pct <= ch.max;
-                      const tooLow = ch.pct < ch.min;
-                      let statusEmoji = inZone ? "✅" : tooLow ? "📈" : "⚠️";
-                      let statusColor = inZone ? "#15803d" : tooLow ? "#d97706" : "#dc2626";
-                      let statusLabel = inZone ? "On target" : tooLow ? "Too low" : "Too high";
+                      let statusEmoji, statusColor, statusLabel;
+                      if (ch.isUntracked) {
+                        if (ch.pct > 30) { statusEmoji = "⚠️"; statusColor = "#d97706"; statusLabel = "Too high"; }
+                        else if (ch.pct > 10) { statusEmoji = "🟡"; statusColor = "#b45309"; statusLabel = "Moderate"; }
+                        else { statusEmoji = "✓"; statusColor = "#15803d"; statusLabel = "Good"; }
+                      } else {
+                        const inZone = ch.pct >= ch.min && ch.pct <= ch.max;
+                        const tooLow = ch.pct < ch.min;
+                        statusEmoji = inZone ? "✅" : tooLow ? "📈" : "⚠️";
+                        statusColor = inZone ? "#15803d" : tooLow ? "#d97706" : "#dc2626";
+                        statusLabel = inZone ? "On target" : tooLow ? "Too low" : "Too high";
+                      }
                       return (
                         <div key={ch.key} style={{
                           display: "grid",
@@ -612,13 +722,7 @@ export default function AppIndex() {
                       <span style={{ fontSize: 20 }}>{stageEmoji}</span>
                       <BlockStack gap="050">
                         <Text as="p" variant="bodyMd" fontWeight="semibold">{stageLabel}</Text>
-                        <Text as="p" variant="bodySm">
-                          {stageLabel === "Early stage"
-                            ? "You're buying most of your revenue. Focus on building email and organic channels now."
-                            : stageLabel === "Growth stage"
-                            ? "Good balance forming. Keep growing email and organic to reduce ad dependency."
-                            : "Excellent channel diversity. This is where real profit comes from."}
-                        </Text>
+                        <Text as="p" variant="bodySm">{stageAdvice}</Text>
                       </BlockStack>
                     </InlineStack>
                   </div>
