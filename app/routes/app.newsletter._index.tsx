@@ -322,24 +322,34 @@ export default function NewsletterOverview() {
         </Grid.Cell>
       </Grid>
 
-      {/* Getting started */}
-      {totalSubscribers === 0 && (
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingSm">Getting started</Text>
+      {/* Section D — Signup form teaser */}
+      <Card>
+        <InlineStack align="space-between" blockAlign="center" wrap={false}>
+          <BlockStack gap="200">
+            <Text as="h2" variant="headingSm">Grow your list with a signup form</Text>
             <Text as="p" variant="bodySm" tone="subdued">
-              Add the subscribe snippet to your storefront to start collecting emails. Use the
-              endpoint below from your theme or a Shopify pixel:
+              Choose from 10 ready-made widget designs — popups, inline forms, slide-ins, and banners.
+              Scan your store to auto-match the style, then copy the embed code.
             </Text>
-            <Box background="bg-surface-secondary" borderRadius="200" padding="300">
-              <Text as="p" variant="bodySm">
-                <code>POST /api/newsletter/subscribe</code> with{" "}
-                <code>{"{ shop, email, source, utm_source, utm_campaign }"}</code>
-              </Text>
-            </Box>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+              {["Popup", "Inline", "Slide-in", "Banner"].map((type) => (
+                <span key={type} style={{
+                  fontSize: 11, fontWeight: 700, textTransform: "uppercase",
+                  letterSpacing: "0.5px", color: "#374151",
+                  background: "#f3f4f6", padding: "3px 10px", borderRadius: 4,
+                }}>
+                  {type}
+                </span>
+              ))}
+            </div>
           </BlockStack>
-        </Card>
-      )}
+          <div style={{ flexShrink: 0, marginLeft: 24 }}>
+            <Button variant="primary" url="/app/newsletter/widget">
+              Browse signup forms
+            </Button>
+          </div>
+        </InlineStack>
+      </Card>
     </BlockStack>
   );
 }

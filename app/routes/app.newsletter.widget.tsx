@@ -406,17 +406,17 @@ export default function NewsletterWidget() {
                   overflow: "hidden",
                   position: "relative",
                   background: "#f6f6f7",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
                 }}
               >
                 <iframe
-                  srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:16px;padding:0;background:#f6f6f7;display:flex;align-items:center;justify-content:center;">${previewHtml}</body></html>`}
+                  srcDoc={`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#f6f6f7;display:flex;align-items:center;justify-content:center;min-height:${IFRAME_H}px;">${previewHtml}</body></html>`}
                   style={{
                     width: IFRAME_W,
                     height: IFRAME_H,
                     border: "none",
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
                     transform: `scale(${SCALE})`,
                     transformOrigin: "top left",
                     pointerEvents: "none",
