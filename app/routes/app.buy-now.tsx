@@ -56,21 +56,31 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }).catch(() => []) ?? [],
   ]);
 
-  // Check if ScriptTag is already installed
+  // Check if ScriptTag is installed — and auto-install if settings say enabled
   let scriptTagInstalled = false;
+  const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
+  const scriptUrl = `${APP_URL}/scripts/buy-now.js`;
   try {
-    const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
-    const scriptUrl = `${APP_URL}/scripts/buy-now.js`;
     const tagsRes = await admin.graphql(`
-      query {
-        scriptTags(first: 20) {
-          edges { node { id src } }
-        }
-      }
+      query { scriptTags(first: 20) { edges { node { id src } } } }
     `);
     const tagsJson = await tagsRes.json();
     const tags = tagsJson?.data?.scriptTags?.edges ?? [];
     scriptTagInstalled = tags.some((e: any) => e.node?.src === scriptUrl);
+
+    // Auto-install if button is enabled but ScriptTag is missing
+    const isEnabled = settings?.enabled ?? true;
+    if (isEnabled && !scriptTagInstalled) {
+      await admin.graphql(`
+        mutation {
+          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ALL_PAGES }) {
+            scriptTag { id }
+            userErrors { message }
+          }
+        }
+      `);
+      scriptTagInstalled = true;
+    }
   } catch {}
 
   // Aggregate stats
