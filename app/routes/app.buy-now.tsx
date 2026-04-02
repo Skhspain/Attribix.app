@@ -43,7 +43,7 @@ function isDark(hex: string): boolean {
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -56,24 +56,34 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }).catch(() => []) ?? [],
   ]);
 
+  // Check if ScriptTag is already installed
+  let scriptTagInstalled = false;
+  try {
+    const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
+    const scriptUrl = `${APP_URL}/scripts/buy-now.js`;
+    const tagsRes = await admin.graphql(`
+      query {
+        scriptTags(first: 20) {
+          edges { node { id src } }
+        }
+      }
+    `);
+    const tagsJson = await tagsRes.json();
+    const tags = tagsJson?.data?.scriptTags?.edges ?? [];
+    scriptTagInstalled = tags.some((e: any) => e.node?.src === scriptUrl);
+  } catch {}
+
   // Aggregate stats
   const totalClicks = clickStats.length;
   const conversions = clickStats.filter((c: any) => c.convertedOrderId).length;
   const conversionRate = totalClicks > 0 ? Math.round((conversions / totalClicks) * 100) : 0;
 
-  // Top products
   const productCounts: Record<string, number> = {};
   for (const c of clickStats) {
-    if (c.productId) {
-      productCounts[c.productId] = (productCounts[c.productId] || 0) + 1;
-    }
+    if (c.productId) productCounts[c.productId] = (productCounts[c.productId] || 0) + 1;
   }
-  const topProducts = Object.entries(productCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([id, clicks]) => ({ id, clicks }));
+  const topProducts = Object.entries(productCounts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id, clicks]) => ({ id, clicks }));
 
-  // Source breakdown
   const sourceCounts: Record<string, number> = {};
   for (const c of clickStats) {
     const src = c.utmSource || "direct";
@@ -90,29 +100,70 @@ export async function loader({ request }: LoaderFunctionArgs) {
       size: "medium",
       action: "checkout",
     },
+    scriptTagInstalled,
     totalClicks,
     conversions,
     conversionRate,
     topProducts,
     sourceCounts,
     recentClicks: clickStats.slice(0, 20),
+    shop,
   });
 }
 
 // ─── Action ──────────────────────────────────────────────────────────────────
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
   const body = await request.json().catch(() => ({}));
 
+  // Save settings
   await anyDb.buyNowSettings?.upsert?.({
     where: { shop },
     create: { shop, ...body },
     update: body,
   });
+
+  // Manage ScriptTag automatically
+  try {
+    const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
+    const scriptUrl = `${APP_URL}/scripts/buy-now.js`;
+
+    // Find existing tag
+    const tagsRes = await admin.graphql(`
+      query { scriptTags(first: 20) { edges { node { id src } } } }
+    `);
+    const tagsJson = await tagsRes.json();
+    const tags = tagsJson?.data?.scriptTags?.edges ?? [];
+    const existing = tags.find((e: any) => e.node?.src === scriptUrl);
+
+    if (body.enabled && !existing) {
+      // Create the ScriptTag
+      await admin.graphql(`
+        mutation {
+          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ALL_PAGES }) {
+            scriptTag { id src }
+            userErrors { field message }
+          }
+        }
+      `);
+    } else if (!body.enabled && existing) {
+      // Remove the ScriptTag
+      await admin.graphql(`
+        mutation {
+          scriptTagDelete(id: "${existing.node.id}") {
+            deletedScriptTagId
+            userErrors { field message }
+          }
+        }
+      `);
+    }
+  } catch (e) {
+    console.error("[buy-now] ScriptTag management error:", e);
+  }
 
   return json({ ok: true });
 }
@@ -122,12 +173,14 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function BuyNowDashboard() {
   const {
     settings,
+    scriptTagInstalled,
     totalClicks,
     conversions,
     conversionRate,
     topProducts,
     sourceCounts,
     recentClicks,
+    shop,
   } = useLoaderData<typeof loader>();
 
   const fetcher = useFetcher<any>();
@@ -189,32 +242,6 @@ export default function BuyNowDashboard() {
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   };
 
-  const snippetCode = `<!-- Attribix Buy Now Button — paste in theme product-form.liquid -->
-<div id="attribix-buy-now-wrapper"></div>
-<script>
-  (function() {
-    var btn = document.createElement('button');
-    btn.textContent = '${s.buttonText}';
-    btn.style.cssText = 'background:${s.buttonColor};color:${s.textColor};border:none;border-radius:${s.borderRadius}px;padding:11px 22px;font-size:15px;font-weight:600;cursor:pointer;';
-    btn.addEventListener('click', function() {
-      // Track click
-      fetch('/api/buy-now/track', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shop: '${s.shop || "YOUR_SHOP"}',
-          productId: '{{ product.id }}',
-          variantId: '{{ product.selected_or_first_available_variant.id }}',
-          url: window.location.href,
-          referrer: document.referrer,
-        }),
-      });
-      // Go to checkout
-      window.location.href = '/cart/{{ product.selected_or_first_available_variant.id }}:1/checkout';
-    });
-    document.getElementById('attribix-buy-now-wrapper').appendChild(btn);
-  })();
-<\/script>`;
 
   return (
     <Page
@@ -224,7 +251,7 @@ export default function BuyNowDashboard() {
       <BlockStack gap="500">
         <Banner tone="info" title="How it works">
           <Text as="p" variant="bodySm">
-            The Buy Now button is added to your Shopify storefront via a Theme App Extension or by pasting the snippet below.
+            The Buy Now button is automatically injected into your Shopify storefront via a ScriptTag — no theme editing required.
             Every click is tracked with full attribution (UTM, gclid, fbclid) and linked back to conversions in your analytics.
           </Text>
         </Banner>
@@ -484,25 +511,75 @@ export default function BuyNowDashboard() {
           </Grid.Cell>
         </Grid>
 
-        {/* Installation snippet */}
+        {/* Installation status */}
         <Card>
-          <BlockStack gap="300">
-            <Text as="h2" variant="headingSm">Installation snippet</Text>
+          <BlockStack gap="400">
+            <InlineStack align="space-between" blockAlign="center">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingSm">Automatic installation</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  The Buy Now button is injected directly into your store. No theme editing or code required.
+                </Text>
+              </BlockStack>
+              {s.enabled ? (
+                scriptTagInstalled ? (
+                  <span style={{
+                    background: "#f0fdf4", color: "#15803d", border: "1.5px solid #16a34a",
+                    borderRadius: 20, padding: "5px 16px", fontSize: 13, fontWeight: 700,
+                  }}>
+                    ✓ Active on store
+                  </span>
+                ) : (
+                  <span style={{
+                    background: "#fffbeb", color: "#b45309", border: "1.5px solid #d97706",
+                    borderRadius: 20, padding: "5px 16px", fontSize: 13, fontWeight: 700,
+                  }}>
+                    ⏳ Activating…
+                  </span>
+                )
+              ) : (
+                <span style={{
+                  background: "#f3f4f6", color: "#6b7280", border: "1.5px solid #d1d5db",
+                  borderRadius: 20, padding: "5px 16px", fontSize: 13, fontWeight: 700,
+                }}>
+                  ○ Disabled
+                </span>
+              )}
+            </InlineStack>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              {[
+                { step: "1", label: "Enable the button", done: s.enabled },
+                { step: "2", label: "Save settings", done: scriptTagInstalled },
+                { step: "3", label: "Live on your store", done: scriptTagInstalled && s.enabled },
+              ].map((item) => (
+                <div key={item.step} style={{
+                  background: item.done ? "#f0fdf4" : "#f9fafb",
+                  border: `1px solid ${item.done ? "#16a34a" : "#e5e7eb"}`,
+                  borderRadius: 8, padding: "12px 14px",
+                  display: "flex", alignItems: "center", gap: 10,
+                }}>
+                  <div style={{
+                    width: 24, height: 24, borderRadius: 99, flexShrink: 0,
+                    background: item.done ? "#16a34a" : "#e5e7eb",
+                    color: item.done ? "#fff" : "#9ca3af",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 12, fontWeight: 700,
+                  }}>
+                    {item.done ? "✓" : item.step}
+                  </div>
+                  <Text as="p" variant="bodySm" fontWeight={item.done ? "semibold" : "regular"}>
+                    {item.label}
+                  </Text>
+                </div>
+              ))}
+            </div>
+
             <Text as="p" variant="bodySm" tone="subdued">
-              Paste this into your Shopify theme's <code>product-form.liquid</code> (or any section template).
-              Alternatively, enable the Attribix Theme App Extension from your Shopify theme editor.
+              The button auto-detects product pages and inserts itself after the "Add to cart" button.
+              It works with Dawn, Debut, Craft, and most Shopify themes.
+              {!scriptTagInstalled && s.enabled && " Save your settings to activate it."}
             </Text>
-            <Box background="bg-surface-secondary" borderRadius="200" padding="400">
-              <pre style={{ margin: 0, fontSize: 12, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                {snippetCode}
-              </pre>
-            </Box>
-            <Button
-              variant="plain"
-              onClick={() => navigator.clipboard?.writeText(snippetCode)}
-            >
-              Copy snippet
-            </Button>
           </BlockStack>
         </Card>
 
