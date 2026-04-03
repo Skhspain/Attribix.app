@@ -23,11 +23,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = session.shop;
   const anyDb = db as any;
 
-  const [accounts, recentProducts, recentPosts] = await Promise.all([
-    anyDb.socialAccount?.findMany?.({ where: { shop, connected: true } }).catch(() => []) ?? [],
-    anyDb.productFeedItem?.findMany?.({ where: { shop }, orderBy: { updatedAt: "desc" }, take: 20 }).catch(() => []) ?? [],
-    anyDb.socialPost?.findMany?.({ where: { shop }, orderBy: { createdAt: "desc" }, take: 5 }).catch(() => []) ?? [],
-  ]);
+  let accounts: any[] = [], recentProducts: any[] = [], recentPosts: any[] = [];
+  try {
+    [accounts, recentProducts, recentPosts] = await Promise.all([
+      anyDb.socialAccount.findMany({ where: { shop, connected: true } }),
+      anyDb.productFeedItem.findMany({ where: { shop }, orderBy: { updatedAt: "desc" }, take: 20 }),
+      anyDb.socialPost.findMany({ where: { shop }, orderBy: { createdAt: "desc" }, take: 5 }),
+    ]);
+  } catch {}
 
   return json({ accounts, recentProducts, recentPosts });
 }

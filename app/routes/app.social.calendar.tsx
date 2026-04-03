@@ -20,17 +20,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const start = new Date(year, month, 1);
   const end   = new Date(year, month + 1, 0, 23, 59, 59);
 
-  const posts: any[] = await anyDb.socialPost?.findMany?.({
-    where: {
-      shop,
-      OR: [
-        { scheduledAt: { gte: start, lte: end } },
-        { publishedAt: { gte: start, lte: end } },
-        { createdAt:   { gte: start, lte: end }, status: "draft" },
-      ],
-    },
-    orderBy: { scheduledAt: "asc" },
-  }).catch(() => []) ?? [];
+  let posts: any[] = [];
+  try {
+    posts = await anyDb.socialPost.findMany({
+      where: {
+        shop,
+        OR: [
+          { scheduledAt: { gte: start, lte: end } },
+          { publishedAt: { gte: start, lte: end } },
+          { createdAt:   { gte: start, lte: end }, status: "draft" },
+        ],
+      },
+      orderBy: { scheduledAt: "asc" },
+    });
+  } catch {}
 
   return json({ posts, year, month });
 }

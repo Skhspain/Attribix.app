@@ -5,26 +5,30 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { Outlet, useLoaderData, useLocation, NavLink } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import { Page, Text, Badge, InlineStack } from "@shopify/polaris";
-import { publishDuePosts } from "~/services/social.server";
+import { Page, Text, InlineStack } from "@shopify/polaris";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
-  // Opportunistically publish any due scheduled posts
-  publishDuePosts().catch(() => {});
+  let totalPosts = 0, scheduledCount = 0;
+  let accounts: any[] = [];
+  let metaConnected = false;
 
-  const [totalPosts, scheduledCount, accounts] = await Promise.all([
-    anyDb.socialPost?.count?.({ where: { shop, status: "published" } }).catch(() => 0) ?? 0,
-    anyDb.socialPost?.count?.({ where: { shop, status: "scheduled" } }).catch(() => 0) ?? 0,
-    anyDb.socialAccount?.findMany?.({ where: { shop, connected: true } }).catch(() => []) ?? [],
-  ]);
+  try {
+    [totalPosts, scheduledCount, accounts] = await Promise.all([
+      anyDb.socialPost.count({ where: { shop, status: "published" } }),
+      anyDb.socialPost.count({ where: { shop, status: "scheduled" } }),
+      anyDb.socialAccount.findMany({ where: { shop, connected: true } }),
+    ]);
+  } catch {}
 
-  const connectedPlatforms = (accounts as any[]).map((a: any) => a.platform);
-  const metaConnected = !!(await anyDb.metaConnection?.findUnique?.({ where: { shop } }).catch(() => null));
+  try {
+    metaConnected = !!(await anyDb.metaConnection.findUnique({ where: { shop } }));
+  } catch {}
 
+  const connectedPlatforms = accounts.map((a: any) => a.platform);
   return json({ totalPosts, scheduledCount, connectedPlatforms, metaConnected });
 }
 

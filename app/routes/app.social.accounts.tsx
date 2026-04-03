@@ -14,10 +14,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = session.shop;
   const anyDb = db as any;
 
-  const [metaConn, accounts] = await Promise.all([
-    anyDb.metaConnection?.findUnique?.({ where: { shop } }).catch(() => null),
-    anyDb.socialAccount?.findMany?.({ where: { shop } }).catch(() => []) ?? [],
-  ]);
+  let metaConn: any = null, accounts: any[] = [];
+  try {
+    [metaConn, accounts] = await Promise.all([
+      anyDb.metaConnection.findUnique({ where: { shop } }),
+      anyDb.socialAccount.findMany({ where: { shop } }),
+    ]);
+  } catch {}
 
   // Fetch available Facebook pages if Meta is connected
   let facebookPages: any[] = [];

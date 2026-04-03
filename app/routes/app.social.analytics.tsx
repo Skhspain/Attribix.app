@@ -16,11 +16,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Background engagement sync
   syncEngagement(shop).catch(() => {});
 
-  const posts: any[] = await anyDb.socialPost?.findMany?.({
-    where: { shop, status: "published" },
-    orderBy: { publishedAt: "desc" },
-    take: 50,
-  }).catch(() => []) ?? [];
+  let posts: any[] = [];
+  try {
+    posts = await anyDb.socialPost.findMany({
+      where: { shop, status: "published" },
+      orderBy: { publishedAt: "desc" },
+      take: 50,
+    });
+  } catch {}
 
   // Aggregate totals
   const totals = posts.reduce((acc, p) => ({
