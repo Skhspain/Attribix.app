@@ -167,6 +167,7 @@ model MetaCampaignDailyInsight {
   date          DateTime
   campaignId    String
   campaignName  String?
+  objective     String?
   spend         Float    @default(0)
   impressions   Int      @default(0)
   clicks        Int      @default(0)

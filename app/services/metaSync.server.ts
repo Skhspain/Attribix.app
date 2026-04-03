@@ -4,7 +4,7 @@
 // whose lastSyncedAt is older than 23 hours (effectively once a day).
 
 import db from "~/db.server";
-import { fetchCampaignDailyInsights } from "~/services/metaGraph.server";
+import { fetchCampaignDailyInsights, fetchCampaignObjectives } from "~/services/metaGraph.server";
 import { refreshMetaToken } from "~/services/tokenRefresh.server";
 
 function formatDay(d: Date) {
@@ -41,6 +41,9 @@ async function syncShop(shop: string, accessToken: string, adAccountId: string) 
   const untilStr = formatDay(until);
   const anyDb = db as any;
 
+  // Fetch campaign objectives (id → objective) so we can tag each insight row
+  const objectiveMap = await fetchCampaignObjectives({ accessToken: validToken, adAccountId }).catch(() => new Map<string, string>());
+
   // Campaign level
   const campaignInsights = await fetchCampaignDailyInsights({
     accessToken: validToken, adAccountId, since: sinceStr, until: untilStr, level: "campaign",
@@ -53,12 +56,13 @@ async function syncShop(shop: string, accessToken: string, adAccountId: string) 
     const impressions = Number(r.impressions || 0);
     const clicks = Number(r.clicks || 0);
     const { purchases, purchaseValue } = getPurchaseStats(r);
+    const objective = objectiveMap.get(String(r.campaign_id)) ?? null;
 
     try {
       await db.metaCampaignDailyInsight.upsert({
         where: { shop_date_campaignId: { shop, date, campaignId: String(r.campaign_id) } },
-        create: { shop, date, campaignId: String(r.campaign_id), campaignName: r.campaign_name || null, spend, impressions, clicks, purchases, purchaseValue },
-        update: { campaignName: r.campaign_name || null, spend, impressions, clicks, purchases, purchaseValue },
+        create: { shop, date, campaignId: String(r.campaign_id), campaignName: r.campaign_name || null, objective, spend, impressions, clicks, purchases, purchaseValue },
+        update: { campaignName: r.campaign_name || null, objective, spend, impressions, clicks, purchases, purchaseValue },
       });
     } catch (rowErr: any) {
       console.error(`[metaSync] Failed campaign row shop=${shop} campaignId=${r.campaign_id} date=${r.date_start}: ${rowErr?.message}`);

@@ -31,7 +31,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const [campaigns, ads, metaConn] = await Promise.all([
     anyDb.metaCampaignDailyInsight?.findMany?.({
       where: { shop, date: { gte: since90 } },
-      select: { campaignId: true, campaignName: true, spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true, date: true },
+      select: { campaignId: true, campaignName: true, objective: true, spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true, date: true },
       orderBy: { date: "desc" },
     }).catch(() => []),
     anyDb.metaAdDailyInsight?.findMany?.({
@@ -195,6 +195,32 @@ export default function MetaAdsDetail() {
     return rows.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0];
   }, [campaigns]);
 
+  // Sales-oriented objectives — ROAS is a meaningful metric for these
+  const SALES_OBJECTIVES = new Set([
+    "OUTCOME_SALES", "CONVERSIONS", "PRODUCT_CATALOG_SALES", "STORE_TRAFFIC",
+  ]);
+
+  const worstCampaign = useMemo(() => {
+    const map = new Map<string, { name: string; objective: string | null; spend: number; value: number; purchases: number }>();
+    for (const r of campaigns) {
+      const id = String(r.campaignId);
+      const cur = map.get(id) || { name: r.campaignName || id, objective: (r as any).objective ?? null, spend: 0, value: 0, purchases: 0 };
+      cur.spend += safeNum(r.spend);
+      cur.value += safeNum(r.purchaseValue);
+      cur.purchases += safeNum(r.purchases);
+      map.set(id, cur);
+    }
+    // Only flag conversion/sales campaigns that lost money.
+    // If objective is unknown, fall back to: had real revenue but ROAS < 1.
+    const rows = Array.from(map.values()).filter((c) => {
+      if (c.spend <= 0) return false;
+      const isSalesCampaign = c.objective ? SALES_OBJECTIVES.has(c.objective) : c.value > 0;
+      return isSalesCampaign && c.value / c.spend < 1;
+    });
+    if (rows.length < 1) return null;
+    return rows.sort((a, b) => (a.value / a.spend) - (b.value / b.spend))[0];
+  }, [campaigns]);
+
   const topAd = useMemo(() => {
     const map = new Map<string, { name: string; adSet: string; campaign: string; spend: number; value: number; clicks: number; impressions: number; purchases: number }>();
     for (const r of ads) {
@@ -322,6 +348,58 @@ export default function MetaAdsDetail() {
     >
       <BlockStack gap="600">
 
+        {/* Decision banner */}
+        {campaigns.length > 0 && (
+          <div style={{
+            borderRadius: 12,
+            background: kpis.roas !== null && kpis.roas >= 1
+              ? "linear-gradient(135deg, #064e3b 0%, #065f46 100%)"
+              : "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)",
+            padding: "24px 28px",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            gap: 20, flexWrap: "wrap",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+          }}>
+            <div>
+              <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>
+                {kpis.roas !== null && kpis.roas >= 2
+                  ? "Your ads are profitable"
+                  : kpis.roas !== null && kpis.roas >= 1
+                  ? "Your ads are breaking even"
+                  : kpis.roas !== null
+                  ? "Your ads are losing money"
+                  : "No purchase data yet"}
+              </p>
+              <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? kpis.roas.toFixed(2) + "×" : "—"}</p>
+                </div>
+                <div>
+                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(kpis.spend, currency)}</p>
+                </div>
+                <div>
+                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Revenue</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(kpis.value, currency)}</p>
+                </div>
+                <div>
+                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Net</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: kpis.value - kpis.spend >= 0 ? "#86efac" : "#fca5a5" }}>
+                    {kpis.value - kpis.spend >= 0 ? "+" : ""}{fmtDecimal(kpis.value - kpis.spend, currency)}
+                  </p>
+                </div>
+              </div>
+            </div>
+            {kpis.roas !== null && kpis.roas < 1 && (
+              <div style={{ background: "rgba(255,255,255,0.12)", borderRadius: 10, padding: "16px 20px", minWidth: 200 }}>
+                <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>What's losing money?</p>
+                <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>Scroll down to see which campaigns and ads are burning budget.</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* KPIs */}
         <Grid>
           {[
@@ -362,48 +440,116 @@ export default function MetaAdsDetail() {
           </BlockStack>
         </Card>
 
-        {/* Best performers */}
-        {(topCampaign || topAd) && (
-          <Card>
-            <BlockStack gap="300">
-              <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">BEST META ADS</Text>
-              <Grid>
-                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
-                  {topCampaign ? (
-                    <Box background="bg-surface-success" padding="400" borderRadius="200">
-                      <BlockStack gap="100">
-                        <Badge tone="success">🏆 Best campaign</Badge>
-                        <Text as="p" variant="headingMd">{topCampaign.name}</Text>
-                        <InlineStack gap="400">
-                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}</Text></Text>
-                          <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topCampaign.spend, currency)}</Text>
-                          <Text as="p" variant="bodySm" tone="subdued">Value: {fmtDecimal(topCampaign.value, currency)}</Text>
-                          <Text as="p" variant="bodySm" tone="subdued">Purchases: {topCampaign.purchases}</Text>
-                        </InlineStack>
-                      </BlockStack>
-                    </Box>
-                  ) : null}
-                </Grid.Cell>
-                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
-                  {topAd ? (
-                    <Box background="bg-surface-success" padding="400" borderRadius="200">
-                      <BlockStack gap="100">
-                        <Badge tone="success">🏆 Best ad</Badge>
-                        <Text as="p" variant="headingMd">{topAd.name}</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">{topAd.adSet} · {topAd.campaign}</Text>
-                        <InlineStack gap="400">
-                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? (topAd.value / topAd.spend).toFixed(2) + "×" : "—"}</Text></Text>
-                          <Text as="p" variant="bodySm" tone="subdued">CTR: {topAd.impressions > 0 ? ((topAd.clicks / topAd.impressions) * 100).toFixed(2) + "%" : "—"}</Text>
-                          <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topAd.spend, currency)}</Text>
-                          <Text as="p" variant="bodySm" tone="subdued">Purchases: {topAd.purchases}</Text>
-                        </InlineStack>
-                      </BlockStack>
-                    </Box>
-                  ) : null}
-                </Grid.Cell>
-              </Grid>
-            </BlockStack>
-          </Card>
+        {/* Winning / Wasting decision cards */}
+        {(topCampaign || worstCampaign) && (
+          <Grid>
+            {topCampaign && (
+              <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
+                <div style={{
+                  background: "linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)",
+                  border: "1.5px solid #86efac",
+                  borderRadius: 12, padding: "20px 24px",
+                  height: "100%", boxSizing: "border-box",
+                }}>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="start">
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Winning campaign</p>
+                        <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#14532d", marginTop: 4, lineHeight: 1.3 }}>{topCampaign.name}</p>
+                      </div>
+                      <Badge tone="success">Best ROAS</Badge>
+                    </InlineStack>
+                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>ROAS</p>
+                        <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#15803d" }}>
+                          {topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>Spend</p>
+                        <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#14532d" }}>{fmtDecimal(topCampaign.spend, currency)}</p>
+                      </div>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>Revenue</p>
+                        <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#14532d" }}>{fmtDecimal(topCampaign.value, currency)}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <a
+                        href={`https://www.facebook.com/adsmanager/manage/campaigns?act=`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: "inline-block",
+                          background: "#16a34a", color: "#fff",
+                          borderRadius: 8, padding: "10px 20px",
+                          fontWeight: 700, fontSize: 14,
+                          textDecoration: "none",
+                          boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+                        }}
+                      >
+                        Scale this campaign →
+                      </a>
+                    </div>
+                  </BlockStack>
+                </div>
+              </Grid.Cell>
+            )}
+            {worstCampaign && (
+              <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
+                <div style={{
+                  background: "linear-gradient(135deg, #fff7f7 0%, #fee2e2 100%)",
+                  border: "1.5px solid #fca5a5",
+                  borderRadius: 12, padding: "20px 24px",
+                  height: "100%", boxSizing: "border-box",
+                }}>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="start">
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Wasting budget</p>
+                        <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#7f1d1d", marginTop: 4, lineHeight: 1.3 }}>{worstCampaign.name}</p>
+                      </div>
+                      <Badge tone="critical">Lowest ROAS</Badge>
+                    </InlineStack>
+                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>ROAS</p>
+                        <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#dc2626" }}>
+                          {worstCampaign.spend > 0 ? (worstCampaign.value / worstCampaign.spend).toFixed(2) + "×" : "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>Spend</p>
+                        <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#7f1d1d" }}>{fmtDecimal(worstCampaign.spend, currency)}</p>
+                      </div>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>Revenue</p>
+                        <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#7f1d1d" }}>{fmtDecimal(worstCampaign.value, currency)}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <a
+                        href={`https://www.facebook.com/adsmanager/manage/campaigns`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: "inline-block",
+                          background: "#dc2626", color: "#fff",
+                          borderRadius: 8, padding: "10px 20px",
+                          fontWeight: 700, fontSize: 14,
+                          textDecoration: "none",
+                          boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+                        }}
+                      >
+                        Pause this campaign →
+                      </a>
+                    </div>
+                  </BlockStack>
+                </div>
+              </Grid.Cell>
+            )}
+          </Grid>
         )}
 
         {/* Campaign table */}

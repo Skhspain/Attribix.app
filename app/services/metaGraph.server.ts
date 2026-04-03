@@ -117,6 +117,30 @@ const AD_FIELDS = [
   "actions", "action_values",
 ];
 
+/**
+ * Fetch campaign objectives for all campaigns in an ad account.
+ * Returns a Map of campaignId → objective string.
+ */
+export async function fetchCampaignObjectives(args: {
+  accessToken: string;
+  adAccountId: string;
+}): Promise<Map<string, string>> {
+  const url = new URL(`https://graph.facebook.com/v20.0/${encodeURIComponent(args.adAccountId)}/campaigns`);
+  url.searchParams.set("access_token", args.accessToken);
+  url.searchParams.set("fields", "id,name,objective");
+  url.searchParams.set("limit", "200");
+
+  const result = await metaFetchJson<{ data: Array<{ id: string; name: string; objective: string }> }>(
+    url.toString(), { method: "GET" }
+  );
+
+  const map = new Map<string, string>();
+  for (const c of result?.data ?? []) {
+    if (c.id && c.objective) map.set(String(c.id), c.objective);
+  }
+  return map;
+}
+
 export async function fetchCampaignDailyInsights(args: {
   accessToken: string;
   adAccountId?: string;
