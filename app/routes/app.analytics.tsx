@@ -362,8 +362,8 @@ function BarChart({ data, currency = "NOK" }: { data: Array<{ label: string; rev
                 }} />
                 <div style={{
                   width: "44%",
-                  minHeight: row.spend > 0 ? 8 : 0,
-                  height: `${Math.max((row.spend / maxVal) * 100, row.spend > 0 ? 5 : 0)}%`,
+                  minHeight: row.spend > 0 ? 24 : 0,
+                  height: `${Math.max((row.spend / maxVal) * 100, row.spend > 0 ? 16 : 0)}%`,
                   borderRadius: "3px 3px 0 0",
                   background: "linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%)",
                   transition: "height 0.2s ease",
