@@ -1,6 +1,6 @@
-// app/routes/app.ads.jsx
+// app/routes/app.ads.jsx  (Integrations hub)
 import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher, Link } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -10,16 +10,11 @@ import {
   InlineStack,
   Button,
   Badge,
-  DataTable,
-  Select,
+  Box,
+  Icon,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-
-function formatCurrency(n) {
-  const x = Number(n || 0);
-  return x.toLocaleString(undefined, { style: "currency", currency: "USD" });
-}
 
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
@@ -28,208 +23,181 @@ export async function loader({ request }) {
   const { session } = result;
   const shop = session.shop;
 
-  const conn = await db.metaConnection.findUnique({ where: { shop } }).catch(() => null);
-  const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
+  const [metaConn, googleConn] = await Promise.all([
+    db.metaConnection.findUnique({ where: { shop } }).catch(() => null),
+    db.googleConnection.findUnique({ where: { shop } }).catch(() => null),
+  ]);
 
-  // last 7 days
-  const until = new Date();
-  const since = new Date();
-  since.setDate(until.getDate() - 6);
-
-  const rows = connected
-    ? await db.metaCampaignDailyInsight.findMany({
-        where: { shop, date: { gte: since, lte: until } },
-        orderBy: [{ date: "desc" }],
-      })
-    : [];
-
-  // Aggregate quick KPIs from rows
-  const totals = rows.reduce(
-    (acc, r) => {
-      acc.spend += Number(r.spend || 0);
-      acc.purchases += Number(r.purchases || 0);
-      acc.purchaseValue += Number(r.purchaseValue || 0);
-      return acc;
-    },
-    { spend: 0, purchases: 0, purchaseValue: 0 }
+  const metaConnected = !!(
+    metaConn &&
+    metaConn.accessToken &&
+    metaConn.accessToken !== "__PENDING__"
+  );
+  const googleConnected = !!(
+    googleConn &&
+    googleConn.accessToken &&
+    googleConn.accessToken !== "__PENDING__"
   );
 
-  // Group by campaign (sum last 7 days)
-  const byCampaign = new Map();
-  for (const r of rows) {
-    const id = String(r.campaignId);
-    const cur = byCampaign.get(id) || {
-      campaignId: id,
-      campaignName: r.campaignName || id,
-      spend: 0,
-      purchases: 0,
-      purchaseValue: 0,
-    };
-    cur.spend += Number(r.spend || 0);
-    cur.purchases += Number(r.purchases || 0);
-    cur.purchaseValue += Number(r.purchaseValue || 0);
-    byCampaign.set(id, cur);
-  }
-
-  const campaigns = Array.from(byCampaign.values()).sort((a, b) => b.spend - a.spend);
-
   return json({
-    connected,
-    adAccountId: conn?.adAccountId || null,
-    totals,
-    campaigns,
+    meta: {
+      connected: metaConnected,
+      adAccountId: metaConn?.adAccountId || null,
+    },
+    google: {
+      connected: googleConnected,
+      adCustomerId: googleConn?.adCustomerId || null,
+      developerTokenConfigured: !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+    },
   });
 }
 
-export default function AdsDashboard() {
-  const data = useLoaderData();
-  const sync = useFetcher();
-  const days = sync.formData?.get("days") || "7";
-
-  const syncing = sync.state !== "idle";
-
-  const tableRows = (data.campaigns || []).slice(0, 15).map((c) => {
-    const roas = c.spend > 0 ? c.purchaseValue / c.spend : 0;
-    return [
-      c.campaignName,
-      formatCurrency(c.spend),
-      String(c.purchases),
-      formatCurrency(c.purchaseValue),
-      roas ? roas.toFixed(2) : "—",
-    ];
-  });
+export default function IntegrationsHub() {
+  const { meta, google } = useLoaderData();
 
   return (
     <Page
-      title="Meta ads dashboard"
-      subtitle="Campaign-level spend and purchase value from Ads Manager (stored in your DB)"
-      primaryAction={
-        <Button url="/app/integrations/meta" variant="secondary">
-          Meta integration
-        </Button>
-      }
+      title="Integrations"
+      subtitle="Connect your ad platforms to sync spend data and enable server-side conversions."
     >
       <Layout>
-        {!data.connected ? (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">Meta is not connected</Text>
-                <Text as="p" tone="subdued">
-                  Connect Meta first, then return here to sync and view Ads Manager insights.
-                </Text>
-                <Button url="/app/integrations/meta" variant="primary">
-                  Connect Meta
-                </Button>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        ) : (
-          <>
-            <Layout.Section>
-              <BlockStack gap="400">
-                <Card>
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="100">
-                      <Text as="h2" variant="headingMd">Status</Text>
-                      <Text as="p" tone="subdued">
-                        Connected {data.adAccountId ? `(${data.adAccountId})` : ""}
-                      </Text>
-                    </BlockStack>
-                    <Badge tone="success">Connected</Badge>
-                  </InlineStack>
-                </Card>
-
-                <Card>
-                  <BlockStack gap="300">
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="h2" variant="headingMd">Sync insights</Text>
-                      <sync.Form method="post" action="/api/meta/sync">
-                        <InlineStack gap="200" blockAlign="center">
-                          <Select
-                            label=""
-                            labelHidden
-                            name="days"
-                            value={String(days)}
-                            options={[
-                              { label: "Last 7 days", value: "7" },
-                              { label: "Last 14 days", value: "14" },
-                              { label: "Last 30 days", value: "30" },
-                            ]}
-                            disabled={syncing}
-                            onChange={() => {}}
-                          />
-                          <Button submit variant="primary" disabled={syncing}>
-                            {syncing ? "Syncing…" : "Sync now"}
-                          </Button>
-                        </InlineStack>
-                      </sync.Form>
-                    </InlineStack>
-
-                    {sync.data?.ok === false ? (
-                      <Text as="p" tone="critical">
-                        Sync error: {sync.data.error}
-                      </Text>
-                    ) : null}
-                    {sync.data?.ok ? (
-                      <Text as="p" tone="success">
-                        Synced {sync.data.rows} rows (days: {sync.data.days})
-                      </Text>
-                    ) : null}
-                  </BlockStack>
-                </Card>
-              </BlockStack>
-            </Layout.Section>
-
-            <Layout.Section>
-              <Layout>
-                <Layout.Section variant="oneThird">
-                  <Card>
-                    <BlockStack gap="100">
-                      <Text as="h3" variant="headingMd">Spend (7d)</Text>
-                      <Text as="p" variant="headingLg">{formatCurrency(data.totals?.spend)}</Text>
-                    </BlockStack>
-                  </Card>
-                </Layout.Section>
-                <Layout.Section variant="oneThird">
-                  <Card>
-                    <BlockStack gap="100">
-                      <Text as="h3" variant="headingMd">Purchases (7d)</Text>
-                      <Text as="p" variant="headingLg">{String(data.totals?.purchases ?? 0)}</Text>
-                    </BlockStack>
-                  </Card>
-                </Layout.Section>
-                <Layout.Section variant="oneThird">
-                  <Card>
-                    <BlockStack gap="100">
-                      <Text as="h3" variant="headingMd">Purchase value (7d)</Text>
-                      <Text as="p" variant="headingLg">{formatCurrency(data.totals?.purchaseValue)}</Text>
-                    </BlockStack>
-                  </Card>
-                </Layout.Section>
-              </Layout>
-            </Layout.Section>
-
-            <Layout.Section>
-              <Card>
-                <BlockStack gap="300">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd">Top campaigns (last 7 days)</Text>
-                    <Button url="/app/analytics" variant="secondary">
-                      Tracking analytics
-                    </Button>
-                  </InlineStack>
-
-                  <DataTable
-                    columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric"]}
-                    headings={["Campaign", "Spend", "Purchases", "Value", "ROAS"]}
-                    rows={tableRows.length ? tableRows : [["—", "—", "—", "—", "—"]]}
-                  />
+        {/* Meta */}
+        <Layout.Section variant="oneHalf">
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">
+                    Meta (Facebook &amp; Instagram)
+                  </Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Sync campaign spend · Server-side Conversions API
+                  </Text>
                 </BlockStack>
-              </Card>
-            </Layout.Section>
-          </>
-        )}
+                {meta.connected ? (
+                  <Badge tone="success">Connected</Badge>
+                ) : (
+                  <Badge tone="warning">Not connected</Badge>
+                )}
+              </InlineStack>
+
+              {meta.connected ? (
+                <BlockStack gap="100">
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Ad account:{" "}
+                    <Text as="span" fontWeight="semibold">
+                      {meta.adAccountId || "—"}
+                    </Text>
+                  </Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Purchase events are automatically sent via CAPI on every order.
+                  </Text>
+                </BlockStack>
+              ) : (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Connect your Meta account to pull campaign insights and enable
+                  server-side conversion reporting.
+                </Text>
+              )}
+
+              <InlineStack gap="200">
+                <Button url="/app/integrations/meta" variant="primary">
+                  {meta.connected ? "Manage Meta" : "Connect Meta"}
+                </Button>
+                {meta.connected && (
+                  <Button url="/app/integrations/meta" variant="secondary">
+                    View campaigns
+                  </Button>
+                )}
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Google */}
+        <Layout.Section variant="oneHalf">
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">
+                    Google Ads
+                  </Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Sync ad spend · Offline Conversion import
+                  </Text>
+                </BlockStack>
+                {google.connected ? (
+                  <Badge tone="success">Connected</Badge>
+                ) : (
+                  <Badge tone="warning">Not connected</Badge>
+                )}
+              </InlineStack>
+
+              {google.connected ? (
+                <BlockStack gap="100">
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Ad account:{" "}
+                    <Text as="span" fontWeight="semibold">
+                      {google.adCustomerId || "—"}
+                    </Text>
+                  </Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Google click conversions are uploaded automatically when a{" "}
+                    <Text as="span" fontWeight="semibold">gclid</Text> is
+                    present on the order.
+                  </Text>
+                </BlockStack>
+              ) : (
+                <BlockStack gap="100">
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Connect your Google Ads account to sync daily spend and
+                    upload offline conversions for attributed orders.
+                  </Text>
+                  {!google.developerTokenConfigured && (
+                    <Text as="p" tone="critical" variant="bodySm">
+                      Developer token not configured — contact support.
+                    </Text>
+                  )}
+                </BlockStack>
+              )}
+
+              <InlineStack gap="200">
+                <Button url="/app/integrations/google" variant="primary">
+                  {google.connected ? "Manage Google Ads" : "Connect Google Ads"}
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Help section */}
+        <Layout.Section>
+          <Card background="bg-surface-secondary">
+            <BlockStack gap="200">
+              <Text as="h3" variant="headingSm">
+                How integrations work
+              </Text>
+              <BlockStack gap="100">
+                <Text as="p" tone="subdued" variant="bodySm">
+                  <Text as="span" fontWeight="semibold">Ad spend sync</Text> — Daily spend is
+                  pulled from Meta and Google and stored in your database. This powers the ROAS
+                  numbers on your Attribution dashboard.
+                </Text>
+                <Text as="p" tone="subdued" variant="bodySm">
+                  <Text as="span" fontWeight="semibold">Server-side conversions</Text> — When an
+                  order is attributed to a Meta or Google click, a conversion event is sent directly
+                  from your server, bypassing ad blockers and iOS privacy restrictions.
+                </Text>
+                <Text as="p" tone="subdued" variant="bodySm">
+                  <Text as="span" fontWeight="semibold">Attribution</Text> — Manage attribution
+                  model (first-touch / last-touch) and window days in{" "}
+                  <Button url="/app/settings" variant="plain">Settings</Button>.
+                </Text>
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
       </Layout>
     </Page>
   );

@@ -1,17 +1,123 @@
 // app/routes/app.newsletter.widget.tsx
 // Signup form widget builder — renders inside newsletter layout.
 
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
+import db from "~/db.server";
 import { useState, useCallback } from "react";
 import {
-  Card, BlockStack, InlineStack, Text, Button, Badge, Grid, Box, TextField, Select,
+  Card, BlockStack, InlineStack, Text, Button, Badge, TextField, Select, Banner,
 } from "@shopify/polaris";
 
+const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
+const SCRIPT_URL = `${APP_URL}/scripts/newsletter-widget.js`;
+
 export async function loader({ request }: LoaderFunctionArgs) {
-  await authenticate.admin(request);
-  return json({});
+  const { session, admin } = await authenticate.admin(request);
+  const shop = session.shop;
+  const anyDb = db as any;
+
+  const config = await anyDb.newsletterWidgetConfig?.findUnique?.({ where: { shop } }).catch(() => null);
+
+  let scriptTagInstalled = false;
+  try {
+    const res = await admin.graphql(`query { scriptTags(first:30){ edges{ node{ id src } } } }`);
+    const j = await res.json();
+    const tags = j?.data?.scriptTags?.edges ?? [];
+    scriptTagInstalled = tags.some((e: any) => e.node?.src === SCRIPT_URL);
+  } catch {}
+
+  return json({ config, scriptTagInstalled, shop });
+}
+
+export async function action({ request }: ActionFunctionArgs) {
+  const { session, admin } = await authenticate.admin(request);
+  const shop = session.shop;
+  const anyDb = db as any;
+
+  const body = await request.json().catch(() => ({}));
+  const intent = body?.intent as string;
+
+  if (intent === "install") {
+    // Save widget config
+    const data = {
+      shop,
+      enabled: true,
+      templateId: body.templateId,
+      templateType: body.templateType,
+      buttonColor: body.buttonColor ?? "#008060",
+      textColor: body.textColor ?? "#ffffff",
+      borderRadius: body.borderRadius ?? 6,
+      fontFamily: body.fontFamily ?? null,
+      btnLabel: body.btnLabel ?? "Subscribe",
+      triggerType: body.triggerType ?? "timer",
+      triggerDelay: Number(body.triggerDelay ?? 5),
+      scrollDepth: Number(body.scrollDepth ?? 50),
+      pageTargeting: JSON.stringify(body.pageTargeting ?? ["all"]),
+      dismissLimit: Number(body.dismissLimit ?? 3),
+      dismissPeriod: body.dismissPeriod ?? "month",
+    };
+
+    await anyDb.newsletterWidgetConfig?.upsert?.({
+      where: { shop },
+      create: data,
+      update: data,
+    }).catch(() => null);
+
+    // Install ScriptTag
+    let installed = false;
+    try {
+      const tagsRes = await admin.graphql(`query { scriptTags(first:30){ edges{ node{ id src } } } }`);
+      const tagsJson = await tagsRes.json();
+      const tags = tagsJson?.data?.scriptTags?.edges ?? [];
+      const existing = tags.find((e: any) => e.node?.src === SCRIPT_URL);
+
+      if (!existing) {
+        const createRes = await admin.graphql(`
+          mutation {
+            scriptTagCreate(input: { src: "${SCRIPT_URL}", displayScope: ONLINE_STORE }) {
+              scriptTag { id src }
+              userErrors { field message }
+            }
+          }
+        `);
+        const createJson = await createRes.json();
+        const errors = createJson?.data?.scriptTagCreate?.userErrors ?? [];
+        if (errors.length > 0) {
+          console.error("[newsletter-widget] scriptTagCreate errors:", errors);
+        } else {
+          installed = true;
+        }
+      } else {
+        installed = true; // already there
+      }
+    } catch (e) {
+      console.error("[newsletter-widget] ScriptTag error:", e);
+    }
+
+    return json({ ok: true, installed });
+  }
+
+  if (intent === "uninstall") {
+    try {
+      const tagsRes = await admin.graphql(`query { scriptTags(first:30){ edges{ node{ id src } } } }`);
+      const tagsJson = await tagsRes.json();
+      const tags = tagsJson?.data?.scriptTags?.edges ?? [];
+      const existing = tags.find((e: any) => e.node?.src === SCRIPT_URL);
+      if (existing) {
+        await admin.graphql(`
+          mutation { scriptTagDelete(id: "${existing.node.id}") { deletedScriptTagId userErrors { message } } }
+        `);
+      }
+      await anyDb.newsletterWidgetConfig?.update?.({ where: { shop }, data: { enabled: false } }).catch(() => null);
+    } catch (e) {
+      console.error("[newsletter-widget] uninstall error:", e);
+    }
+    return json({ ok: true, installed: false });
+  }
+
+  return json({ ok: false });
 }
 
 type WidgetTemplate = {
@@ -261,21 +367,41 @@ window.atbxSubmit = function() {
 }
 
 export default function NewsletterWidget() {
+  const { config, scriptTagInstalled: initialInstalled } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<any>();
+
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [detectedColors, setDetectedColors] = useState({
-    btn: "#008060",
-    btnText: "#ffffff",
-    radius: 6,
-    font: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    btn: config?.buttonColor ?? "#008060",
+    btnText: config?.textColor ?? "#ffffff",
+    radius: config?.borderRadius ?? 6,
+    font: config?.fontFamily ?? "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     bg: "#ffffff",
-    btnLabel: "Subscribe",
+    btnLabel: config?.btnLabel ?? "Subscribe",
   });
   const [scanned, setScanned] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(config?.templateId ?? null);
   const [filter, setFilter] = useState<string>("all");
-  const [btnLabel, setBtnLabel] = useState("Subscribe");
-  const [showCode, setShowCode] = useState(false);
+  const [btnLabel, setBtnLabel] = useState(config?.btnLabel ?? "Subscribe");
+
+  // Trigger & targeting settings
+  const [triggerType, setTriggerType] = useState(config?.triggerType ?? "timer");
+  const [triggerDelay, setTriggerDelay] = useState(String(config?.triggerDelay ?? 5));
+  const [scrollDepth, setScrollDepth] = useState(String(config?.scrollDepth ?? 50));
+  const [pageTargeting, setPageTargeting] = useState<string[]>(() => {
+    try { return JSON.parse(config?.pageTargeting ?? '["all"]'); } catch { return ["all"]; }
+  });
+
+  // Frequency / dismissal capping
+  const [dismissLimit, setDismissLimit] = useState(String(config?.dismissLimit ?? 3));
+  const [dismissPeriod, setDismissPeriod] = useState(config?.dismissPeriod ?? "month");
+
+  // Derive installed state from fetcher result or initial loader value
+  const isInstalled = fetcher.data?.installed !== undefined
+    ? fetcher.data.installed
+    : initialInstalled && (config?.enabled ?? false);
+  const isInstalling = fetcher.state !== "idle";
 
   const handleScan = useCallback(async () => {
     setScanning(true);
@@ -317,8 +443,92 @@ export default function NewsletterWidget() {
   const CARD_W = Math.round(IFRAME_W * SCALE);
   const CARD_H = Math.round(IFRAME_H * SCALE);
 
+  function scrollToEmbed() {
+    const el = document.getElementById("atbx-embed-panel");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function handleInstall() {
+    if (!selectedTemplate) return;
+    fetcher.submit(
+      {
+        intent: "install",
+        templateId: selectedTemplate.id,
+        templateType: selectedTemplate.type,
+        buttonColor: colors.btn,
+        textColor: colors.btnText,
+        borderRadius: colors.radius,
+        fontFamily: colors.font,
+        btnLabel: colors.btnLabel,
+        triggerType,
+        triggerDelay: Number(triggerDelay) || 5,
+        scrollDepth: Number(scrollDepth) || 50,
+        pageTargeting,
+        dismissLimit: Number(dismissLimit) || 0,
+        dismissPeriod,
+      },
+      { method: "post", encType: "application/json" }
+    );
+  }
+
+  function handleUninstall() {
+    fetcher.submit({ intent: "uninstall" }, { method: "post", encType: "application/json" });
+  }
+
   return (
     <BlockStack gap="500">
+      {/* Installation status banner */}
+      {isInstalled && (
+        <Banner tone="success">
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="p" variant="bodyMd" fontWeight="semibold">
+              ✓ Signup form is live on your store — {config?.templateId?.replace(/_/g, " ") ?? selectedTemplate?.name}
+            </Text>
+            <Button variant="plain" tone="critical" onClick={handleUninstall} loading={isInstalling}>
+              Remove from store
+            </Button>
+          </InlineStack>
+        </Banner>
+      )}
+
+      {/* Sticky action bar — visible once a template is selected */}
+      {selectedTemplate && (
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 50,
+          background: isInstalled ? "#1a1a2e" : "#008060",
+          color: "#fff",
+          padding: "12px 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderRadius: 8,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+        }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>
+            {isInstalled ? `Active: ${selectedTemplate.name}` : `✓ ${selectedTemplate.name} selected`}
+          </span>
+          <button
+            onClick={isInstalled ? handleInstall : handleInstall}
+            disabled={isInstalling}
+            style={{
+              background: "#fff",
+              color: isInstalled ? "#1a1a2e" : "#008060",
+              border: "none",
+              borderRadius: 6,
+              padding: "8px 20px",
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: isInstalling ? "wait" : "pointer",
+              opacity: isInstalling ? 0.7 : 1,
+            }}
+          >
+            {isInstalling ? "Installing…" : isInstalled ? "Update design →" : "Install on my store →"}
+          </button>
+        </div>
+      )}
+
       {/* Scan bar */}
       <Card>
         <InlineStack align="space-between" blockAlign="center">
@@ -373,6 +583,140 @@ export default function NewsletterWidget() {
         </InlineStack>
       </Card>
 
+      {/* Trigger & page targeting */}
+      <Card>
+        <BlockStack gap="400">
+          <Text as="h2" variant="headingSm">When &amp; where to show</Text>
+          <InlineStack gap="400" wrap>
+            {/* Trigger type */}
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <Select
+                label="Show trigger"
+                options={[
+                  { label: "Timer — show after delay", value: "timer" },
+                  { label: "Exit intent — when leaving page", value: "exit_intent" },
+                  { label: "Scroll depth — after scrolling", value: "scroll" },
+                  { label: "Immediately", value: "immediate" },
+                ]}
+                value={triggerType}
+                onChange={setTriggerType}
+              />
+            </div>
+
+            {/* Timer delay (only when timer) */}
+            {triggerType === "timer" && (
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <Select
+                  label="Delay"
+                  options={[
+                    { label: "3 seconds", value: "3" },
+                    { label: "5 seconds", value: "5" },
+                    { label: "10 seconds", value: "10" },
+                    { label: "15 seconds", value: "15" },
+                    { label: "30 seconds", value: "30" },
+                    { label: "60 seconds", value: "60" },
+                  ]}
+                  value={triggerDelay}
+                  onChange={setTriggerDelay}
+                />
+              </div>
+            )}
+
+            {/* Scroll depth (only when scroll) */}
+            {triggerType === "scroll" && (
+              <div style={{ flex: 1, minWidth: 140 }}>
+                <Select
+                  label="Scroll depth"
+                  options={[
+                    { label: "25% scrolled", value: "25" },
+                    { label: "50% scrolled", value: "50" },
+                    { label: "75% scrolled", value: "75" },
+                  ]}
+                  value={scrollDepth}
+                  onChange={setScrollDepth}
+                />
+              </div>
+            )}
+          </InlineStack>
+
+          {/* Dismissal / frequency capping */}
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <Select
+                label="Stop showing after"
+                helpText="How many times a visitor can close it before it stops appearing"
+                options={[
+                  { label: "1 dismissal", value: "1" },
+                  { label: "2 dismissals", value: "2" },
+                  { label: "3 dismissals", value: "3" },
+                  { label: "5 dismissals", value: "5" },
+                  { label: "Unlimited", value: "0" },
+                ]}
+                value={dismissLimit}
+                onChange={setDismissLimit}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <Select
+                label="Reset count after"
+                helpText="Dismissal count resets after this period"
+                options={[
+                  { label: "Never — stop forever", value: "forever" },
+                  { label: "End of session", value: "session" },
+                  { label: "1 day", value: "day" },
+                  { label: "1 week", value: "week" },
+                  { label: "1 month", value: "month" },
+                ]}
+                value={dismissPeriod}
+                onChange={setDismissPeriod}
+              />
+            </div>
+          </InlineStack>
+
+          {/* Page targeting checkboxes */}
+          <BlockStack gap="200">
+            <Text as="p" variant="bodySm" fontWeight="semibold">Show on pages</Text>
+            <InlineStack gap="300" wrap>
+              {[
+                { value: "all", label: "All pages" },
+                { value: "homepage", label: "Homepage" },
+                { value: "product", label: "Product pages" },
+                { value: "collection", label: "Collections" },
+                { value: "cart", label: "Cart" },
+                { value: "blog", label: "Blog" },
+              ].map(({ value, label }) => {
+                const checked = pageTargeting.includes("all")
+                  ? value === "all"
+                  : pageTargeting.includes(value);
+                return (
+                  <label key={value} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 13, color: "#374151" }}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      style={{ width: 15, height: 15, accentColor: "#008060" }}
+                      onChange={(e) => {
+                        if (value === "all") {
+                          setPageTargeting(["all"]);
+                          return;
+                        }
+                        const current = pageTargeting.filter(p => p !== "all");
+                        if (e.target.checked) {
+                          setPageTargeting([...current, value]);
+                        } else {
+                          const next = current.filter(p => p !== value);
+                          setPageTargeting(next.length ? next : ["all"]);
+                        }
+                      }}
+                    />
+                    {label}
+                  </label>
+                );
+              })}
+            </InlineStack>
+          </BlockStack>
+        </BlockStack>
+      </Card>
+
       {/* Template gallery */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
         {filteredTemplates.map((tmpl) => {
@@ -398,13 +742,15 @@ export default function NewsletterWidget() {
                 transition: "all 0.15s",
               }}
             >
-              {/* Scaled preview */}
+              {/* Scaled preview — flex-centered so content appears in the middle */}
               <div
                 style={{
                   width: "100%",
                   height: CARD_H,
                   overflow: "hidden",
-                  position: "relative",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   background: "#f6f6f7",
                 }}
               >
@@ -414,11 +760,9 @@ export default function NewsletterWidget() {
                     width: IFRAME_W,
                     height: IFRAME_H,
                     border: "none",
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
+                    flexShrink: 0,
                     transform: `scale(${SCALE})`,
-                    transformOrigin: "top left",
+                    transformOrigin: "center center",
                     pointerEvents: "none",
                   }}
                   sandbox="allow-same-origin"
@@ -452,35 +796,45 @@ export default function NewsletterWidget() {
         })}
       </div>
 
-      {/* Embed code panel — shown when a template is selected */}
+      {/* Install confirmation card */}
       {selectedTemplate && (
-        <Card>
+        <Card id="atbx-embed-panel">
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="050">
-                <Text as="h2" variant="headingSm">Embed code — {selectedTemplate.name}</Text>
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingSm">
+                  {isInstalled ? "✓ Active on your store" : "Ready to install"}
+                </Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Paste this into your Shopify theme where you want the {selectedTemplate.type} to appear.
+                  {isInstalled
+                    ? `Your ${selectedTemplate.type} signup form is live. Change the design above and click "Update design" to apply changes.`
+                    : `Click "Install on my store" above and Attribix will automatically add the ${selectedTemplate.type} to your storefront — no code needed.`
+                  }
                 </Text>
               </BlockStack>
-              <Button variant="secondary" onClick={() => setShowCode(v => !v)}>
-                {showCode ? "Hide code" : "Show embed code"}
-              </Button>
-            </InlineStack>
-            {showCode && (
-              <>
-                <Box background="bg-surface-secondary" borderRadius="200" padding="400">
-                  <pre style={{ margin: 0, fontSize: 11, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.6 }}>
-                    {generateEmbedCode(selectedTemplate, "YOUR_SHOP.myshopify.com", colors)}
-                  </pre>
-                </Box>
-                <Button
-                  variant="plain"
-                  onClick={() => navigator.clipboard?.writeText(generateEmbedCode(selectedTemplate, "YOUR_SHOP.myshopify.com", colors))}
-                >
-                  Copy to clipboard
+              {!isInstalled && (
+                <Button variant="primary" onClick={handleInstall} loading={isInstalling}>
+                  Install on my store
                 </Button>
-              </>
+              )}
+              {isInstalled && (
+                <Button variant="secondary" onClick={handleInstall} loading={isInstalling}>
+                  Update design
+                </Button>
+              )}
+            </InlineStack>
+
+            {isInstalled && (
+              <div style={{ background: "#f0fdf4", borderRadius: 8, padding: "12px 16px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 18 }}>✅</span>
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">Form is live</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    The {selectedTemplate.type} will appear on your store automatically.
+                    New subscribers are saved to your Attribix subscriber list.
+                  </Text>
+                </BlockStack>
+              </div>
             )}
           </BlockStack>
         </Card>

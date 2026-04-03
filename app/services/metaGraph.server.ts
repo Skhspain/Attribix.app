@@ -65,14 +65,33 @@ export async function exchangeMetaCodeForToken(args: {
 }
 
 /**
- * Fetch ad accounts available for the user token.
+ * Fetch ALL ad accounts available for the user token (handles Meta pagination).
  */
 export async function fetchUserAdAccounts(args: { accessToken: string }) {
-  const url = new URL("https://graph.facebook.com/v20.0/me/adaccounts");
-  url.searchParams.set("access_token", args.accessToken);
-  url.searchParams.set("fields", "id,name,account_id,currency,timezone_name,amount_spent,spend_cap");
+  const allAccounts: any[] = [];
+  let nextUrl: string | null = null;
 
-  return metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
+  // First page
+  const firstUrl = new URL("https://graph.facebook.com/v20.0/me/adaccounts");
+  firstUrl.searchParams.set("access_token", args.accessToken);
+  firstUrl.searchParams.set("fields", "id,name,account_id,currency,timezone_name,amount_spent,spend_cap");
+  firstUrl.searchParams.set("limit", "200");
+  nextUrl = firstUrl.toString();
+
+  let pageCount = 0;
+  const MAX_PAGES = 10; // safety cap — 2000 ad accounts max
+
+  while (nextUrl && pageCount < MAX_PAGES) {
+    const page = await metaFetchJson<{ data: any[]; paging?: { next?: string; cursors?: any } }>(
+      nextUrl,
+      { method: "GET" }
+    );
+    allAccounts.push(...(page.data ?? []));
+    nextUrl = page.paging?.next ?? null;
+    pageCount++;
+  }
+
+  return { data: allAccounts };
 }
 
 /**
@@ -82,42 +101,47 @@ export async function fetchUserAdAccounts(args: { accessToken: string }) {
  *
  * We accept BOTH adAccountId and campaignId so your route won't type-error.
  */
+const CAMPAIGN_FIELDS = [
+  "date_start", "date_stop",
+  "campaign_id", "campaign_name",
+  "impressions", "clicks", "spend", "cpm", "cpc", "ctr",
+  "actions", "action_values", "purchase_roas",
+];
+
+const AD_FIELDS = [
+  "date_start", "date_stop",
+  "campaign_id", "campaign_name",
+  "adset_id", "adset_name",
+  "ad_id", "ad_name",
+  "impressions", "clicks", "spend", "cpm", "cpc", "ctr",
+  "actions", "action_values",
+];
+
 export async function fetchCampaignDailyInsights(args: {
   accessToken: string;
-  adAccountId?: string; // "act_123..."
-  campaignId?: string;  // "123..."
-  since: string;        // YYYY-MM-DD
-  until: string;        // YYYY-MM-DD
+  adAccountId?: string;
+  campaignId?: string;
+  since: string;
+  until: string;
+  level?: "campaign" | "adset" | "ad";
   fields?: string[];
 }) {
   const id = args.campaignId ?? args.adAccountId;
-  if (!id) {
-    throw new Response("Missing campaignId or adAccountId", { status: 400 });
-  }
+  if (!id) throw new Response("Missing campaignId or adAccountId", { status: 400 });
 
-  const fields = (args.fields && args.fields.length > 0)
-    ? args.fields
-    : [
-        "date_start",
-        "date_stop",
-        "campaign_id",
-        "campaign_name",
-        "impressions",
-        "clicks",
-        "spend",
-        "cpm",
-        "cpc",
-        "ctr",
-        "actions",
-        "action_values",
-        "purchase_roas",
-      ];
+  const fields = args.fields?.length ? args.fields
+    : args.level === "ad" ? AD_FIELDS
+    : CAMPAIGN_FIELDS;
 
   const url = new URL(`https://graph.facebook.com/v20.0/${encodeURIComponent(id)}/insights`);
   url.searchParams.set("access_token", args.accessToken);
   url.searchParams.set("fields", fields.join(","));
   url.searchParams.set("time_increment", "1");
   url.searchParams.set("time_range", JSON.stringify({ since: args.since, until: args.until }));
+  if (args.level) url.searchParams.set("level", args.level);
 
-  return metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
+  console.log(`[metaGraph] fetchInsights level=${args.level} id=${id} since=${args.since} until=${args.until}`);
+  const result = await metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
+  console.log(`[metaGraph] response rows=${result?.data?.length ?? 0}`);
+  return result;
 }

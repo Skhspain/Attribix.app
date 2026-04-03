@@ -48,6 +48,7 @@ export default function AppRoute() {
         <a href="/app/orders">Orders</a>
         <a href="/app/ads">Integrations</a>
         <a href="/app/settings">Settings</a>
+        <a href="/app/billing">Plans & Billing</a>
       </ui-nav-menu>
       <Outlet />
     </AppProvider>

@@ -1,25 +1,31 @@
 // app/utils/useAuthenticatedFetch.ts
-import { useAppBridge } from "@shopify/shopify-app-remix/react";
-import { authenticatedFetch } from "@shopify/app-bridge-utils";
+//
+// App Bridge v4 (new embedded auth strategy) exposes window.shopify.idToken()
+// to get the current session token. This replaces the old useAppBridge() +
+// getSessionToken() pattern from App Bridge v3, which required a separate
+// React Provider that @shopify/shopify-app-remix/react does not mount.
+
 import { useCallback } from "react";
 
-export function useAuthenticatedFetch() {
-  const app = useAppBridge();
+type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-  return useCallback(
-    async (uri: string, options: RequestInit = {}) => {
-      const fetchFunction = authenticatedFetch(app);
+export function useAuthenticatedFetch(): Fetcher {
+  return useCallback(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    let token: string | null = null;
 
-      const headers = new Headers(options.headers || {});
-      if (!headers.has("Content-Type") && options.body) {
-        headers.set("Content-Type", "application/json");
+    try {
+      const shopify = (window as any).shopify;
+      if (shopify?.idToken) {
+        token = await shopify.idToken();
       }
+    } catch {
+      // Proceed without token — server will return 401 if needed.
+    }
 
-      return fetchFunction(uri, {
-        ...options,
-        headers,
-      });
-    },
-    [app]
-  );
+    const headers = new Headers(init.headers || {});
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    headers.set("Accept", "application/json");
+
+    return fetch(input, { ...init, headers });
+  }, []);
 }

@@ -1,52 +1,85 @@
 // app/routes/api.meta.oauth.start.ts
-import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
-import { redirectDocument } from "@remix-run/node";
+import db from "~/db.server";
 
-/**
- * Starts Meta OAuth.
- * IMPORTANT: must be a top-level navigation (not a fetcher) to avoid iframe blocking.
- */
+function mustEnv(name: string) {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
-
-  const { session } = result;
-  const shop = session.shop;
-
-  if (!shop) {
-    throw new Response("Missing shop in session", { status: 400 });
-  }
-
   const url = new URL(request.url);
 
-  const appBaseUrl = process.env.SHOPIFY_APP_URL;
-  if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
-
-  const redirectUri = `${appBaseUrl.replace(/\/$/, "")}/api/meta/oauth/callback`;
-
-  const clientId = process.env.META_APP_ID;
-  if (!clientId) throw new Response("Missing META_APP_ID", { status: 500 });
-
+  const shopFromQuery = url.searchParams.get("shop") || "";
+  const host = url.searchParams.get("host") || "";
+  const embedded = url.searchParams.get("embedded") || "1";
   const returnTo = url.searchParams.get("returnTo") || "/app/integrations/meta";
 
-  const stateObj = {
-    shop,
-    nonce: crypto.randomUUID(),
-    returnTo,
-  };
+  // Try to get shop from session (preferred), but don't fail hard.
+  let shop = shopFromQuery;
 
-  const state = Buffer.from(JSON.stringify(stateObj), "utf8").toString("base64url");
+  try {
+    const result = await authenticate.admin(request);
+    if (!(result instanceof Response)) {
+      shop = result.session.shop;
+    }
+  } catch {
+    // ok: we can proceed with ?shop=...
+  }
 
-  const fbAuth = new URL("https://www.facebook.com/v20.0/dialog/oauth");
-  fbAuth.searchParams.set("client_id", clientId);
-  fbAuth.searchParams.set("redirect_uri", redirectUri);
-  fbAuth.searchParams.set("state", state);
-  fbAuth.searchParams.set(
+  if (!shop) {
+    return redirect(
+      `${returnTo}?metaError=${encodeURIComponent("Missing shop")}&host=${encodeURIComponent(
+        host
+      )}&embedded=${encodeURIComponent(embedded)}`
+    );
+  }
+
+  // Ensure record exists (Prisma requires accessToken on create)
+  await db.metaConnection.upsert({
+    where: { shop },
+    update: {},
+    create: {
+      shop,
+      accessToken: "__PENDING__",
+      // keep existing fields optional; don't set expiresAt unless you have it
+    },
+  });
+
+  const META_APP_ID = mustEnv("META_APP_ID");
+  const META_REDIRECT_URI = mustEnv("META_REDIRECT_URI");
+
+  const nonce = crypto.randomUUID();
+
+  const state = Buffer.from(
+    JSON.stringify({ shop, host, embedded, returnTo, nonce }),
+    "utf8"
+  ).toString("base64url");
+
+  const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
+  authUrl.searchParams.set("client_id", META_APP_ID);
+  authUrl.searchParams.set("redirect_uri", META_REDIRECT_URI);
+  authUrl.searchParams.set("state", state);
+
+  // Adjust scopes to what you actually use
+  authUrl.searchParams.set(
     "scope",
-    ["ads_management", "ads_read", "business_management"].join(",")
+    [
+      "ads_read",
+      "ads_management",
+      "business_management",
+      // add/remove as needed
+    ].join(",")
   );
-  fbAuth.searchParams.set("response_type", "code");
 
-  return redirect(fbAuth.toString());
+  const response = redirect(authUrl.toString());
+  // Store nonce in a short-lived cookie for CSRF validation in the callback
+  response.headers.set(
+    "Set-Cookie",
+    `meta_oauth_nonce=${nonce}; HttpOnly; Secure; SameSite=Lax; Max-Age=600; Path=/`
+  );
+  return response;
 }

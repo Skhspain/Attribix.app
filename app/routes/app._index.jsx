@@ -530,14 +530,6 @@ export default function AppIndex() {
                   {/* Stage badge */}
                   <InlineStack align="space-between" blockAlign="center">
                     <Text as="h3" variant="headingSm">Website status</Text>
-                    <span style={{
-                      fontSize: 13, fontWeight: 700,
-                      background: stageBg, color: stageText,
-                      border: `1.5px solid ${stageBorder}`,
-                      borderRadius: 20, padding: "4px 14px",
-                    }}>
-                      {stageEmoji} {stageLabel}
-                    </span>
                   </InlineStack>
 
                   {/* Section subtitle */}

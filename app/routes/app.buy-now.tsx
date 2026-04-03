@@ -71,17 +71,25 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // Auto-install if button is enabled but ScriptTag is missing
     const isEnabled = settings?.enabled ?? true;
     if (isEnabled && !scriptTagInstalled) {
-      await admin.graphql(`
+      const createRes = await admin.graphql(`
         mutation {
-          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ALL_PAGES }) {
-            scriptTag { id }
-            userErrors { message }
+          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ONLINE_STORE }) {
+            scriptTag { id src }
+            userErrors { field message }
           }
         }
       `);
-      scriptTagInstalled = true;
+      const createJson = await createRes.json();
+      const userErrors = createJson?.data?.scriptTagCreate?.userErrors ?? [];
+      if (userErrors.length === 0 && createJson?.data?.scriptTagCreate?.scriptTag) {
+        scriptTagInstalled = true;
+      } else if (userErrors.length > 0) {
+        console.error("[buy-now] scriptTagCreate userErrors:", userErrors);
+      }
     }
-  } catch {}
+  } catch (e) {
+    console.error("[buy-now] loader ScriptTag error:", e);
+  }
 
   // Aggregate stats
   const totalClicks = clickStats.length;
@@ -152,14 +160,19 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (body.enabled && !existing) {
       // Create the ScriptTag
-      await admin.graphql(`
+      const createRes = await admin.graphql(`
         mutation {
-          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ALL_PAGES }) {
+          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ONLINE_STORE }) {
             scriptTag { id src }
             userErrors { field message }
           }
         }
       `);
+      const createJson = await createRes.json();
+      const createErrors = createJson?.data?.scriptTagCreate?.userErrors ?? [];
+      if (createErrors.length > 0) {
+        console.error("[buy-now] action scriptTagCreate userErrors:", createErrors);
+      }
     } else if (!body.enabled && existing) {
       // Remove the ScriptTag
       await admin.graphql(`

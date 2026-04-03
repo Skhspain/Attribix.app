@@ -3,28 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
-}
-
-model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
-
-  @@index([shop])
 }
 
 model TrackedEvent {
@@ -39,14 +19,108 @@ model TrackedEvent {
   utmCampaign String?
   utmMedium   String?
   utmSource   String?
-  email       String?
-  phone       String?
-  orderId     String?
+
+  shop      String?
+  visitorId String?
+  eventId   String? @unique
+  referrer  String?
+
+  fbclid  String?
+  gclid   String?
+  ttclid  String?
+  msclkid String?
+
+  fbp       String?
+  fbc       String?
+  host      String?
+  origin    String?
+  accountId String?
 
   @@index([createdAt])
   @@index([eventName])
   @@index([sessionId])
   @@index([utmSource])
+  @@index([shop])
+  @@index([visitorId])
+  @@index([eventId])
+  @@index([fbclid])
+  @@index([gclid])
+  @@index([fbc])
+  @@index([fbp])
+}
+
+model Session {
+  id            String   @id
+  shop          String
+  state         String
+  isOnline      Boolean  @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean  @default(false)
+  locale        String?
+  collaborator  Boolean? @default(false)
+  emailVerified Boolean? @default(false)
+
+  @@index([shop])
+}
+
+model Purchase {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now())
+  totalValue Float
+  currency   String   @default("USD")
+
+  shop      String?
+  orderId   String? @unique
+  visitorId String?
+  sessionId String?
+
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+
+  fbclid  String?
+  gclid   String?
+  ttclid  String?
+  msclkid String?
+
+  fbp         String?
+  fbc         String?
+  referrer    String?
+  landingPage String?
+  country     String?
+  city        String?
+
+  @@index([createdAt])
+  @@index([shop])
+  @@index([orderId])
+  @@index([visitorId])
+  @@index([sessionId])
+  @@index([fbclid])
+  @@index([gclid])
+  @@index([fbc])
+  @@index([fbp])
+}
+
+model AdSpendDaily {
+  id       String   @id @default(cuid())
+  shop     String   @default("")
+  date     DateTime
+  spend    Float    @default(0)
+  ad       String?
+  adset    String?
+  campaign String?
+  platform String
+
+  @@unique([shop, platform, date], name: "shop_platform_date")
+  @@index([shop])
+  @@index([date])
+  @@index([platform, date])
 }
 
 model TrackingSettings {
@@ -58,88 +132,90 @@ model TrackingSettings {
   fbToken   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  trackingKey     String?  @unique
+  trackingEnabled Boolean  @default(true)
+  pixelLastSeenAt DateTime?
+  lastEventAt     DateTime?
+  installedAt     DateTime?
+  uninstalledAt   DateTime?
+
+  attributionModel      String  @default("last_touch")
+  attributionWindowDays Int     @default(7)
+
+  @@index([shop])
+  @@index([trackingKey])
+  @@index([trackingEnabled])
 }
-
-/* ============================== Purchases ============================== */
-
-model Purchase {
-  id                String        @id @default(cuid())
-  createdAt         DateTime      @default(now())
-  shop              String        @default("")
-  shopifyOrderId    String?       @unique
-  totalValue        Float
-  currency          String        @default("USD")
-  customerEmailHash String?
-  utmSource         String?
-  utmMedium         String?
-  utmCampaign       String?
-  gclid             String?
-  fbclid            String?
-  sessionId         String?
-  items             PurchaseItem[]
-
-  @@index([createdAt])
-  @@index([utmSource, utmMedium, utmCampaign])
-}
-
-model PurchaseItem {
-  id          String   @id @default(cuid())
-  purchaseId  String
-  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  productId   String
-  productName String
-  quantity    Int
-  price       Float
-  category    String?
-  brand       String?
-
-  @@index([productId])
-}
-
-/* ============================== Ad Spend ============================== */
-
-model AdSpendDaily {
-  id       String   @id @default(cuid())
-  shop     String   @default("")
-  date     DateTime
-  platform String   @default("meta")
-  campaign String?
-  adset    String?
-  ad       String?
-  spend    Float
-
-  @@unique([shop, date])
-  @@index([date])
-  @@index([platform, date])
-}
-
-/* ============================== Meta Integration ============================== */
 
 model MetaConnection {
-  id          String    @id @default(cuid())
-  shop        String    @unique
-  accessToken String
-  tokenType   String?
-  expiresAt   DateTime?
-  adAccountId String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String    @id @default(cuid())
+  shop         String    @unique
+  accessToken  String
+  expiresAt    DateTime?
+  adAccountId  String?
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([shop])
 }
 
 model MetaCampaignDailyInsight {
   id            String   @id @default(cuid())
   shop          String
   date          DateTime
-  adAccountId   String
   campaignId    String
   campaignName  String?
   spend         Float    @default(0)
+  impressions   Int      @default(0)
+  clicks        Int      @default(0)
+  purchases     Int      @default(0)
+  purchaseValue Float    @default(0)
+  raw           Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, date, campaignId], name: "shop_date_campaignId")
+  @@index([shop, date])
+  @@index([date])
+}
+
+model MetaAdDailyInsight {
+  id            String   @id @default(cuid())
+  shop          String
+  date          DateTime
+  campaignId    String
+  campaignName  String?
+  adSetId       String
+  adSetName     String?
+  adId          String
+  adName        String?
+  spend         Float    @default(0)
+  impressions   Int      @default(0)
+  clicks        Int      @default(0)
+  ctr           Float    @default(0)
+  cpc           Float    @default(0)
   purchases     Int      @default(0)
   purchaseValue Float    @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@unique([shop, date, campaignId])
+  @@unique([shop, date, adId], name: "shop_date_adId")
   @@index([shop, date])
-  @@index([shop, campaignId])
+  @@index([campaignId])
+}
+
+model GoogleConnection {
+  id           String   @id @default(cuid())
+  shop         String   @unique
+  accessToken  String
+  refreshToken String?
+  scope        String?
+  expiresAt    DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  adCustomerId String?
+
+  @@index([shop])
 }

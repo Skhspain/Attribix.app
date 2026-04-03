@@ -1,0 +1,214 @@
+{% comment %}
+  Attribix Buy Now Button — Theme App Extension Block
+  Add this block to any section on your product page via the Shopify Theme Editor.
+  The block captures full attribution context on every click and sends it to Attribix.
+{% endcomment %}
+
+{%- liquid
+  assign btn_text      = block.settings.button_text | default: 'Buy Now'
+  assign btn_color     = block.settings.button_color | default: '#008060'
+  assign text_color    = block.settings.text_color | default: '#ffffff'
+  assign border_radius = block.settings.border_radius | default: 4
+  assign btn_size      = block.settings.button_size | default: 'medium'
+  assign action        = block.settings.action | default: 'checkout'
+  assign app_url       = block.settings.app_url | default: 'https://attribix-app.fly.dev'
+  assign shop_domain   = shop.permanent_domain
+-%}
+
+{%- case btn_size -%}
+  {%- when 'small' -%}
+    {%- assign padding = '8px 16px' -%}
+    {%- assign font_size = '13px' -%}
+  {%- when 'large' -%}
+    {%- assign padding = '14px 28px' -%}
+    {%- assign font_size = '17px' -%}
+  {%- else -%}
+    {%- assign padding = '11px 22px' -%}
+    {%- assign font_size = '15px' -%}
+{%- endcase -%}
+
+<div
+  class="attribix-buy-now-wrapper"
+  data-product-id="{{ product.id }}"
+  data-variant-id="{{ product.selected_or_first_available_variant.id }}"
+  data-shop="{{ shop_domain }}"
+  data-action="{{ action }}"
+  data-app-url="{{ app_url }}"
+  {{ block.shopify_attributes }}
+>
+  <button
+    class="attribix-buy-now-btn"
+    type="button"
+    style="
+      background: {{ btn_color }};
+      color: {{ text_color }};
+      border: none;
+      border-radius: {{ border_radius }}px;
+      padding: {{ padding }};
+      font-size: {{ font_size }};
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      transition: opacity 0.15s ease;
+    "
+    onmouseover="this.style.opacity='0.88'"
+    onmouseout="this.style.opacity='1'"
+  >
+    {{ btn_text }}
+  </button>
+</div>
+
+<script>
+(function() {
+  // Reads UTM params and click IDs from the current URL / cookies
+  function getUrlParam(name) {
+    return new URLSearchParams(window.location.search).get(name);
+  }
+  function getCookieValue(name) {
+    var match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+  function getAttribution() {
+    return {
+      utm_source:   getUrlParam('utm_source')   || getCookieValue('utm_source'),
+      utm_medium:   getUrlParam('utm_medium')   || getCookieValue('utm_medium'),
+      utm_campaign: getUrlParam('utm_campaign') || getCookieValue('utm_campaign'),
+      gclid:        getUrlParam('gclid')        || getCookieValue('gclid'),
+      fbclid:       getUrlParam('fbclid')       || getCookieValue('fbclid'),
+      ttclid:       getUrlParam('ttclid')       || getCookieValue('ttclid'),
+      visitorId:    getCookieValue('attribix_vid'),
+      sessionId:    getCookieValue('attribix_sid'),
+    };
+  }
+
+  function handleBuyNowClick(wrapper) {
+    var productId  = wrapper.dataset.productId;
+    var variantId  = wrapper.dataset.variantId;
+    var shop       = wrapper.dataset.shop;
+    var action     = wrapper.dataset.action;
+    var appUrl     = wrapper.dataset.appUrl;
+    var attr       = getAttribution();
+
+    // Fire-and-forget attribution tracking
+    fetch(appUrl + '/api/buy-now/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({
+        shop: shop,
+        productId: productId,
+        variantId: variantId,
+        url: window.location.href,
+        referrer: document.referrer,
+      }, attr)),
+      keepalive: true,
+    }).catch(function() {}); // never block the navigation
+
+    // Navigate based on action setting
+    if (action === 'cart') {
+      window.location.href = '/cart/' + variantId + ':1';
+    } else if (action === 'product') {
+      // Already on product page — do nothing extra, or scroll to form
+      var form = document.querySelector('form[action="/cart/add"]');
+      if (form) {
+        var btn = form.querySelector('[type="submit"]');
+        if (btn) btn.click();
+      }
+    } else {
+      // Default: straight to checkout
+      window.location.href = '/cart/' + variantId + ':1/checkout';
+    }
+  }
+
+  // Attach listeners to all Buy Now wrappers on the page
+  document.querySelectorAll('.attribix-buy-now-wrapper').forEach(function(wrapper) {
+    var btn = wrapper.querySelector('.attribix-buy-now-btn');
+    if (btn) {
+      btn.addEventListener('click', function() {
+        handleBuyNowClick(wrapper);
+      });
+    }
+  });
+
+  // Re-attach when Shopify re-renders variant selections (for SPAs)
+  if (window.Shopify && window.Shopify.designMode) {
+    document.addEventListener('shopify:section:load', function() {
+      document.querySelectorAll('.attribix-buy-now-wrapper').forEach(function(wrapper) {
+        var btn = wrapper.querySelector('.attribix-buy-now-btn');
+        if (btn) {
+          btn.addEventListener('click', function() { handleBuyNowClick(wrapper); });
+        }
+      });
+    });
+  }
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Attribix Buy Now",
+  "target": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "button_text",
+      "label": "Button text",
+      "default": "Buy Now"
+    },
+    {
+      "type": "color",
+      "id": "button_color",
+      "label": "Button colour",
+      "default": "#008060"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "Text colour",
+      "default": "#ffffff"
+    },
+    {
+      "type": "range",
+      "id": "border_radius",
+      "label": "Border radius (px)",
+      "min": 0,
+      "max": 32,
+      "step": 1,
+      "default": 4
+    },
+    {
+      "type": "select",
+      "id": "button_size",
+      "label": "Button size",
+      "options": [
+        { "value": "small",  "label": "Small" },
+        { "value": "medium", "label": "Medium" },
+        { "value": "large",  "label": "Large" }
+      ],
+      "default": "medium"
+    },
+    {
+      "type": "select",
+      "id": "action",
+      "label": "On click",
+      "options": [
+        { "value": "checkout", "label": "Go straight to checkout" },
+        { "value": "cart",     "label": "Add to cart" },
+        { "value": "product",  "label": "Submit product form" }
+      ],
+      "default": "checkout"
+    },
+    {
+      "type": "text",
+      "id": "app_url",
+      "label": "Attribix app URL (do not change)",
+      "default": "https://attribix-app.fly.dev"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Attribix Buy Now Button"
+    }
+  ]
+}
+{% endschema %}

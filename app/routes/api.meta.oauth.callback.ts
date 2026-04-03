@@ -4,10 +4,33 @@ import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { exchangeMetaCodeForToken } from "~/services/metaGraph.server";
 
+function ensureEmbeddedParams(urlPath: string, shop: string, host?: string, embedded?: string) {
+  try {
+    const u = new URL(urlPath, "https://example.local");
+    if (!u.searchParams.get("shop")) u.searchParams.set("shop", shop);
+    if (host && !u.searchParams.get("host")) u.searchParams.set("host", host);
+    if (embedded && !u.searchParams.get("embedded")) u.searchParams.set("embedded", embedded);
+    return u.pathname + u.search + u.hash;
+  } catch {
+    const fallback = new URL("/app/integrations/meta", "https://example.local");
+    fallback.searchParams.set("shop", shop);
+    if (host) fallback.searchParams.set("host", host);
+    if (embedded) fallback.searchParams.set("embedded", embedded);
+    return fallback.pathname + fallback.search;
+  }
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
-  // Validate Shopify admin request (session/hmac etc)
-  const result = await authenticate.admin(request);
-  if (result instanceof Response) return result;
+  /**
+   * Meta redirects to this URL from outside the Shopify embedded context.
+   * authenticate.admin may fail here; that's OK because we identify the shop from `state`.
+   */
+  try {
+    const result = await authenticate.admin(request);
+    void result;
+  } catch {
+    // ignore
+  }
 
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
@@ -17,7 +40,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     throw new Response("Missing code/state", { status: 400 });
   }
 
-  let decoded: { shop?: string; nonce?: string; returnTo?: string } | null = null;
+  let decoded:
+    | { shop?: string; nonce?: string; returnTo?: string; host?: string; embedded?: string }
+    | null = null;
+
   try {
     decoded = JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
   } catch {
@@ -25,8 +51,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const shop = decoded?.shop;
-  const returnTo = decoded?.returnTo || "/app/integrations/meta";
+  const returnToRaw = decoded?.returnTo || "/app/integrations/meta";
+  const host = decoded?.host || "";
+  const embedded = decoded?.embedded || "1";
+
   if (!shop) throw new Response("Missing shop in state", { status: 400 });
+
+  // ── CSRF nonce validation ─────────────────────────────────────────────────
+  const cookieHeader = request.headers.get("cookie") || "";
+  const nonceCookieMatch = cookieHeader.match(/(?:^|;\s*)meta_oauth_nonce=([^;]+)/);
+  const storedNonce = nonceCookieMatch ? nonceCookieMatch[1] : null;
+  const stateNonce = decoded?.nonce;
+
+  if (!storedNonce || !stateNonce || storedNonce !== stateNonce) {
+    console.warn(`[meta.callback] Nonce mismatch for shop=${shop} — possible CSRF attempt`);
+    throw new Response("OAuth state mismatch. Please try connecting again.", { status: 400 });
+  }
 
   const appBaseUrl = process.env.SHOPIFY_APP_URL;
   if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
@@ -43,14 +83,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? new Date(Date.now() + token.expires_in * 1000)
       : null;
 
-  // Upsert connection for shop
   await db.metaConnection.upsert({
     where: { shop },
     create: {
       shop,
       accessToken: token.access_token,
       expiresAt: expiresAt ?? undefined,
-      // adAccountId can be set later via sync
     },
     update: {
       accessToken: token.access_token,
@@ -58,5 +96,46 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  return redirect(returnTo);
+  // After external OAuth the browser is in a top-level context — NOT inside the Shopify
+  // iframe. We cannot redirect to our own /app/* routes (authenticate.admin bounces to
+  // /auth/login). We also can't reliably construct the embedded app admin URL without the
+  // app handle. Instead, serve a lightweight success page that auto-redirects to the
+  // Shopify Admin. From there, the user navigates into the embedded app normally.
+  const adminRoot = `https://${shop}/admin`;
+
+  return new Response(
+    `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Meta connected – Attribix</title>
+  <meta http-equiv="refresh" content="3;url=${adminRoot}" />
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         background:#f6f6f7;display:flex;align-items:center;justify-content:center;
+         min-height:100vh}
+    .card{background:#fff;border-radius:12px;padding:40px 48px;text-align:center;
+          box-shadow:0 2px 8px rgba(0,0,0,.08);max-width:420px;width:90%}
+    .icon{font-size:48px;margin-bottom:16px}
+    h1{font-size:22px;font-weight:600;color:#1a1a1a;margin-bottom:8px}
+    p{color:#6d7175;font-size:15px;line-height:1.5;margin-bottom:24px}
+    a{display:inline-block;background:#008060;color:#fff;text-decoration:none;
+      padding:12px 28px;border-radius:8px;font-weight:500;font-size:15px}
+    a:hover{background:#006e52}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✅</div>
+    <h1>Meta connected!</h1>
+    <p>Your Meta account has been linked to Attribix.<br>
+       Redirecting you to Shopify in a moment…</p>
+    <a href="${adminRoot}">Return to Shopify Admin</a>
+  </div>
+</body>
+</html>`,
+    { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }
+  );
 }
+  

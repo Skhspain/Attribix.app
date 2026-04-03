@@ -3,10 +3,10 @@
 // User picks a template → clicks "Next" → campaign is created and editor opens.
 
 import { redirect, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { Form, useNavigate } from "@remix-run/react";
+import { useSubmit } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { EMAIL_TEMPLATES, TEMPLATE_CATEGORIES, type EmailTemplate } from "~/data/emailTemplates";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -41,7 +41,7 @@ const SCALE = CARD_W / IFRAME_W; // ~0.333
 const IFRAME_H = Math.round(CARD_H / SCALE); // ~510
 
 export default function NewCampaignGallery() {
-  const formRef = useRef<HTMLFormElement>(null);
+  const remixSubmit = useSubmit();
   const [selectedId, setSelectedId] = useState<string>("blank");
   const [activeCategory, setActiveCategory] = useState("All");
 
@@ -54,11 +54,9 @@ export default function NewCampaignGallery() {
       : EMAIL_TEMPLATES.filter((t) => t.category === activeCategory);
 
   function submit() {
-    if (!formRef.current) return;
-    // Ensure the hidden input has the latest value before submitting
-    const htmlInput = formRef.current.querySelector('input[name="html"]') as HTMLInputElement | null;
-    if (htmlInput) htmlInput.value = selectedTemplate?.html ?? "";
-    formRef.current.submit();
+    const formData = new FormData();
+    formData.append("html", selectedTemplate?.html ?? "");
+    remixSubmit(formData, { method: "post" });
   }
 
   return (
@@ -159,10 +157,6 @@ export default function NewCampaignGallery() {
       </div>
       </div>
 
-      {/* Hidden form that POSTs to the action */}
-      <Form ref={formRef} method="post">
-        <input type="hidden" name="html" value={selectedTemplate?.html ?? ""} />
-      </Form>
     </div>
   );
 }
