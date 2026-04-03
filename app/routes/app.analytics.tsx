@@ -216,8 +216,7 @@ function detectCurrency(purchases: any[]): string {
 // ─── Chart component ──────────────────────────────────────────────────────────
 
 function BarChart({ data, currency = "NOK" }: { data: Array<{ label: string; revenue: number; spend: number }>; currency?: string }) {
-  const maxRev = Math.max(1, ...data.map((d) => d.revenue));
-  const maxSpend = Math.max(1, ...data.map((d) => d.spend));
+  const maxVal = Math.max(1, ...data.flatMap((d) => [d.revenue, d.spend]));
   const showEvery = Math.ceil(data.length / 10);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; revenue: number; spend: number } | null>(null);
 
@@ -356,14 +355,15 @@ function BarChart({ data, currency = "NOK" }: { data: Array<{ label: string; rev
               <div style={{ width: "100%", height: 150, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
                 <div style={{
                   width: "44%", minHeight: row.revenue > 0 ? 3 : 0,
-                  height: `${(row.revenue / maxRev) * 100}%`,
+                  height: `${(row.revenue / maxVal) * 100}%`,
                   borderRadius: "3px 3px 0 0",
                   background: revColor,
                   transition: "height 0.2s ease, background 0.2s ease",
                 }} />
                 <div style={{
-                  width: "44%", minHeight: row.spend > 0 ? 3 : 0,
-                  height: `${(row.spend / maxSpend) * 100}%`,
+                  width: "44%",
+                  minHeight: row.spend > 0 ? 8 : 0,
+                  height: `${Math.max((row.spend / maxVal) * 100, row.spend > 0 ? 5 : 0)}%`,
                   borderRadius: "3px 3px 0 0",
                   background: "linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%)",
                   transition: "height 0.2s ease",
