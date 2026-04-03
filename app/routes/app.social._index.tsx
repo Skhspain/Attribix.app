@@ -2,7 +2,7 @@
 // Post composer — write content, pick platforms, add images, schedule or post now.
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate, useRouteError } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate, useRouteError, Link } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { Card, BlockStack, InlineStack, Text, TextField, Button, Banner, Divider, Badge, Thumbnail } from "@shopify/polaris";
@@ -209,7 +209,8 @@ export default function SocialCompose() {
               </div>
               {connectedPlatformIds.length === 0 && (
                 <Banner tone="warning">
-                  No accounts connected yet. <a href="/app/social/accounts" style={{ color: "#008060" }}>Connect an account →</a>
+                  No accounts connected yet.{" "}
+                  <Link to="/app/social/accounts" style={{ color: "#008060" }}>Connect an account →</Link>
                 </Banner>
               )}
             </BlockStack>
