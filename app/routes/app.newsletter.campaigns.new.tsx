@@ -16,17 +16,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
+  const shop = session.shop;
   const anyDb = db as any;
   const form = await request.formData();
   const html = (form.get("html") as string) || null;
 
+  // Pre-fill sender defaults from newsletter settings
+  const settings = await anyDb.newsletterSettings?.findUnique?.({ where: { shop } }).catch(() => null);
+
   const campaign = await anyDb.newsletterCampaign.create({
     data: {
-      shop: session.shop,
+      shop,
       name: "Untitled campaign",
       subject: "",
       status: "draft",
       htmlContent: html,
+      fromName: settings?.fromName || null,
+      fromEmail: settings?.fromEmail || null,
+      replyTo: settings?.replyTo || null,
     },
   });
 

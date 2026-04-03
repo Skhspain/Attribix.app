@@ -46,6 +46,7 @@ export default function AppRoute() {
         <a href="/app/newsletter">Newsletter</a>
         <a href="/app/buy-now">Buy Now</a>
         <a href="/app/orders">Orders</a>
+        <a href="/app/product-feed">Product feed</a>
         <a href="/app/ads">Integrations</a>
         <a href="/app/settings">Settings</a>
         <a href="/app/billing">Plans & Billing</a>

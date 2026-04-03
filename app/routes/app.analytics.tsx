@@ -754,6 +754,9 @@ export default function AppAnalytics() {
       fullWidth
       title="Analytics"
       subtitle={`${windowDays}-day window · Shop: ${data.shop}`}
+      secondaryActions={[
+        { content: "Navigation flows →", url: "/app/analytics-flows" },
+      ]}
       primaryAction={
         <Select
           label=""

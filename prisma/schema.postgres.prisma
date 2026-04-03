@@ -243,6 +243,21 @@ model GoogleCampaignDailyInsight {
 
 // ─── Newsletter ───────────────────────────────────────────────────────────────
 
+model NewsletterSettings {
+  id          String  @id @default(cuid())
+  shop        String  @unique
+  fromName    String  @default("")
+  fromEmail   String  @default("")
+  replyTo     String  @default("")
+  footerText  String  @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+
 model NewsletterSubscriber {
   id          String   @id @default(cuid())
   shop        String
@@ -358,6 +373,60 @@ model BuyNowClick {
   @@index([visitorId])
   @@index([gclid])
   @@index([fbclid])
+}
+
+// ─── Product Feed ─────────────────────────────────────────────────────────────
+
+model ProductFeedConfig {
+  id           String    @id @default(cuid())
+  shop         String    @unique
+  productCount Int       @default(0)
+  lastSyncedAt DateTime?
+
+  // Sync settings
+  autoSync       Boolean @default(false)
+  webhookId      String?
+
+  // Feed options
+  excludeOutOfStock Boolean @default(false)
+  appendUtm         Boolean @default(true)
+  utmSource         String  @default("attribix_feed")
+  utmMedium         String  @default("cpc")
+
+  // Custom labels (JSON: [{label:"sale",field:"compare_at_price",operator:"exists"},...])
+  customLabelsJson  String? @db.Text
+
+  // Collection filter (JSON array of collection IDs to include, empty = all)
+  includeCollectionsJson String? @db.Text
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([shop])
+}
+
+model ProductFeedItem {
+  id          String   @id @default(cuid())
+  shop        String
+  productId   String
+  title       String
+  handle      String
+  bodyHtml    String?  @db.Text
+  productType String?
+  vendor      String?
+  price       String?
+  currency    String?
+  available   Boolean  @default(true)
+  sku         String?
+  barcode     String?
+  compareAtPrice String?
+  imagesJson  String?  @db.Text
+  variantsJson String? @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, productId], name: "shop_productId")
+  @@index([shop])
 }
 
 // ─── Newsletter Signup Widget ─────────────────────────────────────────────────

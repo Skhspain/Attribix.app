@@ -35,6 +35,7 @@ export default function NewsletterLayout() {
     { id: "campaigns", content: "Campaigns", url: "/app/newsletter/campaigns" },
     { id: "analytics", content: "Analytics", url: "/app/newsletter/analytics" },
     { id: "widget", content: "Signup form", url: "/app/newsletter/widget" },
+    { id: "settings", content: "Settings", url: "/app/newsletter/settings" },
   ];
 
   const selected = location.pathname.includes("/widget")
@@ -45,6 +46,8 @@ export default function NewsletterLayout() {
     ? 1
     : location.pathname.includes("/campaigns")
     ? 2
+    : location.pathname.includes("/settings")
+    ? 5
     : 0;
 
   return (

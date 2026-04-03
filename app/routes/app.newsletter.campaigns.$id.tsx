@@ -32,9 +32,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const shop = session.shop;
   const anyDb = db as any;
 
-  const campaign = await anyDb.newsletterCampaign?.findUnique?.({
-    where: { id: params.id },
-  });
+  const [campaign, newsletterSettings] = await Promise.all([
+    anyDb.newsletterCampaign?.findUnique?.({ where: { id: params.id } }),
+    anyDb.newsletterSettings?.findUnique?.({ where: { shop } }).catch(() => null),
+  ]);
 
   if (!campaign || campaign.shop !== shop) {
     throw new Response("Campaign not found", { status: 404 });
@@ -42,9 +43,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   const recipientPreview = await countSubscribersForSegment(shop, campaign.segmentFilter ?? {});
   const smtpConfigured = !!process.env.SMTP_HOST;
-  const fromEmail = process.env.SMTP_FROM_EMAIL || "";
 
-  return json({ campaign, shop, recipientPreview, smtpConfigured, fromEmail });
+  // Defaults from newsletter settings (fall back to env var for email)
+  const defaultFromName = newsletterSettings?.fromName || "";
+  const defaultFromEmail = newsletterSettings?.fromEmail || process.env.SMTP_FROM_EMAIL || "";
+  const defaultReplyTo = newsletterSettings?.replyTo || "";
+  const defaultFooterText = newsletterSettings?.footerText || "";
+
+  return json({ campaign, shop, recipientPreview, smtpConfigured, defaultFromName, defaultFromEmail, defaultReplyTo, defaultFooterText });
 }
 
 // ─── Action ──────────────────────────────────────────────────────────────────
@@ -92,16 +98,16 @@ declare global {
 }
 
 export default function CampaignEditor() {
-  const { campaign, recipientPreview, smtpConfigured, fromEmail } = useLoaderData<typeof loader>();
+  const { campaign, recipientPreview, smtpConfigured, defaultFromName, defaultFromEmail, defaultReplyTo } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const editorRef = useRef<HTMLDivElement>(null);
 
   const [name, setName] = useState(campaign.name || "");
   const [subject, setSubject] = useState(campaign.subject || "");
   const [previewText, setPreviewText] = useState(campaign.previewText || "");
-  const [fromName, setFromName] = useState(campaign.fromName || "Attribix");
-  const [fromEmailVal, setFromEmailVal] = useState(campaign.fromEmail || fromEmail);
-  const [replyTo, setReplyTo] = useState(campaign.replyTo || "");
+  const [fromName, setFromName] = useState(campaign.fromName || defaultFromName);
+  const [fromEmailVal, setFromEmailVal] = useState(campaign.fromEmail || defaultFromEmail);
+  const [replyTo, setReplyTo] = useState(campaign.replyTo || defaultReplyTo);
 
   // editMode: "preview" (shows iframe of HTML) or "unlayer" (drag-and-drop)
   const hasDesignJson = !!campaign.designJson;
