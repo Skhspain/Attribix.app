@@ -56,10 +56,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     (sum: number, c: { recipientCount: number }) => sum + (c.recipientCount ?? 0),
     0
   );
-  const monthlyEmailLimit: number = settings?.monthlyEmailLimit ?? 500;
+  const monthlyEmailLimit: number = settings?.monthlyEmailLimit ?? 2500;
 
   return json({
-    settings: settings ?? { fromName: "", fromEmail: "", replyTo: "", footerText: "", monthlyEmailLimit: 500 },
+    settings: settings ?? { fromName: "", fromEmail: "", replyTo: "", footerText: "", monthlyEmailLimit: 2500 },
     domainStatus,
     smtpConfigured: !!process.env.SMTP_HOST,
     emailsSentThisMonth,

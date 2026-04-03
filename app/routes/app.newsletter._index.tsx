@@ -75,6 +75,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .catch(() => []) ?? [],
   ]);
 
+  // Monthly send usage
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const settings = await anyDb.newsletterSettings?.findUnique?.({ where: { shop } }).catch(() => null);
+  const monthlyEmailLimit: number = settings?.monthlyEmailLimit ?? 2500;
+  const monthlyCampaigns = await anyDb.newsletterCampaign?.findMany?.({
+    where: { shop, status: "sent", sentAt: { gte: monthStart, lt: monthEnd } },
+    select: { recipientCount: true },
+  }).catch(() => []) ?? [];
+  const emailsSentThisMonth: number = monthlyCampaigns.reduce(
+    (sum: number, c: { recipientCount: number }) => sum + (c.recipientCount ?? 0), 0
+  );
+
   // Source breakdown
   const sources = await db.newsletterSubscriber.groupBy({
     by: ["source"],
@@ -138,6 +151,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     sources,
     dailyGrowth,
     totalCampaignsSent,
+    emailsSentThisMonth,
+    monthlyEmailLimit,
   });
 }
 
@@ -162,7 +177,12 @@ export default function NewsletterOverview() {
     sources,
     dailyGrowth,
     totalCampaignsSent,
+    emailsSentThisMonth,
+    monthlyEmailLimit,
   } = useLoaderData<typeof loader>();
+
+  const usagePct = Math.min(100, Math.round((emailsSentThisMonth / monthlyEmailLimit) * 100));
+  const usageColor = emailsSentThisMonth >= monthlyEmailLimit ? "#dc2626" : emailsSentThisMonth >= monthlyEmailLimit * 0.8 ? "#f59e0b" : "#10b981";
 
   const totalSourceCount = sources.reduce((sum: number, s: any) => sum + s._count.source, 0);
   const maxDailyCount = Math.max(...dailyGrowth.map((d) => d.count), 1);
@@ -261,6 +281,46 @@ export default function NewsletterOverview() {
           </Card>
         </Grid.Cell>
       </Grid>
+
+      {/* Monthly send usage counter */}
+      <Card>
+        <BlockStack gap="300">
+          <InlineStack align="space-between" blockAlign="center">
+            <BlockStack gap="050">
+              <Text as="h2" variant="headingSm">Emails sent this month</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Resets on the 1st of each month</Text>
+            </BlockStack>
+            <div style={{ textAlign: "right" }}>
+              <Text as="p" variant="headingLg" fontWeight="bold">
+                <span style={{ color: usageColor }}>{emailsSentThisMonth.toLocaleString()}</span>
+                <span style={{ color: "#9ca3af", fontWeight: 400, fontSize: 14 }}> / {monthlyEmailLimit.toLocaleString()}</span>
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {(monthlyEmailLimit - emailsSentThisMonth).toLocaleString()} remaining
+              </Text>
+            </div>
+          </InlineStack>
+          <div style={{ background: "#f3f4f6", borderRadius: 99, height: 10, overflow: "hidden" }}>
+            <div style={{
+              height: "100%",
+              width: `${usagePct}%`,
+              background: usageColor,
+              borderRadius: 99,
+              transition: "width 0.4s ease",
+            }} />
+          </div>
+          {emailsSentThisMonth >= monthlyEmailLimit && (
+            <Text as="p" variant="bodySm" tone="critical">
+              Monthly limit reached. Campaigns will be blocked until next month or your plan is upgraded.
+            </Text>
+          )}
+          {emailsSentThisMonth >= monthlyEmailLimit * 0.8 && emailsSentThisMonth < monthlyEmailLimit && (
+            <Text as="p" variant="bodySm" tone="caution">
+              You're using {usagePct}% of your monthly send limit.
+            </Text>
+          )}
+        </BlockStack>
+      </Card>
 
       {/* Section B — Mini sparkline card */}
       <Card>

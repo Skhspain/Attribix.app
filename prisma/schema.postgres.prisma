@@ -227,7 +227,7 @@ model NewsletterSettings {
   fromEmail         String  @default("")
   replyTo           String  @default("")
   footerText        String  @default("")
-  monthlyEmailLimit Int     @default(500)
+  monthlyEmailLimit Int     @default(2500)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

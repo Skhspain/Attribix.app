@@ -186,7 +186,7 @@ export async function sendCampaign(campaignId: string): Promise<{
     const settings = await anyDb.newsletterSettings?.findUnique?.({
       where: { shop: campaign.shop },
     }).catch(() => null);
-    const limit: number = settings?.monthlyEmailLimit ?? 500;
+    const limit: number = settings?.monthlyEmailLimit ?? 2500;
 
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
