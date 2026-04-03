@@ -215,46 +215,123 @@ function detectCurrency(purchases: any[]): string {
 
 // ─── Chart component ──────────────────────────────────────────────────────────
 
-function BarChart({ data }: { data: Array<{ label: string; revenue: number; spend: number }> }) {
+function BarChart({ data, currency = "NOK" }: { data: Array<{ label: string; revenue: number; spend: number }>; currency?: string }) {
   const maxVal = Math.max(1, ...data.flatMap((d) => [d.revenue, d.spend]));
   const showEvery = Math.ceil(data.length / 10);
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; revenue: number; spend: number } | null>(null);
 
+  // Trend: compare first half vs second half
+  const half = Math.floor(data.length / 2);
+  const firstHalfRev = data.slice(0, half).reduce((s, d) => s + d.revenue, 0);
+  const secondHalfRev = data.slice(half).reduce((s, d) => s + d.revenue, 0);
+  let insightText = "";
+  if (firstHalfRev > 0 && secondHalfRev > 0) {
+    const pct = Math.round(((secondHalfRev - firstHalfRev) / firstHalfRev) * 100);
+    if (Math.abs(pct) >= 5) {
+      insightText = pct > 0
+        ? `↑ Revenue up ${pct}% in the second half of this period`
+        : `↓ Revenue down ${Math.abs(pct)}% in the second half of this period`;
+    } else {
+      insightText = "→ Revenue stable across this period";
+    }
+  }
+
+  // KPI summary
+  const totalRev = data.reduce((s, d) => s + d.revenue, 0);
+  const totalSpend = data.reduce((s, d) => s + d.spend, 0);
+  const roas = totalSpend > 0 ? totalRev / totalSpend : null;
+
+  function fmt(n: number) {
+    try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(n); }
+    catch { return `${currency} ${Math.round(n)}`; }
+  }
+
   return (
     <div style={{ width: "100%", overflowX: "auto", position: "relative" }}>
+      {/* Compact KPI row */}
+      <div style={{ display: "flex", gap: 24, marginBottom: 16, flexWrap: "wrap" }}>
+        <div>
+          <span style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Revenue</span>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#4f46e5", lineHeight: 1.2 }}>{fmt(totalRev)}</div>
+        </div>
+        <div style={{ width: 1, background: "#e5e7eb", margin: "2px 0" }} />
+        <div>
+          <span style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Spend</span>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#0ea5e9", lineHeight: 1.2 }}>{fmt(totalSpend)}</div>
+        </div>
+        <div style={{ width: 1, background: "#e5e7eb", margin: "2px 0" }} />
+        <div>
+          <span style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>ROAS</span>
+          <div style={{
+            fontSize: 20, fontWeight: 700, lineHeight: 1.2,
+            color: roas === null ? "#9ca3af" : roas >= 2 ? "#16a34a" : roas >= 1 ? "#d97706" : "#dc2626",
+          }}>
+            {roas !== null ? roas.toFixed(2) + "×" : "—"}
+          </div>
+        </div>
+        {insightText && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: insightText.startsWith("↑") ? "#16a34a" : insightText.startsWith("↓") ? "#dc2626" : "#6b7280", fontStyle: "italic" }}>
+              {insightText}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Tooltip */}
       {tooltip && (
         <div style={{
           position: "fixed",
-          left: tooltip.x + 12,
-          top: tooltip.y - 10,
-          background: "#1f2937",
+          left: tooltip.x + 14,
+          top: tooltip.y - 16,
+          background: "#111827",
           color: "#fff",
           borderRadius: 8,
-          padding: "8px 12px",
+          padding: "10px 14px",
           fontSize: 12,
           pointerEvents: "none",
           zIndex: 9999,
           whiteSpace: "nowrap",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+          minWidth: 160,
         }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.label}</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />
-            Revenue: {tooltip.revenue > 0 ? tooltip.revenue.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "0"}
+          <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 13 }}>{tooltip.label}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center" }}>
+            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />
+              Revenue
+            </span>
+            <span style={{ fontWeight: 600 }}>{fmt(tooltip.revenue)}</span>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#38bdf8", display: "inline-block" }} />
-            Spend: {tooltip.spend > 0 ? tooltip.spend.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "0"}
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginTop: 4 }}>
+            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#0ea5e9", display: "inline-block" }} />
+              Spend
+            </span>
+            <span style={{ fontWeight: 600 }}>{fmt(tooltip.spend)}</span>
           </div>
+          {tooltip.spend > 0 && (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.12)", display: "flex", justifyContent: "space-between", gap: 16 }}>
+              <span style={{ color: "#9ca3af" }}>ROAS</span>
+              <span style={{
+                fontWeight: 700,
+                color: (tooltip.revenue / tooltip.spend) >= 2 ? "#4ade80" : (tooltip.revenue / tooltip.spend) >= 1 ? "#fbbf24" : "#f87171",
+              }}>
+                {(tooltip.revenue / tooltip.spend).toFixed(2)}×
+              </span>
+            </div>
+          )}
         </div>
       )}
+
+      {/* Bars */}
       <div
         style={{
           display: "grid",
           gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
           gap: 3,
           alignItems: "end",
-          minHeight: 200,
+          minHeight: 180,
           minWidth: data.length * 24,
         }}
       >
@@ -265,7 +342,7 @@ function BarChart({ data }: { data: Array<{ label: string; revenue: number; spen
             onMouseLeave={() => setTooltip(null)}
             style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end", cursor: "default" }}
           >
-            <div style={{ width: "100%", height: 160, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
+            <div style={{ width: "100%", height: 150, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
               <div style={{
                 width: "44%", minHeight: 2,
                 height: `${(row.revenue / maxVal) * 100}%`,
@@ -277,7 +354,7 @@ function BarChart({ data }: { data: Array<{ label: string; revenue: number; spen
                 width: "44%", minHeight: 2,
                 height: `${(row.spend / maxVal) * 100}%`,
                 borderRadius: "3px 3px 0 0",
-                background: "linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%)",
+                background: "linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%)",
                 transition: "height 0.2s ease",
               }} />
             </div>
@@ -691,21 +768,26 @@ export default function AppAnalytics() {
 
         {/* ── Revenue & Spend chart ── */}
         <Card>
-          <BlockStack gap="300">
+          <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Revenue vs spend — last {window} days</Text>
+              <BlockStack gap="050">
+                <Text as="h2" variant="headingMd">
+                  Revenue vs Spend{blendedRoas ? ` — ROAS: ${blendedRoas.toFixed(2)}×` : ""} — last {window} days
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">Attributed revenue from your store vs total ad spend</Text>
+              </BlockStack>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />
                   <Text as="span" variant="bodySm" tone="subdued">Revenue</Text>
                 </InlineStack>
                 <InlineStack gap="100" blockAlign="center">
-                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#38bdf8" }} />
+                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#0ea5e9" }} />
                   <Text as="span" variant="bodySm" tone="subdued">Spend</Text>
                 </InlineStack>
               </InlineStack>
             </InlineStack>
-            <BarChart data={chartData} />
+            <BarChart data={chartData} currency={currency} />
           </BlockStack>
         </Card>
 
