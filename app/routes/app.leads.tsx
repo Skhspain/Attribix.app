@@ -22,8 +22,10 @@ import {
   Banner,
   EmptyState,
   Box,
+  DropZone,
+  Link,
 } from "@shopify/polaris";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -235,6 +237,75 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: true });
   }
 
+  if (intent === "import_leads") {
+    const { rows } = body as {
+      rows: Array<{
+        email: string;
+        firstName?: string;
+        lastName?: string;
+        phone?: string;
+        company?: string;
+        notes?: string;
+        tags?: string;
+        utmSource?: string;
+        utmMedium?: string;
+        utmCampaign?: string;
+      }>;
+    };
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return json({ ok: false, error: "No rows to import" }, { status: 400 });
+    }
+
+    let imported = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const row of rows.slice(0, 5000)) {
+      const email = row.email?.trim()?.toLowerCase();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        skipped++;
+        continue;
+      }
+      try {
+        await anyDb.lead?.upsert?.({
+          where: { shop_email: { shop, email } },
+          create: {
+            shop, email,
+            firstName: row.firstName?.trim() || null,
+            lastName: row.lastName?.trim() || null,
+            phone: row.phone?.trim() || null,
+            company: row.company?.trim() || null,
+            notes: row.notes?.trim() || null,
+            tags: row.tags?.trim() || null,
+            utmSource: row.utmSource?.trim() || null,
+            utmMedium: row.utmMedium?.trim() || null,
+            utmCampaign: row.utmCampaign?.trim() || null,
+            source: "import",
+            status: "new",
+          },
+          update: {
+            firstName: row.firstName?.trim() || undefined,
+            lastName: row.lastName?.trim() || undefined,
+            phone: row.phone?.trim() || undefined,
+            company: row.company?.trim() || undefined,
+            notes: row.notes?.trim() || undefined,
+            tags: row.tags?.trim() || undefined,
+            utmSource: row.utmSource?.trim() || undefined,
+            utmMedium: row.utmMedium?.trim() || undefined,
+            utmCampaign: row.utmCampaign?.trim() || undefined,
+          },
+        });
+        imported++;
+      } catch (e: any) {
+        errors.push(email);
+        skipped++;
+      }
+    }
+
+    return json({ ok: true, imported, skipped, errors: errors.slice(0, 10) });
+  }
+
   return json({ ok: false, error: "Unknown intent" }, { status: 400 });
 }
 
@@ -428,12 +499,216 @@ function AddLeadModal({
   );
 }
 
+// ─── CSV helpers ──────────────────────────────────────────────────────────────
+
+function parseCSV(text: string): Array<Record<string, string>> {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(",").map((h) => h.trim().replace(/^"|"$/g, "").trim());
+  return lines.slice(1).map((line) => {
+    // Simple CSV parse: handles quoted fields
+    const vals: string[] = [];
+    let cur = "";
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQuote = !inQuote; continue; }
+      if (ch === "," && !inQuote) { vals.push(cur.trim()); cur = ""; continue; }
+      cur += ch;
+    }
+    vals.push(cur.trim());
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] ?? ""; });
+    return obj;
+  }).filter((r) => r.email || r.Email || r.EMAIL);
+}
+
+// Maps flexible header names to our field names
+function normaliseRow(raw: Record<string, string>) {
+  const get = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = raw[k] ?? raw[k.toLowerCase()] ?? raw[k.toUpperCase()];
+      if (v) return v;
+    }
+    return undefined;
+  };
+  return {
+    email: get("email", "Email", "EMAIL", "e-mail") ?? "",
+    firstName: get("firstName", "first_name", "First Name", "firstname"),
+    lastName: get("lastName", "last_name", "Last Name", "lastname"),
+    phone: get("phone", "Phone", "mobile", "Mobile"),
+    company: get("company", "Company", "organisation", "organization"),
+    notes: get("notes", "Notes"),
+    tags: get("tags", "Tags"),
+    utmSource: get("utmSource", "utm_source"),
+    utmMedium: get("utmMedium", "utm_medium"),
+    utmCampaign: get("utmCampaign", "utm_campaign"),
+  };
+}
+
+const CSV_TEMPLATE = `email,firstName,lastName,phone,company,notes,tags,utmSource,utmMedium,utmCampaign
+john@example.com,John,Smith,+1 555 0100,Acme Corp,Met at conference,vip,google,cpc,spring_sale
+jane@example.com,Jane,Doe,,,,`;
+
+function downloadTemplate() {
+  const blob = new Blob([CSV_TEMPLATE], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "leads_import_template.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Import Modal ─────────────────────────────────────────────────────────────
+
+function ImportLeadsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const fetcher = useFetcher<{ ok: boolean; imported?: number; skipped?: number; errors?: string[]; error?: string }>();
+  const [rows, setRows] = useState<ReturnType<typeof normaliseRow>[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [parseError, setParseError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const isImporting = fetcher.state !== "idle";
+  const result = fetcher.data;
+
+  const handleFile = useCallback((file: File) => {
+    setParseError("");
+    setRows([]);
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const parsed = parseCSV(text).map(normaliseRow).filter((r) => r.email);
+        if (parsed.length === 0) {
+          setParseError("No valid email addresses found. Make sure your CSV has an 'email' column.");
+          return;
+        }
+        setRows(parsed);
+      } catch {
+        setParseError("Failed to parse CSV. Please check the file format.");
+      }
+    };
+    reader.readAsText(file);
+  }, []);
+
+  const handleDrop = useCallback((_: File[], accepted: File[]) => {
+    if (accepted[0]) handleFile(accepted[0]);
+  }, [handleFile]);
+
+  const handleImport = useCallback(() => {
+    fetcher.submit(
+      { _intent: "import_leads", rows } as any,
+      { method: "post", encType: "application/json" }
+    );
+  }, [fetcher, rows]);
+
+  const handleClose = useCallback(() => {
+    setRows([]);
+    setFileName("");
+    setParseError("");
+    onClose();
+  }, [onClose]);
+
+  const done = result?.ok && fetcher.state === "idle" && rows.length > 0;
+
+  return (
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title="Import leads from CSV"
+      primaryAction={rows.length > 0 && !done ? {
+        content: isImporting ? `Importing ${rows.length} leads…` : `Import ${rows.length} lead${rows.length !== 1 ? "s" : ""}`,
+        onAction: handleImport,
+        loading: isImporting,
+        disabled: isImporting,
+      } : undefined}
+      secondaryActions={[{ content: done ? "Close" : "Cancel", onAction: handleClose }]}
+    >
+      <Modal.Section>
+        <BlockStack gap="400">
+          {/* Template download */}
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="p" variant="bodySm" tone="subdued">
+              CSV must have an <code>email</code> column. Optional: firstName, lastName, phone, company, notes, tags, utmSource, utmMedium, utmCampaign
+            </Text>
+            <Button variant="plain" onClick={downloadTemplate}>Download template</Button>
+          </InlineStack>
+
+          {/* Success result */}
+          {done && (
+            <Banner tone="success">
+              ✅ Imported <strong>{result?.imported}</strong> lead{result?.imported !== 1 ? "s" : ""}
+              {(result?.skipped ?? 0) > 0 && ` · ${result?.skipped} skipped (invalid email or duplicate)`}
+            </Banner>
+          )}
+
+          {/* Error */}
+          {result?.error && <Banner tone="critical">{result.error}</Banner>}
+          {parseError && <Banner tone="critical">{parseError}</Banner>}
+
+          {/* Drop zone */}
+          {!done && (
+            <DropZone
+              accept=".csv,text/csv"
+              type="file"
+              allowMultiple={false}
+              onDrop={handleDrop}
+              label="Drop CSV file here or click to browse"
+            >
+              {fileName ? (
+                <Box padding="400">
+                  <Text as="p" variant="bodyMd">📄 {fileName} — <strong>{rows.length}</strong> valid lead{rows.length !== 1 ? "s" : ""} found</Text>
+                </Box>
+              ) : (
+                <DropZone.FileUpload actionTitle="Choose CSV file" actionHint="or drag and drop" />
+              )}
+            </DropZone>
+          )}
+
+          {/* Preview table */}
+          {rows.length > 0 && !done && (
+            <BlockStack gap="200">
+              <Text as="p" variant="bodySm" tone="subdued">Preview (first 5 rows):</Text>
+              <div style={{ overflowX: "auto", fontSize: 12, borderRadius: 6, border: "1px solid #e5e7eb" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f9fafb" }}>
+                      {["Email", "First", "Last", "Company", "Phone"].map((h) => (
+                        <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontWeight: 600, borderBottom: "1px solid #e5e7eb" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.slice(0, 5).map((r, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                        <td style={{ padding: "5px 10px" }}>{r.email}</td>
+                        <td style={{ padding: "5px 10px" }}>{r.firstName ?? "—"}</td>
+                        <td style={{ padding: "5px 10px" }}>{r.lastName ?? "—"}</td>
+                        <td style={{ padding: "5px 10px" }}>{r.company ?? "—"}</td>
+                        <td style={{ padding: "5px 10px" }}>{r.phone ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {rows.length > 5 && (
+                <Text as="p" variant="bodySm" tone="subdued">…and {rows.length - 5} more rows</Text>
+              )}
+            </BlockStack>
+          )}
+        </BlockStack>
+      </Modal.Section>
+    </Modal>
+  );
+}
+
 // ─── Page Component ───────────────────────────────────────────────────────────
 
 export default function LeadsPage() {
   const { leads, stats, statusFilter, sourceFilter } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   const handleStatusFilter = useCallback(
     (val: string) => {
@@ -517,6 +792,10 @@ export default function LeadsPage() {
         content: "Add lead",
         onAction: () => setAddModalOpen(true),
       }}
+      secondaryActions={[{
+        content: "Import CSV",
+        onAction: () => setImportModalOpen(true),
+      }]}
     >
       <BlockStack gap="500">
         {/* Stats row */}
@@ -578,6 +857,7 @@ export default function LeadsPage() {
       </BlockStack>
 
       <AddLeadModal open={addModalOpen} onClose={() => setAddModalOpen(false)} />
+      <ImportLeadsModal open={importModalOpen} onClose={() => setImportModalOpen(false)} />
     </Page>
   );
 }
