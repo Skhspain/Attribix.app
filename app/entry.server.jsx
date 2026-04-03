@@ -7,9 +7,11 @@ import { renderToPipeableStream } from "react-dom/server";
 
 import * as shopifyServer from "./shopify.server";
 import { startMetaSyncCron } from "./services/metaSync.server";
+import { startGoogleSyncCron } from "./services/googleSync.server";
 
-// Start background sync cron once on server boot
+// Start background sync crons once on server boot
 startMetaSyncCron();
+startGoogleSyncCron();
 
 const ABORT_DELAY = 5000;
 

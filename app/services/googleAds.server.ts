@@ -245,3 +245,120 @@ export async function syncGoogleSpendDaily(args: {
 
 // Backwards compatible alias (some routes still import syncGoogleSpend)
 export const syncGoogleSpend = syncGoogleSpendDaily;
+
+/**
+ * Syncs per-campaign daily insights (spend + conversions) for the last N days.
+ * Upserts into GoogleCampaignDailyInsight table.
+ */
+export async function syncGoogleCampaignInsights(args: {
+  shop: string;
+  accessToken: string;
+  customerId: string;
+  days?: number;
+  developerToken?: string;
+  loginCustomerId?: string;
+}) {
+  const developerToken = args.developerToken ?? process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+  const loginCustomerId = args.loginCustomerId ?? process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+  const days = Math.min(args.days ?? 30, 90);
+  const customerId = args.customerId.replace(/-/g, "");
+
+  if (!developerToken) throw new Error("Missing GOOGLE_ADS_DEVELOPER_TOKEN");
+
+  const today = new Date();
+  const since = new Date(today);
+  since.setDate(today.getDate() - (days - 1));
+
+  function fmt(d: Date) {
+    return d.toISOString().slice(0, 10);
+  }
+
+  const query = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.conversions_value,
+      segments.date
+    FROM campaign
+    WHERE segments.date BETWEEN '${fmt(since)}' AND '${fmt(today)}'
+      AND campaign.status != 'REMOVED'
+    ORDER BY segments.date DESC
+  `;
+
+  const streamResults = await googleAdsSearchStream({
+    accessToken: args.accessToken,
+    customerId,
+    query,
+    developerToken,
+    loginCustomerId,
+  });
+
+  const rows: Array<{
+    campaign: { id: string; name: string };
+    metrics: { costMicros: string; impressions: string; clicks: string; conversions: string; conversionsValue: string };
+    segments: { date: string };
+  }> = streamResults.flatMap((chunk: any) => chunk?.results ?? []);
+
+  if (!rows.length) {
+    return { ok: true, shop: args.shop, upserted: 0, total: 0 };
+  }
+
+  const { db } = await import("~/db.server");
+  const anyDb = db as any;
+  let upserted = 0;
+
+  for (const row of rows) {
+    const campaignId = String(row.campaign?.id ?? "unknown");
+    const campaignName = row.campaign?.name ?? null;
+    const spend = Number(row.metrics?.costMicros ?? 0) / 1_000_000;
+    const impressions = Number(row.metrics?.impressions ?? 0);
+    const clicks = Number(row.metrics?.clicks ?? 0);
+    const conversions = Number(row.metrics?.conversions ?? 0);
+    const conversionValue = Number(row.metrics?.conversionsValue ?? 0);
+    const dateStr = row.segments?.date;
+
+    if (!dateStr) continue;
+
+    const date = new Date(dateStr + "T00:00:00Z");
+
+    try {
+      await anyDb.googleCampaignDailyInsight.upsert({
+        where: {
+          google_shop_date_campaignId: {
+            shop: args.shop,
+            date,
+            campaignId,
+          },
+        },
+        create: {
+          shop: args.shop,
+          date,
+          campaignId,
+          campaignName,
+          spend,
+          impressions,
+          clicks,
+          conversions,
+          conversionValue,
+        },
+        update: {
+          campaignName,
+          spend,
+          impressions,
+          clicks,
+          conversions,
+          conversionValue,
+        },
+      });
+      upserted++;
+    } catch (upsertErr: any) {
+      // Skip individual row errors (e.g. unique constraint race conditions)
+    }
+  }
+
+  return { ok: true, shop: args.shop, upserted, total: rows.length };
+}

@@ -93,6 +93,8 @@ model Purchase {
   fbc         String?
   referrer    String?
   landingPage String?
+  country     String?
+  city        String?
 
   @@index([createdAt])
   @@index([shop])
@@ -216,4 +218,121 @@ model GoogleConnection {
   adCustomerId String?
 
   @@index([shop])
+}
+// ─── Newsletter ───────────────────────────────────────────────────────────────
+
+model NewsletterSettings {
+  id                String  @id @default(cuid())
+  shop              String  @unique
+  fromName          String  @default("")
+  fromEmail         String  @default("")
+  replyTo           String  @default("")
+  footerText        String  @default("")
+  monthlyEmailLimit Int     @default(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model NewsletterSubscriber {
+  id          String   @id @default(cuid())
+  shop        String
+  email       String
+  firstName   String?
+  lastName    String?
+  status      String   @default("subscribed") // subscribed | unsubscribed
+  source      String?  // "post_purchase" | "popup" | "manual" | "import"
+
+  // Attribution at time of subscribe
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  gclid       String?
+  fbclid      String?
+
+  unsubscribedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([shop, email])
+  @@index([shop, status])
+  @@index([shop, createdAt])
+  @@index([email])
+}
+
+model NewsletterCampaign {
+  id          String   @id @default(cuid())
+  shop        String
+  name        String
+  subject     String
+  previewText String?
+  fromName    String?
+  fromEmail   String?
+  replyTo     String?
+
+  // Unlayer design JSON + rendered HTML
+  designJson  Json?
+  htmlContent String?
+
+  status      String   @default("draft") // draft | scheduled | sending | sent | failed
+
+  // Targeting / segmentation
+  segmentFilter Json?  // { utmSource: "google", ... } etc.
+
+  scheduledAt    DateTime?
+  sentAt         DateTime?
+  recipientCount Int      @default(0)
+
+  // Sending stats (populated after send)
+  deliveredCount Int    @default(0)
+  openCount      Int    @default(0)
+  clickCount     Int    @default(0)
+  bounceCount    Int    @default(0)
+  unsubCount     Int    @default(0)
+
+  // Revenue attribution
+  revenueAttributed Float @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop, status])
+  @@index([shop, createdAt])
+  @@index([sentAt])
+}
+
+// ─── Lead Center ──────────────────────────────────────────────────────────────
+
+model Lead {
+  id        String   @id @default(cuid())
+  shop      String
+  email     String
+  firstName String?
+  lastName  String?
+  phone     String?
+  company   String?
+  source    String?  // "newsletter_signup" | "contact_form" | "manual" | "import" | "meta_ad" | "google_ad"
+  status    String   @default("new") // new | contacted | qualified | converted | lost
+  notes     String?
+  tags      String?  // comma-separated tags
+
+  // Attribution
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  fbclid      String?
+  gclid       String?
+  referrer    String?
+
+  convertedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, email])
+  @@index([shop, status])
+  @@index([shop, source])
+  @@index([shop, createdAt])
+  @@index([email])
 }

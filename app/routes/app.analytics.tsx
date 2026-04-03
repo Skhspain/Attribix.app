@@ -1,6 +1,6 @@
 // app/routes/app.analytics.tsx
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import {
   Badge,
@@ -60,6 +60,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
           ttclid: true,
           msclkid: true,
           createdAt: true,
+          country: true,
+          city: true,
         },
       })
       .catch(() => []),
@@ -118,6 +120,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .catch(() => []),
   ]);
 
+  const metaConn = await db.metaConnection
+    .findUnique({ where: { shop }, select: { lastSyncedAt: true, adAccountId: true } })
+    .catch(() => null);
+
   return json({
     shop,
     purchases30d: purchases30d ?? [],
@@ -126,6 +132,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     trackedEvents30d: trackedEvents30d ?? [],
     metaCampaigns30d: metaCampaigns30d ?? [],
     metaAds30d: (metaAds as any) ?? [],
+    metaLastSyncedAt: metaConn?.lastSyncedAt ?? null,
+    metaConnected: !!(metaConn?.adAccountId),
   });
 }
 
@@ -210,9 +218,36 @@ function detectCurrency(purchases: any[]): string {
 function BarChart({ data }: { data: Array<{ label: string; revenue: number; spend: number }> }) {
   const maxVal = Math.max(1, ...data.flatMap((d) => [d.revenue, d.spend]));
   const showEvery = Math.ceil(data.length / 10);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; revenue: number; spend: number } | null>(null);
 
   return (
-    <div style={{ width: "100%", overflowX: "auto" }}>
+    <div style={{ width: "100%", overflowX: "auto", position: "relative" }}>
+      {tooltip && (
+        <div style={{
+          position: "fixed",
+          left: tooltip.x + 12,
+          top: tooltip.y - 10,
+          background: "#1f2937",
+          color: "#fff",
+          borderRadius: 8,
+          padding: "8px 12px",
+          fontSize: 12,
+          pointerEvents: "none",
+          zIndex: 9999,
+          whiteSpace: "nowrap",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.label}</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />
+            Revenue: {tooltip.revenue > 0 ? tooltip.revenue.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "0"}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#38bdf8", display: "inline-block" }} />
+            Spend: {tooltip.spend > 0 ? tooltip.spend.toLocaleString("en-US", { maximumFractionDigits: 0 }) : "0"}
+          </div>
+        </div>
+      )}
       <div
         style={{
           display: "grid",
@@ -226,12 +261,25 @@ function BarChart({ data }: { data: Array<{ label: string; revenue: number; spen
         {data.map((row, i) => (
           <div
             key={row.label}
-            title={`${row.label}  Revenue: ${row.revenue}  Spend: ${row.spend}`}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end" }}
+            onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, ...row })}
+            onMouseLeave={() => setTooltip(null)}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end", cursor: "default" }}
           >
             <div style={{ width: "100%", height: 160, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
-              <div style={{ width: "44%", minHeight: 2, height: `${(row.revenue / maxVal) * 100}%`, borderRadius: 3, background: "#111827" }} />
-              <div style={{ width: "44%", minHeight: 2, height: `${(row.spend / maxVal) * 100}%`, borderRadius: 3, background: "#9ca3af" }} />
+              <div style={{
+                width: "44%", minHeight: 2,
+                height: `${(row.revenue / maxVal) * 100}%`,
+                borderRadius: "3px 3px 0 0",
+                background: "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)",
+                transition: "height 0.2s ease",
+              }} />
+              <div style={{
+                width: "44%", minHeight: 2,
+                height: `${(row.spend / maxVal) * 100}%`,
+                borderRadius: "3px 3px 0 0",
+                background: "linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%)",
+                transition: "height 0.2s ease",
+              }} />
             </div>
             <div style={{ marginTop: 6, fontSize: 10, color: "#9ca3af", textAlign: "center", whiteSpace: "nowrap" }}>
               {i % showEvery === 0 ? row.label : ""}
@@ -262,6 +310,7 @@ function KPI({ label, value, sub, highlight }: { label: string; value: string; s
 export default function AppAnalytics() {
   const data = useLoaderData<typeof loader>();
   const [window, setWindow] = useState<"7" | "14" | "30">("30");
+  const locationBackfill = useFetcher<{ ok: boolean; updated: number; total: number; message?: string }>();
 
   const currency = useMemo(() => detectCurrency(data.purchases30d), [data.purchases30d]);
 
@@ -400,7 +449,28 @@ export default function AppAnalytics() {
     return rows.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0];
   }, [(data as any).metaAds30d, windowCutoff]);
 
-  // ── Attribution by source ──
+  // ── Source breakdown cards ──
+  const sourceBreakdown = useMemo(() => {
+    const map = new Map<string, { orders: number; revenue: number }>();
+    for (const p of purchases) {
+      const src = normalizeSource(p);
+      const cur = map.get(src) || { orders: 0, revenue: 0 };
+      cur.orders++;
+      cur.revenue += safeNum((p as any).totalValue);
+      map.set(src, cur);
+    }
+    const totalRev = Array.from(map.values()).reduce((s, r) => s + r.revenue, 0);
+    return Array.from(map.entries())
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .map(([src, r]) => ({
+        source: src,
+        orders: r.orders,
+        revenue: r.revenue,
+        share: totalRev > 0 ? Math.round((r.revenue / totalRev) * 100) : 0,
+      }));
+  }, [purchases, currency]);
+
+  // ── Attribution by source (table fallback) ──
   const sourceRows = useMemo(() => {
     const map = new Map<string, { orders: number; revenue: number }>();
     for (const p of purchases) {
@@ -511,6 +581,52 @@ export default function AppAnalytics() {
       ]);
   }, [purchases, currency]);
 
+  // ── Customers by country ──
+  const countryRows = useMemo(() => {
+    const map = new Map<string, { orders: number; revenue: number }>();
+    for (const p of purchases) {
+      const c = String((p as any).country || "").trim() || "Unknown";
+      const cur = map.get(c) || { orders: 0, revenue: 0 };
+      cur.orders++;
+      cur.revenue += safeNum((p as any).totalValue);
+      map.set(c, cur);
+    }
+    const total = Array.from(map.values()).reduce((s, r) => s + r.revenue, 0);
+    return Array.from(map.entries())
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .slice(0, 10)
+      .map(([country, r]) => [
+        country,
+        String(r.orders),
+        fmtDecimal(r.revenue, currency),
+        total > 0 ? `${((r.revenue / total) * 100).toFixed(1)}%` : "—",
+      ]);
+  }, [purchases, currency]);
+
+  // ── Customers by city ──
+  const cityRows = useMemo(() => {
+    const map = new Map<string, { orders: number; revenue: number; country: string }>();
+    for (const p of purchases) {
+      const city = String((p as any).city || "").trim();
+      const country = String((p as any).country || "").trim();
+      if (!city) continue;
+      const key = city;
+      const cur = map.get(key) || { orders: 0, revenue: 0, country };
+      cur.orders++;
+      cur.revenue += safeNum((p as any).totalValue);
+      map.set(key, cur);
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .slice(0, 10)
+      .map(([city, r]) => [
+        city,
+        r.country || "—",
+        String(r.orders),
+        fmtDecimal(r.revenue, currency),
+      ]);
+  }, [purchases, currency]);
+
   // ── Chart ──
   const chartData = useMemo(() => {
     const map = new Map<string, { label: string; revenue: number; spend: number }>();
@@ -534,6 +650,22 @@ export default function AppAnalytics() {
   }, [data.purchases30d, data.adSpend30d, windowDays]);
 
   const hasMetaData = metaCampaignRows.length > 0;
+  const hasGoogleData = googleSpend > 0;
+
+  const topGoogleCampaign = useMemo(() => {
+    const map = new Map<string, { name: string; orders: number; revenue: number }>();
+    for (const p of purchases) {
+      if (normalizeSource(p) !== "google") continue;
+      const campaign = String((p as any).utmCampaign || "").trim() || "(not set)";
+      const cur = map.get(campaign) || { name: campaign, orders: 0, revenue: 0 };
+      cur.orders++;
+      cur.revenue += safeNum((p as any).totalValue);
+      map.set(campaign, cur);
+    }
+    const rows = Array.from(map.values()).filter((c) => c.revenue > 0);
+    if (!rows.length) return null;
+    return rows.sort((a, b) => b.revenue - a.revenue)[0];
+  }, [purchases]);
   const hasSpend = totalSpend > 0;
 
   return (
@@ -557,7 +689,28 @@ export default function AppAnalytics() {
     >
       <BlockStack gap="600">
 
+        {/* ── Revenue & Spend chart ── */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Revenue vs spend — last {window} days</Text>
+              <InlineStack gap="300" blockAlign="center">
+                <InlineStack gap="100" blockAlign="center">
+                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />
+                  <Text as="span" variant="bodySm" tone="subdued">Revenue</Text>
+                </InlineStack>
+                <InlineStack gap="100" blockAlign="center">
+                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#38bdf8" }} />
+                  <Text as="span" variant="bodySm" tone="subdued">Spend</Text>
+                </InlineStack>
+              </InlineStack>
+            </InlineStack>
+            <BarChart data={chartData} />
+          </BlockStack>
+        </Card>
+
         {/* ── KPI row ── */}
+        <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">METRICS FROM ADVERTISING PLATFORMS</Text>
         <Grid>
           {[
             { label: `Revenue (${window}d)`, value: fmtDecimal(totalRevenue, currency), sub: `${totalOrders} attributed orders` },
@@ -642,68 +795,64 @@ export default function AppAnalytics() {
               <Divider />
 
               {/* ── Top performer highlights ── */}
-              {(topCampaign || topAd) && (
-                <Grid>
-                  {topCampaign && (
-                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
-                      <Box background="bg-surface-success" padding="400" borderRadius="200">
-                        <BlockStack gap="100">
-                          <InlineStack gap="200" blockAlign="center">
-                            <Badge tone="success">🏆 Best campaign</Badge>
-                          </InlineStack>
-                          <Text as="p" variant="headingMd">{topCampaign.name}</Text>
-                          <InlineStack gap="400">
-                            <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}</Text></Text>
-                            <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topCampaign.spend, currency)}</Text>
-                            <Text as="p" variant="bodySm" tone="subdued">Value: {fmtDecimal(topCampaign.value, currency)}</Text>
-                          </InlineStack>
-                        </BlockStack>
-                      </Box>
-                    </Grid.Cell>
+              <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">BEST META ADS</Text>
+              <Grid>
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                  {topCampaign ? (
+                    <Box background="bg-surface-success" padding="400" borderRadius="200">
+                      <BlockStack gap="100">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone="success">🏆 Best campaign</Badge>
+                        </InlineStack>
+                        <Text as="p" variant="headingMd">{topCampaign.name}</Text>
+                        <InlineStack gap="400">
+                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}</Text></Text>
+                          <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topCampaign.spend, currency)}</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">Value: {fmtDecimal(topCampaign.value, currency)}</Text>
+                        </InlineStack>
+                      </BlockStack>
+                    </Box>
+                  ) : (
+                    <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                      <BlockStack gap="100">
+                        <Badge tone="info">🏆 Best campaign</Badge>
+                        <Text as="p" variant="headingMd" tone="subdued">No campaign data yet</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">Run a sync from Integrations → Meta to see your top campaign here.</Text>
+                      </BlockStack>
+                    </Box>
                   )}
-                  {topAd && (
-                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
-                      <Box background="bg-surface-success" padding="400" borderRadius="200">
-                        <BlockStack gap="100">
-                          <InlineStack gap="200" blockAlign="center">
-                            <Badge tone="success">🏆 Best ad</Badge>
-                          </InlineStack>
-                          <Text as="p" variant="headingMd">{topAd.name}</Text>
-                          <InlineStack gap="400">
-                            <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? (topAd.value / topAd.spend).toFixed(2) + "×" : "—"}</Text></Text>
-                            <Text as="p" variant="bodySm" tone="subdued">CTR: {topAd.impressions > 0 ? ((topAd.clicks / topAd.impressions) * 100).toFixed(2) + "%" : "—"}</Text>
-                            <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topAd.spend, currency)}</Text>
-                          </InlineStack>
-                        </BlockStack>
-                      </Box>
-                    </Grid.Cell>
+                </Grid.Cell>
+
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                  {topAd ? (
+                    <Box background="bg-surface-success" padding="400" borderRadius="200">
+                      <BlockStack gap="100">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone="success">🏆 Best ad</Badge>
+                        </InlineStack>
+                        <Text as="p" variant="headingMd">{topAd.name}</Text>
+                        <InlineStack gap="400">
+                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? (topAd.value / topAd.spend).toFixed(2) + "×" : "—"}</Text></Text>
+                          <Text as="p" variant="bodySm" tone="subdued">CTR: {topAd.impressions > 0 ? ((topAd.clicks / topAd.impressions) * 100).toFixed(2) + "%" : "—"}</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topAd.spend, currency)}</Text>
+                        </InlineStack>
+                      </BlockStack>
+                    </Box>
+                  ) : (
+                    <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                      <BlockStack gap="100">
+                        <Badge tone="info">🏆 Best ad</Badge>
+                        <Text as="p" variant="headingMd" tone="subdued">No ad data yet</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">Go to Integrations → Meta and run a sync to see your best-performing ad here.</Text>
+                      </BlockStack>
+                    </Box>
                   )}
-                </Grid>
-              )}
+                </Grid.Cell>
+              </Grid>
+              <InlineStack align="center">
+                <Button url="/app/meta-ads" variant="primary" size="large">See detailed Meta Ads performance →</Button>
+              </InlineStack>
 
-              <Divider />
-
-              <Text as="h3" variant="headingSm">Campaign breakdown (Ads Manager)</Text>
-              <DataTable
-                columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
-                headings={["Campaign", "Spend", "Purchases (Meta)", "Purchase value", "ROAS", "CPA"]}
-                rows={metaCampaignRows}
-                increasedTableDensity
-              />
-
-              <Divider />
-
-              <Text as="h3" variant="headingSm">Ad breakdown (Ads Manager)</Text>
-              {metaAdRows.length > 0 ? (
-                <DataTable
-                  columnContentTypes={["text", "text", "text", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric", "numeric"]}
-                  headings={["Ad name", "Ad set", "Campaign", "Spend", "Impressions", "CTR", "CPC", "Purchases", "Value", "ROAS", "CPA"]}
-                  rows={metaAdRows}
-                  increasedTableDensity
-                />
-              ) : (
-                <Text as="p" tone="subdued" variant="bodySm">Ad-level data will appear after the next sync.</Text>
-              )}
             </BlockStack>
           </Card>
         )}
@@ -713,71 +862,192 @@ export default function AppAnalytics() {
             <BlockStack gap="200">
               <Text as="h2" variant="headingMd">Meta Ads Manager</Text>
               <Text as="p" tone="subdued">
-                No Ads Manager data for this window. Go to{" "}
-                <Button url="/app/ads" variant="plain">Integrations → Meta</Button>{" "}
-                and run a spend sync to see campaign-level spend, ROAS, and CPA here.
+                {data.metaConnected
+                  ? data.metaLastSyncedAt
+                    ? `No campaign data found for this period. Meta syncs automatically every 24h — last synced ${new Date(data.metaLastSyncedAt).toLocaleString()}.`
+                    : "Meta is connected. A sync will run automatically within the next 24 hours."
+                  : <>
+                      Connect your Meta ad account in{" "}
+                      <Button url="/app/ads" variant="plain">Integrations</Button>{" "}
+                      to see campaign-level spend, ROAS, and CPA here. Data syncs automatically every 24h.
+                    </>
+                }
               </Text>
             </BlockStack>
           </Card>
         )}
 
-        {/* ── Revenue & Spend chart ── */}
+        {/* ── Google Ads section ── */}
+        {hasGoogleData && (
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">Google Ads</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Google-attributed performance — last {window} days
+                  </Text>
+                </BlockStack>
+                <Badge tone="success">Ads data</Badge>
+              </InlineStack>
+
+              <Grid>
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+                  <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Google spend</Text>
+                      <Text as="p" variant="headingXl">{fmtDecimal(googleSpend, currency)}</Text>
+                    </BlockStack>
+                  </Box>
+                </Grid.Cell>
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+                  <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Attributed orders</Text>
+                      <Text as="p" variant="headingXl">{String(purchases.filter((p: any) => normalizeSource(p) === "google").length)}</Text>
+                    </BlockStack>
+                  </Box>
+                </Grid.Cell>
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+                  <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Attributed revenue</Text>
+                      <Text as="p" variant="headingXl">{fmtDecimal(purchases.filter((p: any) => normalizeSource(p) === "google").reduce((s: number, p: any) => s + safeNum(p.totalValue), 0), currency)}</Text>
+                    </BlockStack>
+                  </Box>
+                </Grid.Cell>
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+                  <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Google ROAS (attributed)</Text>
+                      <Text as="p" variant="headingXl">{googleSpend > 0 ? (purchases.filter((p: any) => normalizeSource(p) === "google").reduce((s: number, p: any) => s + safeNum(p.totalValue), 0) / googleSpend).toFixed(2) + "×" : "—"}</Text>
+                    </BlockStack>
+                  </Box>
+                </Grid.Cell>
+              </Grid>
+
+              <Divider />
+
+              <Grid>
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                  {topGoogleCampaign ? (
+                    <Box background="bg-surface-success" padding="400" borderRadius="200">
+                      <BlockStack gap="100">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone="success">🏆 Best campaign</Badge>
+                        </InlineStack>
+                        <Text as="p" variant="headingMd">{topGoogleCampaign.name}</Text>
+                        <InlineStack gap="400">
+                          <Text as="p" variant="bodySm" tone="subdued">Orders: <Text as="span" fontWeight="bold">{topGoogleCampaign.orders}</Text></Text>
+                          <Text as="p" variant="bodySm" tone="subdued">Revenue: <Text as="span" fontWeight="bold">{fmtDecimal(topGoogleCampaign.revenue, currency)}</Text></Text>
+                        </InlineStack>
+                      </BlockStack>
+                    </Box>
+                  ) : (
+                    <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                      <BlockStack gap="100">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone="info">🏆 Best campaign</Badge>
+                        </InlineStack>
+                        <Text as="p" variant="headingMd" tone="subdued">No campaign data</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">Orders are missing UTM campaign tags. Make sure your Google Ads URLs include utm_source=google&utm_campaign=...</Text>
+                      </BlockStack>
+                    </Box>
+                  )}
+                </Grid.Cell>
+                <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                  <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                    <BlockStack gap="100">
+                      <InlineStack gap="200" blockAlign="center">
+                        <Badge tone="info">🏆 Best ad</Badge>
+                      </InlineStack>
+                      <Text as="p" variant="headingMd" tone="subdued">Pending Google API</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">Ad-level data will appear once Google Ads API access is approved.</Text>
+                    </BlockStack>
+                  </Box>
+                </Grid.Cell>
+              </Grid>
+              <InlineStack align="center">
+                <Button url="/app/google-ads" variant="primary" size="large">See detailed Google Ads performance →</Button>
+              </InlineStack>
+
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* ── Combined source + spend overview ── */}
         <Card>
-          <BlockStack gap="300">
+          <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Revenue vs spend — last {window} days</Text>
-              <InlineStack gap="300" blockAlign="center">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">Revenue &amp; ad spend by source</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Where your revenue comes from vs what you spend — last {window} days</Text>
+              </BlockStack>
+              <InlineStack gap="300">
                 <InlineStack gap="100" blockAlign="center">
-                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#111827" }} />
+                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />
                   <Text as="span" variant="bodySm" tone="subdued">Revenue</Text>
                 </InlineStack>
                 <InlineStack gap="100" blockAlign="center">
-                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#9ca3af" }} />
-                  <Text as="span" variant="bodySm" tone="subdued">Spend</Text>
+                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#38bdf8" }} />
+                  <Text as="span" variant="bodySm" tone="subdued">Ad spend</Text>
                 </InlineStack>
               </InlineStack>
             </InlineStack>
-            <BarChart data={chartData} />
-          </BlockStack>
-        </Card>
 
-        {/* ── Platform ROAS (our attribution vs paid) ── */}
-        <Card>
-          <BlockStack gap="300">
-            <BlockStack gap="100">
-              <Text as="h2" variant="headingMd">Platform performance</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Attribix-attributed revenue and orders vs synced ad spend — last {window} days
-              </Text>
-            </BlockStack>
-            {platformRoasRows.length > 0 ? (
-              <DataTable
-                columnContentTypes={["text", "numeric", "numeric", "numeric", "numeric", "numeric"]}
-                headings={["Platform", "Orders", "Attributed revenue", "Ad spend", "ROAS", "CPA"]}
-                rows={platformRoasRows}
-                increasedTableDensity
-              />
-            ) : (
-              <Text as="p" tone="subdued">No data for this window.</Text>
-            )}
-          </BlockStack>
-        </Card>
+            {sourceBreakdown.length > 0 ? (() => {
+              const spendMap = new Map<string, number>();
+              for (const r of spendRows) {
+                const plat = String((r as any).platform).toLowerCase().replace("facebook", "meta");
+                spendMap.set(plat, (spendMap.get(plat) || 0) + safeNum((r as any).spend));
+              }
+              const maxVal = Math.max(1, ...sourceBreakdown.flatMap(({ source, revenue }) => [revenue, spendMap.get(source) || 0]));
 
-        {/* ── Attribution by source ── */}
-        <Card>
-          <BlockStack gap="300">
-            <BlockStack gap="100">
-              <Text as="h2" variant="headingMd">Revenue by source</Text>
-              <Text as="p" variant="bodySm" tone="subdued">All attributed purchases — last {window} days</Text>
-            </BlockStack>
-            {sourceRows.length > 0 ? (
-              <DataTable
-                columnContentTypes={["text", "numeric", "numeric", "numeric"]}
-                headings={["Source", "Orders", "Revenue", "Share"]}
-                rows={sourceRows}
-                increasedTableDensity
-              />
-            ) : (
+              return (
+                <BlockStack gap="400">
+                  {sourceBreakdown.map(({ source, orders, revenue, share }) => {
+                    const spend = spendMap.get(source) || 0;
+                    const roas = spend > 0 ? (revenue / spend).toFixed(2) + "×" : null;
+                    return (
+                      <div key={source} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "0 24px", alignItems: "center" }}>
+                        {/* Left: % + badge + orders */}
+                        <div>
+                          <Text as="p" variant="headingXl" fontWeight="bold">{share}%</Text>
+                          <Badge tone={sourceTone(source)}>{source}</Badge>
+                          <div style={{ marginTop: 4 }}>
+                            <Text as="p" variant="bodySm" tone="subdued">{orders} orders</Text>
+                          </div>
+                        </div>
+                        {/* Right: bars */}
+                        <BlockStack gap="150">
+                          <div>
+                            <InlineStack align="space-between">
+                              <Text as="p" variant="bodySm" tone="subdued">Revenue</Text>
+                              <InlineStack gap="200">
+                                {roas && <Text as="p" variant="bodySm" tone="success" fontWeight="semibold">ROAS {roas}</Text>}
+                                <Text as="p" variant="bodySm" fontWeight="semibold">{fmtDecimal(revenue, currency)}</Text>
+                              </InlineStack>
+                            </InlineStack>
+                            <div style={{ marginTop: 4, width: "100%", height: 12, background: "#f1f2f3", borderRadius: 99 }}>
+                              <div style={{ width: `${(revenue / maxVal) * 100}%`, height: "100%", background: "linear-gradient(90deg, #818cf8, #6366f1)", borderRadius: 99 }} />
+                            </div>
+                          </div>
+                          <div>
+                            <InlineStack align="space-between">
+                              <Text as="p" variant="bodySm" tone="subdued">Ad spend</Text>
+                              <Text as="p" variant="bodySm" fontWeight="semibold">{spend > 0 ? fmtDecimal(spend, currency) : "—"}</Text>
+                            </InlineStack>
+                            <div style={{ marginTop: 4, width: "100%", height: 12, background: "#f1f2f3", borderRadius: 99 }}>
+                              <div style={{ width: `${(spend / maxVal) * 100}%`, height: "100%", background: "linear-gradient(90deg, #7dd3fc, #38bdf8)", borderRadius: 99 }} />
+                            </div>
+                          </div>
+                        </BlockStack>
+                      </div>
+                    );
+                  })}
+                </BlockStack>
+              );
+            })() : (
               <Text as="p" tone="subdued">No purchases in this window.</Text>
             )}
           </BlockStack>
@@ -819,6 +1089,61 @@ export default function AppAnalytics() {
               />
             ) : (
               <Text as="p" tone="subdued">No campaign data for this window.</Text>
+            )}
+          </BlockStack>
+        </Card>
+
+        {/* ── Customers by location ── */}
+        <Card>
+          <BlockStack gap="400">
+            <BlockStack gap="100">
+              <Text as="h2" variant="headingMd">Customers by location</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Attributed orders by country and city — last {window} days</Text>
+            </BlockStack>
+
+            {countryRows.length > 0 ? (
+              <BlockStack gap="300">
+                <Text as="h3" variant="headingSm">By country</Text>
+                <DataTable
+                  columnContentTypes={["text", "numeric", "numeric", "text"]}
+                  headings={["Country", "Orders", "Revenue", "Share"]}
+                  rows={countryRows}
+                  increasedTableDensity
+                />
+              </BlockStack>
+            ) : (
+              <BlockStack gap="300">
+                <Text as="p" tone="subdued">No location data yet. New orders will include country and city automatically.</Text>
+                <InlineStack gap="300" blockAlign="center">
+                  <locationBackfill.Form method="post" action="/api/backfill/locations">
+                    <Button
+                      submit
+                      loading={locationBackfill.state !== "idle"}
+                      disabled={locationBackfill.state !== "idle"}
+                    >
+                      Backfill location data from existing orders
+                    </Button>
+                  </locationBackfill.Form>
+                  {locationBackfill.data && (
+                    <Text as="p" variant="bodySm" tone={locationBackfill.data.ok ? "success" : "critical"}>
+                      {locationBackfill.data.message ??
+                        `Updated ${locationBackfill.data.updated} of ${locationBackfill.data.total} orders.`}
+                    </Text>
+                  )}
+                </InlineStack>
+              </BlockStack>
+            )}
+
+            {cityRows.length > 0 && (
+              <BlockStack gap="300">
+                <Text as="h3" variant="headingSm">Top cities</Text>
+                <DataTable
+                  columnContentTypes={["text", "text", "numeric", "numeric"]}
+                  headings={["City", "Country", "Orders", "Revenue"]}
+                  rows={cityRows}
+                  increasedTableDensity
+                />
+              </BlockStack>
             )}
           </BlockStack>
         </Card>

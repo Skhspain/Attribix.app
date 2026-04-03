@@ -41,7 +41,11 @@ export default function AppRoute() {
       <ui-nav-menu>
         <a href="/app" rel="home">Overview</a>
         <a href="/app/analytics">Analytics</a>
+        <a href="/app/meta-ads">Meta Ads</a>
+        <a href="/app/google-ads">Google Ads</a>
+        <a href="/app/leads">Lead Center</a>
         <a href="/app/orders">Orders</a>
+        <a href="/app/newsletter">Newsletter</a>
         <a href="/app/ads">Integrations</a>
         <a href="/app/settings">Settings</a>
       </ui-nav-menu>
