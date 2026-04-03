@@ -460,3 +460,61 @@ model NewsletterWidgetConfig {
 
   @@index([shop])
 }
+
+// ─── Social Media ─────────────────────────────────────────────────────────────
+
+model SocialPost {
+  id          String   @id @default(cuid())
+  shop        String
+  content     String   @db.Text
+  imageUrls   String?  @db.Text  // JSON array of image URLs
+  platforms   String   @default("[]") // JSON array: ["facebook","instagram",...]
+  status      String   @default("draft") // draft | scheduled | publishing | published | failed
+
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  errorMsg    String?
+
+  // Platform post IDs after publishing
+  facebookPostId  String?
+  instagramPostId String?
+
+  // Cached engagement (synced from API)
+  fbLikes    Int @default(0)
+  fbComments Int @default(0)
+  fbShares   Int @default(0)
+  fbReach    Int @default(0)
+  igLikes    Int @default(0)
+  igComments Int @default(0)
+  igReach    Int @default(0)
+
+  // Optional product link
+  productId    String?
+  productTitle String?
+  productUrl   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop, status])
+  @@index([shop, scheduledAt])
+  @@index([shop, createdAt])
+}
+
+model SocialAccount {
+  id             String  @id @default(cuid())
+  shop           String
+  platform       String  // facebook | instagram | tiktok | x | pinterest
+  accountId      String
+  accountName    String?
+  accountHandle  String?
+  avatarUrl      String?
+  pageToken      String? // page-level access token
+  connected      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, platform, accountId])
+  @@index([shop, platform])
+}

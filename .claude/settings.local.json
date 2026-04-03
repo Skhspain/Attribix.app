@@ -78,7 +78,9 @@
       "Bash(fly ssh console --app attribix-app -C \"node -e \"\":*)",
       "Bash(GIT_OPTIONAL_LOCKS=0 git commit -m \"feat: dynamic dashboard — onboarding gate, weekly KPIs, channel health mix:*)",
       "Bash(Remove-Item \"D:/attribix-app/.git/worktrees/priceless-johnson/index.lock\" -Force)",
-      "Bash(gh pr:*)"
+      "Bash(gh pr:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://attribix-app.fly.dev/)",
+      "Bash(curl --insecure -s -o /dev/null -w \"%{http_code}\" \"https://attribix-app.fly.dev/\")"
     ]
   }
 }
