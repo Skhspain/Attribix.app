@@ -2,7 +2,7 @@
 // Post composer — write content, pick platforms, add images, schedule or post now.
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate, useRouteError } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { Card, BlockStack, InlineStack, Text, TextField, Button, Banner, Divider, Badge, Thumbnail } from "@shopify/polaris";
@@ -66,6 +66,18 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   return json({ ok: false, error: "Unknown intent" }, { status: 400 });
+}
+
+export function ErrorBoundary() {
+  const error = useRouteError();
+  return (
+    <div style={{ padding: 24, fontFamily: "monospace" }}>
+      <h2 style={{ color: "#ef4444" }}>Compose — Render Error</h2>
+      <pre style={{ background: "#fef2f2", padding: 16, borderRadius: 8, overflow: "auto", fontSize: 12 }}>
+        {error instanceof Error ? `${error.message}\n\n${error.stack}` : String(error)}
+      </pre>
+    </div>
+  );
 }
 
 export default function SocialCompose() {

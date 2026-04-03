@@ -2,10 +2,10 @@
 // Social Media hub — layout with tabs for Compose / Calendar / Analytics / Accounts.
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLoaderData, useLocation, NavLink } from "@remix-run/react";
+import { Outlet, useLoaderData, NavLink, useRouteError } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import { Page, Text, InlineStack } from "@shopify/polaris";
+import { Page } from "@shopify/polaris";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -39,15 +39,24 @@ const TABS = [
   { id: "accounts",  label: "Accounts",  url: "/app/social/accounts",   end: false },
 ];
 
+export function ErrorBoundary() {
+  const error = useRouteError();
+  return (
+    <div style={{ padding: 24, fontFamily: "monospace" }}>
+      <h2 style={{ color: "#ef4444" }}>Social Media — Render Error</h2>
+      <pre style={{ background: "#fef2f2", padding: 16, borderRadius: 8, overflow: "auto", fontSize: 12 }}>
+        {error instanceof Error ? `${error.message}\n\n${error.stack}` : String(error)}
+      </pre>
+    </div>
+  );
+}
+
 export default function SocialLayout() {
   const { scheduledCount, connectedPlatforms, metaConnected } = useLoaderData<typeof loader>();
   const location = useLocation();
 
   return (
-    <Page
-      title="Social Media"
-      primaryAction={{ content: "New post", url: "/app/social" }}
-    >
+    <Page title="Social Media">
       {/* Tab nav */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 4, borderBottom: "1px solid #e1e3e5", paddingBottom: 0 }}>
