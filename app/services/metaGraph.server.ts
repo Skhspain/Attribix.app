@@ -98,6 +98,30 @@ const AD_FIELDS = [
   "actions", "action_values",
 ];
 
+/**
+ * Fetch campaign objectives for all campaigns in an ad account.
+ * Returns a Map of campaignId → objective string.
+ */
+export async function fetchCampaignObjectives(args: {
+  accessToken: string;
+  adAccountId: string;
+}): Promise<Map<string, string>> {
+  const url = new URL(`https://graph.facebook.com/v20.0/${encodeURIComponent(args.adAccountId)}/campaigns`);
+  url.searchParams.set("access_token", args.accessToken);
+  url.searchParams.set("fields", "id,name,objective");
+  url.searchParams.set("limit", "200");
+
+  const result = await metaFetchJson<{ data: Array<{ id: string; name: string; objective: string }> }>(
+    url.toString(), { method: "GET" }
+  );
+
+  const map = new Map<string, string>();
+  for (const c of result?.data ?? []) {
+    if (c.id && c.objective) map.set(String(c.id), c.objective);
+  }
+  return map;
+}
+
 export async function fetchCampaignDailyInsights(args: {
   accessToken: string;
   adAccountId?: string;
@@ -121,5 +145,8 @@ export async function fetchCampaignDailyInsights(args: {
   url.searchParams.set("time_range", JSON.stringify({ since: args.since, until: args.until }));
   if (args.level) url.searchParams.set("level", args.level);
 
-  return metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
+  console.log(`[metaGraph] fetchInsights level=${args.level} id=${id} since=${args.since} until=${args.until}`);
+  const result = await metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
+  console.log(`[metaGraph] response rows=${result?.data?.length ?? 0}`);
+  return result;
 }
