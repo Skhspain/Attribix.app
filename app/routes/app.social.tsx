@@ -52,8 +52,7 @@ export function ErrorBoundary() {
 }
 
 export default function SocialLayout() {
-  const { scheduledCount, connectedPlatforms, metaConnected } = useLoaderData<typeof loader>();
-  const location = useLocation();
+  const { scheduledCount } = useLoaderData<typeof loader>();
 
   return (
     <Page title="Social Media">
