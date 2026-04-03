@@ -335,34 +335,52 @@ function BarChart({ data, currency = "NOK" }: { data: Array<{ label: string; rev
           minWidth: data.length * 24,
         }}
       >
-        {data.map((row, i) => (
-          <div
-            key={row.label}
-            onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, ...row })}
-            onMouseLeave={() => setTooltip(null)}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end", cursor: "default" }}
-          >
-            <div style={{ width: "100%", height: 150, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
-              <div style={{
-                width: "44%", minHeight: 2,
-                height: `${(row.revenue / maxVal) * 100}%`,
-                borderRadius: "3px 3px 0 0",
-                background: "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)",
-                transition: "height 0.2s ease",
-              }} />
-              <div style={{
-                width: "44%", minHeight: 2,
-                height: `${(row.spend / maxVal) * 100}%`,
-                borderRadius: "3px 3px 0 0",
-                background: "linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%)",
-                transition: "height 0.2s ease",
-              }} />
+        {data.map((row, i) => {
+          const isPositive = row.spend > 0 && row.revenue > row.spend;
+          const isNegative = row.spend > 0 && row.revenue <= row.spend;
+          const hasData = row.revenue > 0 || row.spend > 0;
+          const revColor = isPositive
+            ? "linear-gradient(180deg, #4ade80 0%, #16a34a 100%)"
+            : isNegative
+            ? "linear-gradient(180deg, #f87171 0%, #dc2626 100%)"
+            : "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)";
+
+          return (
+            <div
+              key={row.label}
+              onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, ...row })}
+              onMouseLeave={() => setTooltip(null)}
+              style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end", cursor: "default" }}
+            >
+              <div style={{ width: "100%", height: 150, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
+                <div style={{
+                  width: "44%", minHeight: 2,
+                  height: `${(row.revenue / maxVal) * 100}%`,
+                  borderRadius: "3px 3px 0 0",
+                  background: revColor,
+                  transition: "height 0.2s ease, background 0.2s ease",
+                }} />
+                <div style={{
+                  width: "44%", minHeight: 2,
+                  height: `${(row.spend / maxVal) * 100}%`,
+                  borderRadius: "3px 3px 0 0",
+                  background: "linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%)",
+                  transition: "height 0.2s ease",
+                }} />
+              </div>
+              <div style={{ marginTop: 5, fontSize: 10, color: "#9ca3af", textAlign: "center", whiteSpace: "nowrap" }}>
+                {i % showEvery === 0 ? row.label : ""}
+              </div>
+              {/* Positive/negative dot indicator */}
+              {hasData && (
+                <div style={{
+                  width: 4, height: 4, borderRadius: "50%", marginTop: 3,
+                  background: isPositive ? "#16a34a" : isNegative ? "#dc2626" : "#9ca3af",
+                }} />
+              )}
             </div>
-            <div style={{ marginTop: 6, fontSize: 10, color: "#9ca3af", textAlign: "center", whiteSpace: "nowrap" }}>
-              {i % showEvery === 0 ? row.label : ""}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -778,11 +796,15 @@ export default function AppAnalytics() {
               </BlockStack>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
-                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />
-                  <Text as="span" variant="bodySm" tone="subdued">Revenue</Text>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: "linear-gradient(135deg, #4ade80, #16a34a)" }} />
+                  <Text as="span" variant="bodySm" tone="subdued">Revenue (profitable)</Text>
                 </InlineStack>
                 <InlineStack gap="100" blockAlign="center">
-                  <div style={{ width: 10, height: 10, borderRadius: 99, background: "#0ea5e9" }} />
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: "linear-gradient(135deg, #f87171, #dc2626)" }} />
+                  <Text as="span" variant="bodySm" tone="subdued">Revenue (loss)</Text>
+                </InlineStack>
+                <InlineStack gap="100" blockAlign="center">
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: "#0ea5e9" }} />
                   <Text as="span" variant="bodySm" tone="subdued">Spend</Text>
                 </InlineStack>
               </InlineStack>
