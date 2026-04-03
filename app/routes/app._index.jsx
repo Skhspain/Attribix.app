@@ -335,7 +335,7 @@ export default function AppIndex() {
 
   return (
     <Page
-      title="Attribix Dashboard"
+      title="Revenue Overview"
       subtitle={data.shop}
       primaryAction={{ content: "View full analytics", onAction: () => navigate("/app/analytics") }}
     >
@@ -362,11 +362,197 @@ export default function AppIndex() {
           </div>
         )}
 
-        {/* ── SECTION HEADER ── */}
-        <div style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 12 }}>
-          <Text as="h2" variant="headingMd">Weekly performance</Text>
-          <Text as="p" variant="bodySm" tone="subdued">Last 7 days</Text>
-        </div>
+        {/* ── REVENUE OVERVIEW + PROBLEMS + ACTIONS ── */}
+        {(() => {
+          // 30d revenue buckets from sourceSummary
+          let adsRev30 = 0, emailRev30 = 0, organicRev30 = 0, unknownRev30 = 0;
+          for (const s of data.sourceSummary) {
+            if (s.source === "unknown") { unknownRev30 += s.revenue; continue; }
+            if (["meta","google","tiktok","microsoft","snapchat"].includes(s.source)) adsRev30 += s.revenue;
+            else if (s.source === "email" || (s.source || "").includes("email")) emailRev30 += s.revenue;
+            else organicRev30 += s.revenue;
+          }
+          const adsRoas = data.totalSpend > 0 ? adsRev30 / data.totalSpend : null;
+          const unknownPct30 = data.rev30 > 0 ? Math.round((unknownRev30 / data.rev30) * 100) : 0;
+
+          const revCards = [
+            {
+              label: "Total revenue",
+              value: fmt(data.rev30, currency),
+              sub: data.orders30 > 0 ? `${data.orders30} tracked sales` : "No tracked sales yet",
+              icon: "💰",
+              health: data.rev30 > 0 ? "positive" : "neutral",
+              healthLabel: data.rev30 > 0 ? "Generating revenue" : "No data yet",
+            },
+            {
+              label: "Revenue from ads",
+              value: adsRev30 > 0 ? fmt(adsRev30, currency) : "—",
+              sub: adsRoas !== null ? `ROAS ${adsRoas.toFixed(2)}× — ${adsRoas >= 2 ? "Profitable" : adsRoas >= 1 ? "Breaking even" : "Losing money"}` : data.totalSpend > 0 ? `Spend: ${fmt(data.totalSpend, currency)}` : "No ad spend tracked",
+              icon: "📢",
+              health: adsRoas === null ? "neutral" : adsRoas >= 2 ? "positive" : adsRoas >= 1 ? "warning" : "negative",
+              healthLabel: adsRoas === null ? "Connect ads" : adsRoas >= 2 ? "Healthy" : adsRoas >= 1 ? "Needs work" : "Not profitable",
+            },
+            {
+              label: "Revenue from email",
+              value: emailRev30 > 0 ? fmt(emailRev30, currency) : "—",
+              sub: emailRev30 > 0 ? `${data.rev30 > 0 ? Math.round((emailRev30/data.rev30)*100) : 0}% of total revenue` : "Email drives 0% of revenue",
+              icon: "📧",
+              health: emailRev30 > 0 ? "positive" : "negative",
+              healthLabel: emailRev30 > 0 ? "Active" : "Set up email",
+            },
+            {
+              label: "Organic & direct",
+              value: organicRev30 > 0 ? fmt(organicRev30, currency) : "—",
+              sub: organicRev30 > 0 ? `${data.rev30 > 0 ? Math.round((organicRev30/data.rev30)*100) : 0}% of total revenue` : unknownPct30 > 20 ? `${unknownPct30}% revenue has missing data` : "No organic traffic tracked",
+              icon: "🌱",
+              health: organicRev30 > 0 ? "positive" : "neutral",
+              healthLabel: organicRev30 > 0 ? "Growing" : "Not tracked",
+            },
+          ];
+
+          const healthColor = { positive: "#15803d", warning: "#d97706", negative: "#dc2626", neutral: "#6b7280" };
+          const healthBg = { positive: "#f0fdf4", warning: "#fffbeb", negative: "#fff1f2", neutral: "#f9fafb" };
+
+          // Problems
+          const problems = [];
+          if (unknownPct30 > 30) {
+            problems.push({
+              id: "tracking", icon: "🚨",
+              title: `${unknownPct30}% of your revenue isn't tracked`,
+              body: "You're making decisions without complete data. Every untracked sale is a missed optimization.",
+              cta: "Fix tracking now", url: "/app/settings", tone: "critical",
+            });
+          }
+          if (adsRoas !== null && adsRoas < 1 && data.totalSpend > 50) {
+            problems.push({
+              id: "roas", icon: "💸",
+              title: "Your ads are losing money",
+              body: `You're spending ${fmt(data.totalSpend, currency)} on ads and getting ${fmt(adsRev30, currency)} back. Every sale costs more than it earns.`,
+              cta: "Review ad performance", url: "/app/meta-ads", tone: "critical",
+            });
+          }
+          if (emailRev30 === 0 && data.rev30 > 0) {
+            problems.push({
+              id: "email", icon: "📧",
+              title: "Email is generating 0% of your revenue",
+              body: "Most stores generate 20–30% from email. You're leaving significant recurring revenue on the table.",
+              cta: "Set up email now", url: "/app/newsletter", tone: "warning",
+            });
+          }
+          if (data.pixelStatus !== "healthy" && data.rev30 > 0) {
+            problems.push({
+              id: "pixel", icon: "⚠️",
+              title: "Your tracking is broken — data is unreliable",
+              body: "We haven't seen your pixel recently. Attribution data may be incomplete right now.",
+              cta: "Fix tracking now", url: "/app/settings", tone: "critical",
+            });
+          }
+
+          // Actions
+          const actions = [
+            data.metaConnected && adsRoas >= 2 && { label: "Scale your best ad", url: "/app/meta-ads", icon: "🚀" },
+            data.metaConnected && adsRoas !== null && adsRoas < 1.5 && { label: "Fix losing campaigns", url: "/app/meta-ads", icon: "🛠" },
+            emailRev30 === 0 && { label: "Recover revenue from email", url: "/app/newsletter", icon: "📧" },
+            { label: "Turn products into content", url: "/app/social", icon: "📱" },
+            data.pixelStatus !== "healthy" && { label: "Fix tracking", url: "/app/settings", icon: "🔧" },
+          ].filter(Boolean).slice(0, 4);
+
+          return (
+            <>
+              {/* Revenue overview */}
+              <div style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 12 }}>
+                <Text as="h2" variant="headingMd">Revenue overview</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Last 30 days — where your money comes from</Text>
+              </div>
+              <Grid>
+                {revCards.map(card => (
+                  <Grid.Cell key={card.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+                    <div style={{
+                      background: "#fff", border: "1px solid #e1e3e5", borderRadius: 12,
+                      padding: "16px 18px", height: "100%",
+                    }}>
+                      <BlockStack gap="150">
+                        <InlineStack gap="150" blockAlign="center">
+                          <span style={{ fontSize: 16 }}>{card.icon}</span>
+                          <Text as="p" variant="bodySm" tone="subdued">{card.label}</Text>
+                        </InlineStack>
+                        <Text as="p" variant="heading2xl" fontWeight="bold">{card.value}</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">{card.sub}</Text>
+                        <span style={{
+                          fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6, display: "inline-block", width: "fit-content",
+                          color: healthColor[card.health], background: healthBg[card.health],
+                        }}>{card.healthLabel}</span>
+                      </BlockStack>
+                    </div>
+                  </Grid.Cell>
+                ))}
+              </Grid>
+
+              {/* Problems */}
+              {problems.length > 0 && (
+                <>
+                  <div style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 12, marginTop: 8 }}>
+                    <Text as="h2" variant="headingMd">What's hurting your revenue</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">Fix these to unlock more profit</Text>
+                  </div>
+                  <BlockStack gap="300">
+                    {problems.map(p => (
+                      <div key={p.id} style={{
+                        background: p.tone === "critical" ? "#fff1f2" : "#fffbeb",
+                        border: `1.5px solid ${p.tone === "critical" ? "#ef4444" : "#f59e0b"}`,
+                        borderRadius: 12, padding: "16px 20px",
+                        display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+                      }}>
+                        <InlineStack gap="300" blockAlign="start">
+                          <span style={{ fontSize: 22, flexShrink: 0, lineHeight: 1.4 }}>{p.icon}</span>
+                          <BlockStack gap="100">
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">{p.title}</Text>
+                            <Text as="p" variant="bodySm" tone="subdued">{p.body}</Text>
+                          </BlockStack>
+                        </InlineStack>
+                        <div style={{ flexShrink: 0 }}>
+                          <Button variant="primary" onClick={() => navigate(p.url)}>{p.cta}</Button>
+                        </div>
+                      </div>
+                    ))}
+                  </BlockStack>
+                </>
+              )}
+
+              {/* What to do next */}
+              {actions.length > 0 && (
+                <>
+                  <div style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 12, marginTop: 8 }}>
+                    <Text as="h2" variant="headingMd">What to do next</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">Your highest-impact moves right now</Text>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    {actions.map(a => (
+                      <button
+                        key={a.label}
+                        onClick={() => navigate(a.url)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "10px 18px", borderRadius: 8, cursor: "pointer",
+                          border: "1.5px solid #008060", background: "#f0fdf4",
+                          color: "#008060", fontSize: 14, fontWeight: 600, fontFamily: "inherit",
+                        }}
+                      >
+                        <span>{a.icon}</span> {a.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* ── SECTION HEADER ── */}
+              <div style={{ borderBottom: "1px solid #e5e7eb", paddingBottom: 12, marginTop: 8 }}>
+                <Text as="h2" variant="headingMd">Weekly performance</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Last 7 days</Text>
+              </div>
+            </>
+          );
+        })()}
 
         {/* ── WEEKLY KPI CARDS ── */}
         <Grid>
@@ -379,7 +565,7 @@ export default function AppIndex() {
               wow: data.wowOrders,
             },
             {
-              label: "Orders from ads",
+              label: "Sales from ads",
               value: String(adOrders7),
               sub: adOrders7 > 0
                 ? `${Math.round((adOrders7 / Math.max(orders7, 1)) * 100)}% of total`
@@ -640,7 +826,7 @@ export default function AppIndex() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   {data.pixelLastSeen ? `Last: ${formatDate(data.pixelLastSeen)}` : "No events recorded"}
                 </Text>
-                <Button size="slim" onClick={() => navigate("/app/settings")}>Settings</Button>
+                <Button size="slim" onClick={() => navigate("/app/settings")}>Fix tracking</Button>
               </BlockStack>
             </Card>
           </Grid.Cell>
@@ -654,7 +840,7 @@ export default function AppIndex() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   {data.metaConnected ? `Spend ${fmt(data.metaSpend, currency)} · ROAS ${metaRoas !== null ? metaRoas.toFixed(2) + "×" : "—"}` : "Connect to sync ad spend and CAPI."}
                 </Text>
-                <Button size="slim" onClick={() => navigate("/app/ads")}>{data.metaConnected ? "Manage" : "Connect"}</Button>
+                <Button size="slim" onClick={() => navigate(data.metaConnected ? "/app/meta-ads" : "/app/ads")}>{data.metaConnected ? "View performance" : "Connect now"}</Button>
               </BlockStack>
             </Card>
           </Grid.Cell>
@@ -668,7 +854,7 @@ export default function AppIndex() {
                 <Text as="p" variant="bodySm" tone="subdued">
                   {data.googleConnected ? `Spend ${fmt(data.googleSpend, currency)} syncing.` : "Connect to sync spend and upload conversions."}
                 </Text>
-                <Button size="slim" onClick={() => navigate("/app/ads")}>{data.googleConnected ? "Manage" : "Connect"}</Button>
+                <Button size="slim" onClick={() => navigate(data.googleConnected ? "/app/google-ads" : "/app/ads")}>{data.googleConnected ? "View performance" : "Connect now"}</Button>
               </BlockStack>
             </Card>
           </Grid.Cell>
@@ -678,7 +864,7 @@ export default function AppIndex() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Recent attributed orders</Text>
+              <Text as="h2" variant="headingMd">Recent tracked sales</Text>
               <Button size="slim" onClick={() => navigate("/app/orders")}>View all</Button>
             </InlineStack>
             {isClient && (data.recentPurchases || []).length > 0 ? (

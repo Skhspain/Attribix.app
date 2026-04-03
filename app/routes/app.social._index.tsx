@@ -168,6 +168,53 @@ export default function SocialCompose() {
         {/* ── Left: Composer ── */}
         <BlockStack gap="400">
 
+          {/* ── Turn data into content ── */}
+          <div style={{
+            background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+            borderRadius: 12, padding: "20px 24px",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+          }}>
+            <BlockStack gap="100">
+              <Text as="p" variant="headingSm" tone="text-inverse">Turn your store data into content</Text>
+              <Text as="p" variant="bodySm" tone="text-inverse">Your best-performing products are ready to promote</Text>
+            </BlockStack>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {(recentProducts as any[]).slice(0, 1).map((p: any) => {
+                const imgs: string[] = (() => { try { return JSON.parse(p.imagesJson || "[]"); } catch { return []; } })();
+                return (
+                  <button
+                    key={p.productId}
+                    onClick={() => {
+                      setContent(`This product is flying off the shelves 🔥\n\n${p.title}\n\nHere's why our customers love it…\n\n👉 Shop now`);
+                      if (imgs[0]) setImageUrls([imgs[0]]);
+                      setLinkedProduct(p);
+                    }}
+                    style={{
+                      padding: "8px 16px", borderRadius: 8, cursor: "pointer",
+                      background: "#008060", color: "#fff", border: "none",
+                      fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                    }}
+                  >
+                    Promote {p.title?.slice(0, 20)}{(p.title?.length || 0) > 20 ? "…" : ""}
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => {
+                  setContent(`Our best-performing campaign is live 🚀\n\nDon't miss out — limited time only.\n\n👉 Shop now`);
+                }}
+                style={{
+                  padding: "8px 16px", borderRadius: 8, cursor: "pointer",
+                  background: "rgba(255,255,255,0.15)", color: "#fff",
+                  border: "1px solid rgba(255,255,255,0.3)",
+                  fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+                }}
+              >
+                Share winning campaign
+              </button>
+            </div>
+          </div>
+
           {/* Platform selection */}
           <Card>
             <BlockStack gap="300">
@@ -209,8 +256,8 @@ export default function SocialCompose() {
               </div>
               {connectedPlatformIds.length === 0 && (
                 <Banner tone="warning">
-                  No accounts connected yet.{" "}
-                  <Link to="/app/social/accounts" style={{ color: "#008060" }}>Connect an account →</Link>
+                  Connect your social accounts to turn your best products into content that drives sales.{" "}
+                  <Link to="/app/social/accounts" style={{ color: "#008060" }}>Connect accounts →</Link>
                 </Banner>
               )}
             </BlockStack>
@@ -391,7 +438,7 @@ export default function SocialCompose() {
               disabled={!content.trim() || selectedPlatforms.length === 0 || overLimit}
               onClick={() => submit(scheduleMode ? "schedule" : "publish")}
             >
-              {scheduleMode ? "Schedule post" : "Publish now"}
+              {scheduleMode ? "Schedule post" : "Publish & drive traffic"}
             </Button>
             <Button variant="plain" onClick={() => submit("save")} loading={isSaving}>
               Save draft

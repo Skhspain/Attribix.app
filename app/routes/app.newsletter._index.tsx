@@ -174,6 +174,51 @@ export default function NewsletterOverview() {
 
   return (
     <BlockStack gap="500">
+        {/* ── REVENUE MESSAGE ── */}
+        {totalSubscribers === 0 || avgOpenRate === 0 ? (
+          <div style={{
+            background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
+            borderRadius: 12, padding: "24px 28px",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, flexWrap: "wrap",
+          }}>
+            <BlockStack gap="200">
+              <Text as="h2" variant="headingMd" tone="text-inverse">You're missing revenue from email</Text>
+              <Text as="p" variant="bodySm" tone="text-inverse">
+                Email is generating 0% of your revenue. Most stores generate 20–30% from email.
+              </Text>
+            </BlockStack>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <a href="/app/newsletter/campaigns/new" style={{
+                display: "inline-block", padding: "10px 20px", borderRadius: 8,
+                background: "#008060", color: "#fff", fontWeight: 700, fontSize: 14,
+                textDecoration: "none", fontFamily: "inherit",
+              }}>Promote your best product →</a>
+              <a href="/app/newsletter/subscribers" style={{
+                display: "inline-block", padding: "10px 20px", borderRadius: 8,
+                background: "rgba(255,255,255,0.15)", color: "#fff", fontWeight: 600, fontSize: 14,
+                textDecoration: "none", fontFamily: "inherit", border: "1px solid rgba(255,255,255,0.3)",
+              }}>Recover abandoned carts →</a>
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            background: "#f0fdf4", border: "1.5px solid #86efac", borderRadius: 12, padding: "16px 20px",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+          }}>
+            <BlockStack gap="050">
+              <Text as="p" variant="bodyMd" fontWeight="semibold">Email is working — keep it growing</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {avgOpenRate > 0 ? `${avgOpenRate}% average open rate. ` : ""}Send consistently to maximise revenue.
+              </Text>
+            </BlockStack>
+            <a href="/app/newsletter/campaigns/new" style={{
+              display: "inline-block", padding: "10px 20px", borderRadius: 8,
+              background: "#008060", color: "#fff", fontWeight: 700, fontSize: 14,
+              textDecoration: "none", fontFamily: "inherit",
+            }}>Send a campaign →</a>
+          </div>
+        )}
+
       {/* Section A — 4 stat cards in 2x2 grid */}
       <Grid>
         <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
