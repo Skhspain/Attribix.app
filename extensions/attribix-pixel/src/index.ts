@@ -75,7 +75,7 @@ type TrackBody = {
   fbc?: string | null;
 };
 
-const TRACK_URL = "https://attribix-app.fly.dev/api/track";
+const TRACK_URL = "https://api.attribix.app/api/track";
 const VISITOR_KEY = "attribix_visitor_id";
 const SESSION_KEY = "attribix_session_id";
 const SESSION_TOUCH_KEY = "attribix_session_last_touch";

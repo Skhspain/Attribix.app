@@ -10,6 +10,7 @@ datasource db {
 model TrackedEvent {
   id          String   @id @default(cuid())
   eventName   String
+  accountId   String?
   sessionId   String?
   createdAt   DateTime @default(now())
   source      String?
@@ -19,6 +20,9 @@ model TrackedEvent {
   utmCampaign String?
   utmMedium   String?
   utmSource   String?
+  orderId     String?
+  revenue     Float?
+  currency    String?
 
   shop      String?
   visitorId String?
@@ -34,7 +38,6 @@ model TrackedEvent {
   fbc       String?
   host      String?
   origin    String?
-  accountId String?
 
   @@index([createdAt])
   @@index([eventName])
@@ -47,6 +50,8 @@ model TrackedEvent {
   @@index([gclid])
   @@index([fbc])
   @@index([fbp])
+  @@index([accountId])
+  @@index([orderId])
 }
 
 model Session {

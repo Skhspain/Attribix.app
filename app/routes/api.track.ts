@@ -36,6 +36,50 @@ function pickFirstNumber(x: unknown): number | null {
   return null;
 }
 
+function pickNumber(x: unknown): number | null {
+  if (typeof x === "number" && Number.isFinite(x)) return x;
+  if (typeof x === "string" && x.trim().length) {
+    const n = Number(x);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * Extract order attribution data from event payload.
+ *
+ * Shopify web-pixel shape:
+ *   event.data.checkout.order.id, event.data.checkout.totalPrice.{amount,currencyCode}
+ * WooCommerce plugin shape (mirrors the above):
+ *   event.data.checkout.orderId, event.data.checkout.totalPrice.{amount,currencyCode}
+ */
+function extractOrderAttribution(event: any): {
+  orderId: string | null;
+  revenue: number | null;
+  currency: string | null;
+} {
+  const checkout = event?.data?.checkout ?? null;
+  if (!checkout) return { orderId: null, revenue: null, currency: null };
+
+  const orderId =
+    pickFirstString(checkout?.order?.id) ??
+    pickFirstString(checkout?.orderId) ??
+    (typeof checkout?.order?.id === "number" ? String(checkout.order.id) : null) ??
+    (typeof checkout?.orderId === "number" ? String(checkout.orderId) : null);
+
+  const revenue =
+    pickNumber(checkout?.totalPrice?.amount) ??
+    pickNumber(checkout?.totalPrice) ??
+    null;
+
+  const currency =
+    pickFirstString(checkout?.totalPrice?.currencyCode) ??
+    pickFirstString(checkout?.currencyCode) ??
+    null;
+
+  return { orderId, revenue, currency };
+}
+
 function getUtmFromUrl(url: string) {
   try {
     const u = new URL(url);
