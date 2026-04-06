@@ -27,7 +27,7 @@ type TrackBody = {
   meta?: Record<string, any>;
 };
 
-const TRACK_URL = "https://attribix-app.fly.dev/api/track";
+const TRACK_URL = "https://api.attribix.app/api/track";
 
 function safeJson(obj: any) {
   try {
