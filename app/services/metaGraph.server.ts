@@ -89,23 +89,28 @@ export async function fetchUserAdAccounts(args: { accessToken: string }) {
 
     const businesses = await metaFetchJson<{ data: any[] }>(bizUrl.toString(), { method: "GET" });
 
-    for (const biz of (businesses?.data || [])) {
-      try {
+    // Fetch all business ad accounts in parallel for speed
+    const bizResults = await Promise.allSettled(
+      (businesses?.data || []).map(async (biz: any) => {
         const bizAccUrl = new URL(`https://graph.facebook.com/v20.0/${biz.id}/owned_ad_accounts`);
         bizAccUrl.searchParams.set("access_token", args.accessToken);
         bizAccUrl.searchParams.set("fields", fields);
         bizAccUrl.searchParams.set("limit", "100");
-
         const bizAccounts = await metaFetchJson<{ data: any[] }>(bizAccUrl.toString(), { method: "GET" });
+        return { biz, accounts: bizAccounts?.data || [] };
+      })
+    );
 
-        for (const acc of (bizAccounts?.data || [])) {
+    for (const result of bizResults) {
+      if (result.status === "fulfilled") {
+        for (const acc of result.value.accounts) {
           if (!seenIds.has(String(acc.id))) {
-            allAccounts.push({ ...acc, name: acc.name || `${biz.name} (${acc.id})` });
+            allAccounts.push({ ...acc, name: acc.name || `${result.value.biz.name} (${acc.id})` });
             seenIds.add(String(acc.id));
           }
         }
-      } catch (e) {
-        console.error(`[meta] failed to fetch accounts for business ${biz.id}:`, (e as any)?.message);
+      } else {
+        console.error(`[meta] failed to fetch business accounts:`, result.reason?.message);
       }
     }
   } catch (e) {
