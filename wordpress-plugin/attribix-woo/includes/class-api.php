@@ -57,21 +57,21 @@ class Api {
 	/**
 	 * POST request to the Attribix standalone API.
 	 */
-	public static function post( $path, $body = array() ) {
+	public static function post( $path, $payload = array() ) {
 		$url = self::base_url() . $path;
 
 		$response = wp_remote_post( $url, array(
 			'timeout' => 15,
 			'headers' => self::auth_headers(),
-			'body'    => wp_json_encode( $body ),
+			'body'    => wp_json_encode( $payload ),
 		) );
 
 		if ( is_wp_error( $response ) ) {
 			return array( 'ok' => false, 'error' => $response->get_error_message() );
 		}
 
-		$body = wp_remote_retrieve_body( $response );
-		$data = json_decode( $body, true );
+		$resp_body = wp_remote_retrieve_body( $response );
+		$data = json_decode( $resp_body, true );
 		return is_array( $data ) ? $data : array( 'ok' => false, 'error' => 'Invalid response' );
 	}
 

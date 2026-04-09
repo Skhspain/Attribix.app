@@ -23,15 +23,19 @@ class Admin_Pages {
 
 	public static function register_menus() {
 		$pages = array(
-			array( 'slug' => 'attribix-dashboard',    'title' => 'Dashboard',      'file' => 'dashboard' ),
-			array( 'slug' => 'attribix-orders',        'title' => 'Orders',         'file' => 'orders' ),
-			array( 'slug' => 'attribix-newsletter',    'title' => 'Newsletter',     'file' => 'newsletter' ),
-			array( 'slug' => 'attribix-reviews',       'title' => 'Reviews',        'file' => 'reviews' ),
-			array( 'slug' => 'attribix-leads',         'title' => 'Lead Center',    'file' => 'leads' ),
-			array( 'slug' => 'attribix-seo',           'title' => 'SEO Audit',      'file' => 'seo' ),
-			array( 'slug' => 'attribix-utm',           'title' => 'UTM Builder',    'file' => 'utm' ),
-			array( 'slug' => 'attribix-feeds',         'title' => 'Product Feeds',  'file' => 'feeds' ),
-			array( 'slug' => 'attribix-billing',       'title' => 'Billing',        'file' => 'billing' ),
+			array( 'slug' => 'attribix-dashboard',     'title' => 'Dashboard',        'file' => 'dashboard' ),
+			array( 'slug' => 'attribix-meta-ads',      'title' => 'Meta Ads',         'file' => 'meta-ads' ),
+			array( 'slug' => 'attribix-google-ads',    'title' => 'Google Ads',       'file' => 'google-ads' ),
+			array( 'slug' => 'attribix-attribution',   'title' => 'Attribution',      'file' => 'attribution' ),
+			array( 'slug' => 'attribix-products',      'title' => 'Products',         'file' => 'products' ),
+			array( 'slug' => 'attribix-orders',        'title' => 'Orders',           'file' => 'orders' ),
+			array( 'slug' => 'attribix-newsletter',    'title' => 'Newsletter',       'file' => 'newsletter' ),
+			array( 'slug' => 'attribix-reviews',       'title' => 'Reviews',          'file' => 'reviews' ),
+			array( 'slug' => 'attribix-leads',         'title' => 'Lead Center',      'file' => 'leads' ),
+			array( 'slug' => 'attribix-seo',           'title' => 'SEO Audit',        'file' => 'seo' ),
+			array( 'slug' => 'attribix-utm',           'title' => 'UTM Builder',      'file' => 'utm' ),
+			array( 'slug' => 'attribix-feeds',         'title' => 'Product Feeds',    'file' => 'feeds' ),
+			array( 'slug' => 'attribix-billing',       'title' => 'Billing',          'file' => 'billing' ),
 		);
 
 		// First submenu replaces parent page
@@ -76,6 +80,10 @@ class Admin_Pages {
 		// Map screen ID to page file
 		$map = array(
 			'toplevel_page_attribix-woo'           => 'dashboard',
+			'attribix_page_attribix-meta-ads'      => 'meta-ads',
+			'attribix_page_attribix-google-ads'    => 'google-ads',
+			'attribix_page_attribix-attribution'   => 'attribution',
+			'attribix_page_attribix-products'      => 'products',
 			'attribix_page_attribix-orders'        => 'orders',
 			'attribix_page_attribix-newsletter'    => 'newsletter',
 			'attribix_page_attribix-reviews'       => 'reviews',

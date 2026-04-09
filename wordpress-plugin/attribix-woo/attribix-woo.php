@@ -24,6 +24,7 @@ define( 'ATTRIBIX_WOO_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ATTRIBIX_WOO_URL', plugin_dir_url( __FILE__ ) );
 define( 'ATTRIBIX_WOO_OPTION', 'attribix_woo_settings' );
 define( 'ATTRIBIX_WOO_DEFAULT_ENDPOINT', 'https://api.attribix.app/api/track' );
+define( 'ATTRIBIX_WOO_VERSION_LABEL', '1.1.0' );
 
 // Core classes
 require_once ATTRIBIX_WOO_DIR . 'includes/class-http.php';

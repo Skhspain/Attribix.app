@@ -42,7 +42,7 @@ class Settings {
 			__( 'Attribix', 'attribix-woo' ),
 			'manage_options',
 			self::SLUG,
-			null, // render handled by Admin_Pages
+			'__return_false',
 			'dashicons-chart-area',
 			58
 		);

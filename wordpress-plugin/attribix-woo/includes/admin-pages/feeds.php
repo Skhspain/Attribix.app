@@ -9,7 +9,7 @@ use Attribix_Woo\Settings;
 
 $settings = Settings::get();
 $shop     = Api::shop_domain();
-$base_url = Api::base_url ? '' : str_replace( '/api/track', '', rtrim( $settings['endpoint'] ?? ATTRIBIX_WOO_DEFAULT_ENDPOINT, '/' ) );
+$base_url = str_replace( '/api/track', '', rtrim( $settings['endpoint'] ?? ATTRIBIX_WOO_DEFAULT_ENDPOINT, '/' ) );
 
 // For WooCommerce, feeds can be generated locally
 $google_shopping_url = home_url( '/wp-json/attribix/v1/feed/google-shopping' );
