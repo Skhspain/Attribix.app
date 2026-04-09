@@ -74,19 +74,79 @@ $base      = admin_url( 'admin.php?page=attribix-meta-ads' );
 			<p style="margin-top:8px;font-size:12px;color:#9ca3af;">A popup will open for Facebook authorization. After connecting, refresh this page.</p>
 		</div>
 	<?php else : ?>
-		<div style="display:flex;gap:12px;margin:16px 0;align-items:center;">
-			<span class="ax-badge ax-badge-green" style="font-size:13px;padding:4px 12px;">Connected</span>
-			<button type="button" class="ax-btn" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=600,height=700')">
-				Reconnect
-			</button>
-			<form method="post" style="display:inline;">
-				<?php wp_nonce_field( 'attribix_meta_action' ); ?>
-				<input type="hidden" name="meta_action" value="sync" />
-				<select name="sync_days" style="padding:6px;font-size:13px;">
-					<option value="7">7 days</option><option value="14">14 days</option><option value="30" selected>30 days</option><option value="90">90 days</option>
-				</select>
-				<button type="submit" class="ax-btn">Sync Now</button>
-			</form>
+		<?php
+		// Load ad accounts if requested
+		$accounts = array();
+		if ( $load_accounts || isset( $_POST['meta_action'] ) ) {
+			$acct_data = Api::get( '/api/meta/adaccounts' );
+			$accounts = $acct_data['accounts'] ?? array();
+		}
+		?>
+		<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;margin:16px 0;">
+			<div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;">
+				<span class="ax-badge ax-badge-green" style="font-size:13px;padding:4px 12px;">Connected</span>
+				<button type="button" class="ax-btn" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=600,height=700')">Reconnect</button>
+				<div class="ax-spacer"></div>
+				<form method="post" style="display:inline;">
+					<?php wp_nonce_field( 'attribix_meta_action' ); ?>
+					<input type="hidden" name="meta_action" value="sync" />
+					<select name="sync_days" style="padding:6px;font-size:13px;">
+						<option value="7">7 days</option><option value="14">14 days</option><option value="30" selected>30 days</option><option value="90">90 days</option>
+					</select>
+					<button type="submit" class="ax-btn ax-btn-primary">Sync Now</button>
+				</form>
+			</div>
+
+			<!-- Ad Account Selector -->
+			<div style="border-top:1px solid #e5e7eb;padding-top:16px;">
+				<h3 style="margin:0 0 8px;font-size:14px;">Ad Account</h3>
+				<?php if ( empty( $accounts ) && ! $load_accounts ) : ?>
+					<a href="<?php echo esc_url( $meta_accounts_url ); ?>" class="ax-btn">Load Ad Accounts</a>
+				<?php elseif ( ! empty( $accounts ) ) : ?>
+					<form method="post">
+						<?php wp_nonce_field( 'attribix_meta_action' ); ?>
+						<input type="hidden" name="meta_action" value="select_account" />
+						<div style="display:flex;gap:8px;align-items:center;">
+							<select name="ad_account_id" style="flex:1;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
+								<option value="">Select an ad account...</option>
+								<?php foreach ( $accounts as $acct ) : ?>
+									<option value="<?php echo esc_attr( $acct['id'] ); ?>">
+										<?php echo esc_html( ( $acct['name'] ?? $acct['id'] ) . ' (' . $acct['id'] . ')' . ( ! empty( $acct['currency'] ) ? ' — ' . $acct['currency'] : '' ) ); ?>
+									</option>
+								<?php endforeach; ?>
+							</select>
+							<button type="submit" class="ax-btn ax-btn-primary">Save</button>
+						</div>
+						<p style="font-size:12px;color:#6b7280;margin:6px 0 0;"><?php echo count( $accounts ); ?> ad accounts found.</p>
+					</form>
+				<?php else : ?>
+					<p style="color:#9ca3af;font-size:13px;">No ad accounts found. Make sure your Meta app has the required permissions.</p>
+				<?php endif; ?>
+			</div>
+
+			<!-- Pixel Settings -->
+			<?php
+			$pixel_data = Api::get( '/api/meta/pixels' );
+			$pixels = $pixel_data['pixels'] ?? array();
+			$current_pixel = $settings['fb_pixel_id'] ?? '';
+			?>
+			<?php if ( ! empty( $pixels ) ) : ?>
+			<div style="border-top:1px solid #e5e7eb;padding-top:16px;margin-top:16px;">
+				<h3 style="margin:0 0 8px;font-size:14px;">Meta Pixel</h3>
+				<div style="display:flex;gap:8px;flex-wrap:wrap;">
+					<?php foreach ( $pixels as $px ) : ?>
+						<div style="border:1px solid <?php echo ( $current_pixel === $px['id'] ) ? '#16a34a' : '#d1d5db'; ?>;border-radius:6px;padding:8px 14px;font-size:13px;<?php echo ( $current_pixel === $px['id'] ) ? 'background:#ecfdf5;' : ''; ?>">
+							<strong><?php echo esc_html( $px['name'] ?? $px['id'] ); ?></strong>
+							<br><span style="color:#6b7280;font-size:11px;"><?php echo esc_html( $px['id'] ); ?></span>
+							<?php if ( $current_pixel === $px['id'] ) : ?>
+								<br><span style="color:#16a34a;font-size:11px;font-weight:600;">✓ Active</span>
+							<?php endif; ?>
+						</div>
+					<?php endforeach; ?>
+				</div>
+				<p style="font-size:12px;color:#6b7280;margin:8px 0 0;">To change pixel, update Meta Pixel ID in <a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=tracking' ) ); ?>">Tracking Pixels settings</a>.</p>
+			</div>
+			<?php endif; ?>
 		</div>
 	<?php endif; ?>
 

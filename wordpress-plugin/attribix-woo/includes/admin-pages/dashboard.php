@@ -9,7 +9,33 @@ use Attribix_Woo\Settings;
 
 $settings = Settings::get();
 $shop     = Api::shop_domain();
-$data     = Api::get( '/api/standalone/overview', array( 'shop' => $shop, 'accountId' => $settings['account_id'] ) );
+$is_connected = \Attribix_Woo\Setup::is_connected();
+
+if ( ! $is_connected ) {
+	?>
+	<div class="wrap ax-wrap">
+		<h1 style="display:flex;align-items:center;gap:10px;"><span style="font-size:28px;">📊</span> Attribix Dashboard</h1>
+		<div style="text-align:center;padding:60px 20px;max-width:500px;margin:40px auto;">
+			<span style="font-size:64px;">🚀</span>
+			<h2 style="margin:16px 0 8px;">Welcome to Attribix!</h2>
+			<p style="color:#6b7280;font-size:15px;line-height:1.6;">
+				Connect your store to start tracking analytics, ad performance, attribution, and more.
+			</p>
+			<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-woo-settings' ) ); ?>" class="button button-primary button-hero" style="margin-top:20px;font-size:16px;">
+				Connect Your Store →
+			</a>
+			<div style="margin-top:32px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;text-align:center;">
+				<div><span style="font-size:24px;">📈</span><p style="font-size:12px;color:#6b7280;margin:4px 0 0;">Analytics &<br>Attribution</p></div>
+				<div><span style="font-size:24px;">📧</span><p style="font-size:12px;color:#6b7280;margin:4px 0 0;">Newsletter &<br>Email</p></div>
+				<div><span style="font-size:24px;">⭐</span><p style="font-size:12px;color:#6b7280;margin:4px 0 0;">Reviews &<br>SEO</p></div>
+			</div>
+		</div>
+	</div>
+	<?php
+	return;
+}
+
+$data = Api::get( '/api/standalone/overview', array( 'shop' => $shop, 'accountId' => $settings['account_id'] ) );
 
 $revenue   = $data['revenue'] ?? 0;
 $orders    = $data['orders'] ?? 0;

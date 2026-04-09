@@ -39,6 +39,7 @@ require_once ATTRIBIX_WOO_DIR . 'includes/class-reviews-widget.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-pixel-loader.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-api.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-admin-pages.php';
+require_once ATTRIBIX_WOO_DIR . 'includes/class-setup.php';
 
 add_action( 'plugins_loaded', function () {
 	// Core
@@ -52,6 +53,7 @@ add_action( 'plugins_loaded', function () {
 	\Attribix_Woo\Reviews_Widget::init();
 	\Attribix_Woo\Pixel_Loader::init();
 	\Attribix_Woo\Admin_Pages::init();
+	\Attribix_Woo\Setup::init();
 } );
 
 register_activation_hook( __FILE__, function () {

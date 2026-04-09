@@ -105,36 +105,106 @@ class Settings {
 				<?php settings_fields( self::SLUG ); ?>
 
 				<?php if ( $tab === 'general' ) : ?>
+					<?php $is_connected = \Attribix_Woo\Setup::is_connected(); ?>
+
+					<!-- Connection Status -->
+					<div style="background:<?php echo $is_connected ? '#ecfdf5' : '#eff6ff'; ?>;border:1px solid <?php echo $is_connected ? '#bbf7d0' : '#bfdbfe'; ?>;border-radius:10px;padding:24px;margin-bottom:24px;">
+						<?php if ( $is_connected ) : ?>
+							<div style="display:flex;align-items:center;gap:12px;">
+								<span style="font-size:36px;">✅</span>
+								<div>
+									<h3 style="margin:0;color:#065f46;">Store Connected</h3>
+									<p style="margin:4px 0 0;color:#6b7280;font-size:13px;">
+										Your store <strong><?php echo esc_html( \Attribix_Woo\Api::shop_domain() ); ?></strong> is connected to Attribix. Analytics are being tracked.
+									</p>
+								</div>
+							</div>
+						<?php else : ?>
+							<div style="display:flex;align-items:center;gap:16px;">
+								<span style="font-size:40px;">🚀</span>
+								<div style="flex:1;">
+									<h3 style="margin:0;color:#1e40af;">Connect Your Store</h3>
+									<p style="margin:6px 0 12px;color:#6b7280;font-size:14px;">
+										One click to connect your WooCommerce store to Attribix. This will automatically set up analytics tracking, enable all dashboard features, and start collecting data.
+									</p>
+									<button type="button" id="attribix-connect-btn" class="button button-primary button-hero" style="font-size:16px;">
+										Connect to Attribix →
+									</button>
+									<div id="attribix-connect-status" style="margin-top:10px;display:none;"></div>
+								</div>
+							</div>
+							<script>
+							document.getElementById('attribix-connect-btn').addEventListener('click', function() {
+								var btn = this;
+								var status = document.getElementById('attribix-connect-status');
+								btn.disabled = true;
+								btn.textContent = 'Connecting...';
+								status.style.display = 'block';
+								status.innerHTML = '<span style="color:#6b7280;">⏳ Setting up your account...</span>';
+
+								fetch('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', {
+									method: 'POST',
+									headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+									body: 'action=attribix_connect&nonce=<?php echo wp_create_nonce( 'attribix_connect' ); ?>'
+								})
+								.then(function(r) { return r.json(); })
+								.then(function(data) {
+									if (data.success) {
+										status.innerHTML = '<span style="color:#065f46;font-weight:600;">✅ ' + (data.data.message || 'Connected!') + '</span>';
+										setTimeout(function() { window.location.reload(); }, 1000);
+									} else {
+										status.innerHTML = '<span style="color:#dc2626;">❌ ' + (data.data || 'Connection failed.') + '</span>';
+										btn.disabled = false;
+										btn.textContent = 'Connect to Attribix →';
+									}
+								})
+								.catch(function(e) {
+									status.innerHTML = '<span style="color:#dc2626;">❌ Network error. Please try again.</span>';
+									btn.disabled = false;
+									btn.textContent = 'Connect to Attribix →';
+								});
+							});
+							</script>
+						<?php endif; ?>
+					</div>
+
+					<!-- Settings (shown always, collapsed for connected users) -->
 					<table class="form-table">
 						<tr>
-							<th><label>Account ID</label></th>
-							<td>
-								<input type="text" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[account_id]" value="<?php echo esc_attr( $opts['account_id'] ); ?>" class="regular-text" placeholder="acct_..." />
-								<p class="description">Your Attribix account identifier. Get it from <a href="https://attribix.app/analytics/settings" target="_blank">attribix.app/analytics/settings</a>.</p>
-							</td>
-						</tr>
-						<tr>
-							<th><label>API Key</label></th>
-							<td>
-								<input type="text" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[api_key]" value="<?php echo esc_attr( $opts['api_key'] ); ?>" class="regular-text code" placeholder="atx_..." />
-								<p class="description">Your tracking API key. Found in your Attribix dashboard under Settings → Tracking Key. This enables the admin pages to load your analytics data.</p>
-							</td>
-						</tr>
-						<tr>
-							<th><label>API Endpoint</label></th>
-							<td>
-								<input type="url" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[endpoint]" value="<?php echo esc_attr( $opts['endpoint'] ); ?>" class="regular-text code" />
-								<p class="description">Leave default unless self-hosting.</p>
-							</td>
-						</tr>
-						<tr>
-							<th><label>Tracking</label></th>
+							<th><label>Event Tracking</label></th>
 							<td>
 								<label><input type="checkbox" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[enabled]" value="1" <?php checked( 1, $opts['enabled'] ); ?> /> Enable event tracking</label>
-								<p class="description">When enabled, page views, product views, cart events, and orders are sent to Attribix.</p>
+								<p class="description">Page views, product views, cart events, and orders are sent to Attribix.</p>
 							</td>
 						</tr>
 					</table>
+
+					<?php if ( $is_connected ) : ?>
+					<details style="margin-top:16px;">
+						<summary style="cursor:pointer;color:#6b7280;font-size:13px;">Advanced settings</summary>
+						<table class="form-table" style="margin-top:8px;">
+							<tr>
+								<th><label>Account ID</label></th>
+								<td><input type="text" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[account_id]" value="<?php echo esc_attr( $opts['account_id'] ); ?>" class="regular-text code" readonly /></td>
+							</tr>
+							<tr>
+								<th><label>API Key</label></th>
+								<td><input type="text" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[api_key]" value="<?php echo esc_attr( $opts['api_key'] ); ?>" class="regular-text code" readonly /></td>
+							</tr>
+							<tr>
+								<th><label>API Endpoint</label></th>
+								<td>
+									<input type="url" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[endpoint]" value="<?php echo esc_attr( $opts['endpoint'] ); ?>" class="regular-text code" />
+									<p class="description">Leave default unless self-hosting.</p>
+								</td>
+							</tr>
+						</table>
+					</details>
+					<?php else : ?>
+						<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[account_id]" value="<?php echo esc_attr( $opts['account_id'] ); ?>" />
+						<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[api_key]" value="<?php echo esc_attr( $opts['api_key'] ); ?>" />
+						<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[endpoint]" value="<?php echo esc_attr( $opts['endpoint'] ); ?>" />
+					<?php endif; ?>
 
 				<?php elseif ( $tab === 'tracking' ) : ?>
 					<h2>Ad Platform Pixels</h2>
