@@ -58,6 +58,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     });
 
+    const isWooCommerce = decoded?.platform === "woocommerce" || !shop.includes(".myshopify.com");
+
     const successHtml = `<!DOCTYPE html>
 <html>
   <head>
@@ -69,19 +71,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .icon { font-size: 48px; margin-bottom: 16px; }
       h1 { font-size: 20px; margin: 0 0 8px; color: #202223; }
       p { color: #6d7175; margin: 0 0 24px; font-size: 14px; }
+      a { display:inline-block;background:#008060;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-weight:500;font-size:15px; }
+      a:hover { background:#006e52; }
     </style>
   </head>
   <body>
     <div class="card">
       <div class="icon">✅</div>
       <h1>Google Ads connected!</h1>
-      <p>Redirecting you back to Shopify…</p>
+      <p>${isWooCommerce ? "You can close this window and refresh your WordPress admin." : "Redirecting you back to Shopify…"}</p>
+      <a href="${isWooCommerce ? "#" : `https://${shop}/admin`}" ${isWooCommerce ? `onclick="window.close(); return false;"` : ""}>${isWooCommerce ? "Close this window" : "Return to Shopify Admin"}</a>
     </div>
-    <script>
-      setTimeout(function() {
-        window.location.href = "https://${shop}/admin";
-      }, 2000);
-    </script>
+    ${isWooCommerce ? "" : `<script>setTimeout(function(){window.location.href="https://${shop}/admin";},2000);</script>`}
   </body>
 </html>`;
 

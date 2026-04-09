@@ -52,8 +52,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const META_APP_ID = mustEnv("META_APP_ID");
   const META_REDIRECT_URI = mustEnv("META_REDIRECT_URI");
 
+  const platform = url.searchParams.get("platform") || "shopify";
+
   const state = Buffer.from(
-    JSON.stringify({ shop, host, embedded, returnTo }),
+    JSON.stringify({ shop, host, embedded, returnTo, platform }),
     "utf8"
   ).toString("base64url");
 

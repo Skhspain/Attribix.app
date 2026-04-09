@@ -44,12 +44,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (!clientId) throw new Response("Missing GOOGLE_ADS_CLIENT_ID", { status: 500 });
   if (!redirectUri) throw new Response("Missing GOOGLE_ADS_REDIRECT_URI", { status: 500 });
 
+  const platform = url.searchParams.get("platform") || "shopify";
+
   const state = base64UrlEncode(
     JSON.stringify({
       shop,
       host,
       embedded,
       returnTo,
+      platform,
       nonce: crypto.randomUUID(),
     })
   );

@@ -43,8 +43,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const TIKTOK_APP_ID = mustEnv("TIKTOK_APP_ID");
   const TIKTOK_REDIRECT_URI = mustEnv("TIKTOK_REDIRECT_URI");
 
+  const platform = url.searchParams.get("platform") || "shopify";
+
   const state = Buffer.from(
-    JSON.stringify({ shop, host, embedded, returnTo }),
+    JSON.stringify({ shop, host, embedded, returnTo, platform }),
     "utf8"
   ).toString("base64url");
 
