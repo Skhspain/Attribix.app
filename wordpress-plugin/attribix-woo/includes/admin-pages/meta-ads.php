@@ -31,9 +31,62 @@ $base      = admin_url( 'admin.php?page=attribix-meta-ads' );
 		<?php endforeach; ?>
 	</div>
 
+	<?php
+	$api_base  = Api::base_url();
+	$meta_oauth_url = $api_base . '/api/meta/oauth/start?shop=' . urlencode( Api::shop_domain() ) . '&returnTo=/app/integrations/meta&platform=woocommerce';
+	$meta_accounts_url = admin_url( 'admin.php?page=attribix-meta-ads&action=load_accounts' );
+	$load_accounts = isset( $_GET['action'] ) && $_GET['action'] === 'load_accounts';
+
+	// Handle ad account selection
+	if ( isset( $_POST['meta_action'] ) && wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'attribix_meta_action' ) ) {
+		if ( $_POST['meta_action'] === 'select_account' ) {
+			$acct_id = sanitize_text_field( $_POST['ad_account_id'] ?? '' );
+			if ( $acct_id ) {
+				Api::post( '/api/meta/adaccount/select', array( 'adAccountId' => $acct_id, 'shop' => Api::shop_domain() ) );
+				echo '<div class="notice notice-success"><p>Ad account saved.</p></div>';
+			}
+		}
+		if ( $_POST['meta_action'] === 'sync' ) {
+			$sync_days = (int) ( $_POST['sync_days'] ?? 7 );
+			Api::post( '/api/meta/sync', array( 'days' => $sync_days, 'shop' => Api::shop_domain() ) );
+			echo '<div class="notice notice-success"><p>Sync triggered.</p></div>';
+			// Reload data
+			$data = Api::get( '/api/standalone/meta-ads', array( 'days' => $days ) );
+			$campaigns = $data['campaigns'] ?? array();
+			$ads = $data['ads'] ?? array();
+			$totals = $data['totals'] ?? array();
+		}
+	}
+	?>
+
 	<?php if ( ! $connected ) : ?>
-		<div class="notice notice-warning" style="margin:16px 0;">
-			<p>Meta Ads not connected. Connect via your <a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=integrations' ) ); ?>">Integrations settings</a>.</p>
+		<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:24px;margin:16px 0;">
+			<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+				<span style="font-size:32px;">📘</span>
+				<div>
+					<h3 style="margin:0;">Connect Meta Ads</h3>
+					<p style="margin:4px 0 0;color:#6b7280;font-size:13px;">Link your Facebook/Instagram ad account to see campaign performance.</p>
+				</div>
+			</div>
+			<button type="button" class="ax-btn ax-btn-primary" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=600,height=700')">
+				Connect Meta Account
+			</button>
+			<p style="margin-top:8px;font-size:12px;color:#9ca3af;">A popup will open for Facebook authorization. After connecting, refresh this page.</p>
+		</div>
+	<?php else : ?>
+		<div style="display:flex;gap:12px;margin:16px 0;align-items:center;">
+			<span class="ax-badge ax-badge-green" style="font-size:13px;padding:4px 12px;">Connected</span>
+			<button type="button" class="ax-btn" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=600,height=700')">
+				Reconnect
+			</button>
+			<form method="post" style="display:inline;">
+				<?php wp_nonce_field( 'attribix_meta_action' ); ?>
+				<input type="hidden" name="meta_action" value="sync" />
+				<select name="sync_days" style="padding:6px;font-size:13px;">
+					<option value="7">7 days</option><option value="14">14 days</option><option value="30" selected>30 days</option><option value="90">90 days</option>
+				</select>
+				<button type="submit" class="ax-btn">Sync Now</button>
+			</form>
 		</div>
 	<?php endif; ?>
 

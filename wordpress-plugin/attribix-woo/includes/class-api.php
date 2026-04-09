@@ -24,7 +24,7 @@ class Api {
 	/**
 	 * Get the API base URL.
 	 */
-	private static function base_url() {
+	public static function base_url() {
 		$settings = Settings::get();
 		$endpoint = rtrim( $settings['endpoint'] ?? ATTRIBIX_WOO_DEFAULT_ENDPOINT, '/' );
 		return str_replace( '/api/track', '', $endpoint );
