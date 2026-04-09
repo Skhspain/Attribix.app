@@ -389,7 +389,7 @@ export default function AppIndex() {
                 { icon: "📊", title: "Analytics", desc: "Revenue & attribution", url: "/app/analytics" },
                 { icon: "🎯", title: "Meta Ads", desc: `${fmt(data.metaSpend)} spend`, url: "/app/meta-ads" },
                 { icon: "📈", title: "Google Ads", desc: `${fmt(data.googleSpend)} spend`, url: "/app/google-ads" },
-                { icon: "🎵", title: "TikTok Ads", desc: "Campaign performance", url: "/app/tiktok-ads" },
+                // { icon: "🎵", title: "TikTok Ads", desc: "Campaign performance", url: "/app/tiktok-ads" }, — hidden until TikTok dev app approved
                 { icon: "📦", title: "Orders", desc: `${data.orders30} in 30 days`, url: "/app/orders" },
                 { icon: "📧", title: "Newsletter", desc: `${data.featureHub?.subscriberCount || 0} subs · ${data.featureHub?.campaignCount || 0} sent`, url: "/app/newsletter" },
                 { icon: "⭐", title: "Reviews", desc: `${data.featureHub?.totalReviews || 0} reviews${data.featureHub?.pendingReviews > 0 ? ` · ${data.featureHub.pendingReviews} pending` : ""}`, url: "/app/reviews" },
