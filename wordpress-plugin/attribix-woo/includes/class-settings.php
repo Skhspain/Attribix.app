@@ -94,7 +94,7 @@ class Settings {
 
 			<nav class="nav-tab-wrapper" style="margin-top:12px;">
 				<?php foreach ( $tabs as $key => $label ) : ?>
-					<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SLUG . '&tab=' . $key ) ); ?>"
+					<a href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::SLUG . '-settings&tab=' . $key ) ); ?>"
 					   class="nav-tab <?php echo $tab === $key ? 'nav-tab-active' : ''; ?>">
 						<?php echo esc_html( $label ); ?>
 					</a>
@@ -201,32 +201,41 @@ class Settings {
 					<p style="margin-top:16px;">Manage reviews, widget design, and review requests from your <a href="https://attribix.app/analytics/reviews" target="_blank">Attribix Dashboard →</a></p>
 
 				<?php elseif ( $tab === 'integrations' ) : ?>
+					<?php
+					$shop_domain = \Attribix_Woo\Api::shop_domain();
+					// Route OAuth through attribix.app (Vercel proxy) to avoid Chrome lookalike warnings
+					$meta_oauth   = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
+					$google_oauth = 'https://attribix.app/api/google/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
+					$tiktok_oauth = 'https://attribix.app/api/tiktok/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
+					?>
 					<h2>Ad Platform Integrations</h2>
-					<p>Connect your ad accounts to see campaign performance, ROAS, and attribution data in your Attribix dashboard.</p>
+					<p>Connect your ad accounts to see campaign performance, ROAS, and attribution data directly in your WordPress admin.</p>
 
 					<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px;max-width:600px;">
-						<?php
-						$integrations = array(
-							array( 'name' => 'Meta Ads',    'icon' => '📘', 'desc' => 'Facebook & Instagram Ads', 'url' => 'https://attribix.app/analytics/settings' ),
-							array( 'name' => 'Google Ads',  'icon' => '📈', 'desc' => 'Google Ads campaigns',     'url' => 'https://attribix.app/analytics/settings' ),
-							array( 'name' => 'TikTok Ads',  'icon' => '🎵', 'desc' => 'TikTok Ads Manager',       'url' => 'https://attribix.app/analytics/settings' ),
-							array( 'name' => 'Email (SMTP)', 'icon' => '📧', 'desc' => 'Newsletter sending',      'url' => 'https://attribix.app/analytics/newsletter/settings' ),
-						);
-						foreach ( $integrations as $int ) :
-						?>
-							<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
-								<div style="font-size:20px;margin-bottom:4px;"><?php echo $int['icon']; ?> <strong><?php echo esc_html( $int['name'] ); ?></strong></div>
-								<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;"><?php echo esc_html( $int['desc'] ); ?></p>
-								<a href="<?php echo esc_url( $int['url'] ); ?>" target="_blank" class="button">Connect →</a>
-							</div>
-						<?php endforeach; ?>
+						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
+							<div style="font-size:20px;margin-bottom:4px;">📘 <strong>Meta Ads</strong></div>
+							<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;">Facebook & Instagram Ads</p>
+							<button type="button" class="button button-primary" onclick="window.open('<?php echo esc_js( $meta_oauth ); ?>', 'meta_oauth', 'width=600,height=700')">Connect Meta →</button>
+						</div>
+						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
+							<div style="font-size:20px;margin-bottom:4px;">📈 <strong>Google Ads</strong></div>
+							<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;">Google Ads campaigns</p>
+							<button type="button" class="button button-primary" onclick="window.open('<?php echo esc_js( $google_oauth ); ?>', 'google_oauth', 'width=600,height=700')">Connect Google →</button>
+						</div>
+						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
+							<div style="font-size:20px;margin-bottom:4px;">🎵 <strong>TikTok Ads</strong></div>
+							<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;">TikTok Ads Manager</p>
+							<button type="button" class="button" onclick="window.open('<?php echo esc_js( $tiktok_oauth ); ?>', 'tiktok_oauth', 'width=600,height=700')">Connect TikTok →</button>
+							<p style="font-size:11px;color:#9ca3af;margin-top:4px;">Pending developer app approval</p>
+						</div>
+						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
+							<div style="font-size:20px;margin-bottom:4px;">📧 <strong>Email (SMTP)</strong></div>
+							<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;">Newsletter sending</p>
+							<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=newsletter' ) ); ?>" class="button">Configure →</a>
+						</div>
 					</div>
 
-					<h2 style="margin-top:32px;">Full Dashboard</h2>
-					<p>Access all features — analytics, attribution, newsletters, reviews, leads, SEO, and more:</p>
-					<a href="https://attribix.app/analytics" target="_blank" class="button button-primary button-hero" style="margin-top:8px;">
-						Open Attribix Dashboard →
-					</a>
+					<p style="margin-top:16px;font-size:13px;color:#6b7280;">After connecting, a popup will open for authorization. Once done, refresh this page. Then go to <a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-meta-ads' ) ); ?>">Meta Ads</a> or <a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-google-ads' ) ); ?>">Google Ads</a> to sync and view your data.</p>
 
 				<?php endif; ?>
 

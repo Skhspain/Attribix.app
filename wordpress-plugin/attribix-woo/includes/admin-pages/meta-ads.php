@@ -32,8 +32,8 @@ $base      = admin_url( 'admin.php?page=attribix-meta-ads' );
 	</div>
 
 	<?php
-	$api_base  = Api::base_url();
-	$meta_oauth_url = $api_base . '/api/meta/oauth/start?shop=' . urlencode( Api::shop_domain() ) . '&returnTo=/app/integrations/meta&platform=woocommerce';
+	// Route through attribix.app (Vercel proxy) to avoid Chrome lookalike warnings
+	$meta_oauth_url = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( Api::shop_domain() ) . '&platform=woocommerce';
 	$meta_accounts_url = admin_url( 'admin.php?page=attribix-meta-ads&action=load_accounts' );
 	$load_accounts = isset( $_GET['action'] ) && $_GET['action'] === 'load_accounts';
 
