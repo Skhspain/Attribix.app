@@ -17,6 +17,7 @@ class Settings {
 	public static function get() {
 		$defaults = array(
 			'account_id'       => '',
+			'api_key'          => '',
 			'endpoint'         => ATTRIBIX_WOO_DEFAULT_ENDPOINT,
 			'enabled'          => 1,
 			// Pixels
@@ -35,12 +36,13 @@ class Settings {
 	}
 
 	public static function menu() {
+		// Main menu registered here; submenus added by Admin_Pages class
 		add_menu_page(
 			__( 'Attribix', 'attribix-woo' ),
 			__( 'Attribix', 'attribix-woo' ),
 			'manage_options',
 			self::SLUG,
-			array( __CLASS__, 'render' ),
+			null, // render handled by Admin_Pages
 			'dashicons-chart-area',
 			58
 		);
@@ -57,6 +59,7 @@ class Settings {
 	public static function sanitize( $input ) {
 		$out = self::get();
 		if ( isset( $input['account_id'] ) )      $out['account_id']       = sanitize_text_field( $input['account_id'] );
+		if ( isset( $input['api_key'] ) )          $out['api_key']          = sanitize_text_field( $input['api_key'] );
 		if ( isset( $input['endpoint'] ) )         $out['endpoint']         = esc_url_raw( trim( $input['endpoint'] ) ) ?: ATTRIBIX_WOO_DEFAULT_ENDPOINT;
 		$out['enabled']          = ! empty( $input['enabled'] ) ? 1 : 0;
 		if ( isset( $input['fb_pixel_id'] ) )      $out['fb_pixel_id']      = sanitize_text_field( $input['fb_pixel_id'] );
@@ -108,6 +111,13 @@ class Settings {
 							<td>
 								<input type="text" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[account_id]" value="<?php echo esc_attr( $opts['account_id'] ); ?>" class="regular-text" placeholder="acct_..." />
 								<p class="description">Your Attribix account identifier. Get it from <a href="https://attribix.app/analytics/settings" target="_blank">attribix.app/analytics/settings</a>.</p>
+							</td>
+						</tr>
+						<tr>
+							<th><label>API Key</label></th>
+							<td>
+								<input type="text" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[api_key]" value="<?php echo esc_attr( $opts['api_key'] ); ?>" class="regular-text code" placeholder="atx_..." />
+								<p class="description">Your tracking API key. Found in your Attribix dashboard under Settings → Tracking Key. This enables the admin pages to load your analytics data.</p>
 							</td>
 						</tr>
 						<tr>

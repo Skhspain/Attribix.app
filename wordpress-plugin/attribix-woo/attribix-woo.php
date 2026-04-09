@@ -36,6 +36,8 @@ require_once ATTRIBIX_WOO_DIR . 'includes/class-cart.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-newsletter-widget.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-reviews-widget.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-pixel-loader.php';
+require_once ATTRIBIX_WOO_DIR . 'includes/class-api.php';
+require_once ATTRIBIX_WOO_DIR . 'includes/class-admin-pages.php';
 
 add_action( 'plugins_loaded', function () {
 	// Core
@@ -48,6 +50,7 @@ add_action( 'plugins_loaded', function () {
 	\Attribix_Woo\Newsletter_Widget::init();
 	\Attribix_Woo\Reviews_Widget::init();
 	\Attribix_Woo\Pixel_Loader::init();
+	\Attribix_Woo\Admin_Pages::init();
 } );
 
 register_activation_hook( __FILE__, function () {

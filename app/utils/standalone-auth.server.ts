@@ -95,9 +95,31 @@ export type StandaloneAuth = {
 
 /**
  * Authenticate a standalone dashboard API request.
- * Extracts Bearer token, verifies with Clerk, resolves org + shops.
+ * Supports two auth methods:
+ *   1. Bearer token (Clerk JWT) — for the standalone web dashboard
+ *   2. X-Account-Id + X-Api-Key headers — for WooCommerce plugin
  */
 export async function authenticateStandalone(request: Request): Promise<StandaloneAuth> {
+  // Method 2: API Key auth (WooCommerce plugin)
+  const accountId = request.headers.get("X-Account-Id") || "";
+  const apiKey = request.headers.get("X-Api-Key") || "";
+  const shopHeader = request.headers.get("X-Shop") || "";
+
+  if (accountId && apiKey) {
+    return authenticateApiKey(accountId, apiKey, shopHeader);
+  }
+
+  // Also support query params for simple GET requests from WordPress
+  const url = new URL(request.url);
+  const qAccountId = url.searchParams.get("accountId") || "";
+  const qApiKey = url.searchParams.get("apiKey") || "";
+  const qShop = url.searchParams.get("shop") || "";
+
+  if (qAccountId && qApiKey) {
+    return authenticateApiKey(qAccountId, qApiKey, qShop);
+  }
+
+  // Method 1: Bearer token (Clerk JWT)
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     throw new Response(JSON.stringify({ error: "Missing or invalid Authorization header" }), {
@@ -156,6 +178,55 @@ export async function authenticateStandalone(request: Request): Promise<Standalo
 }
 
 /**
+ * Authenticate via API key — used by WooCommerce plugin.
+ * The API key is stored in TrackingSettings.trackingKey.
+ */
+async function authenticateApiKey(accountId: string, apiKey: string, shop: string): Promise<StandaloneAuth> {
+  // Look up the tracking settings by the API key
+  const trackingSettings = await (db as any).trackingSettings?.findFirst?.({
+    where: { trackingKey: apiKey },
+  });
+
+  if (!trackingSettings) {
+    throw new Response(JSON.stringify({ error: "Invalid API key" }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const resolvedShop = shop || trackingSettings.shop;
+
+  // Also try to find linked shops via OrgStore if accountId matches an Org
+  let shops = [resolvedShop];
+  try {
+    const orgStores = await db.orgStore.findMany({
+      where: { shop: resolvedShop },
+      select: { orgId: true },
+    });
+    if (orgStores.length > 0) {
+      const allStores = await db.orgStore.findMany({
+        where: { orgId: orgStores[0].orgId },
+        select: { shop: true },
+      });
+      shops = allStores.map((s) => s.shop);
+    }
+  } catch {}
+
+  // Ensure the requesting shop is in the list
+  if (!shops.includes(resolvedShop)) {
+    shops.push(resolvedShop);
+  }
+
+  return {
+    clerkUserId: "",
+    email: null,
+    orgId: accountId,
+    shops,
+    accountId,
+  };
+}
+
+/**
  * CORS helper for standalone API routes.
  */
 export function standaloneCors(request: Request, response: Response): Response {
@@ -168,6 +239,16 @@ export function standaloneCors(request: Request, response: Response): Response {
     "http://localhost:3000",
     "http://localhost:3001",
   ];
+
+  // Allow any origin for API key auth (WooCommerce sites can be on any domain)
+  const hasApiKey = request.headers.get("X-Api-Key") || new URL(request.url).searchParams.get("apiKey");
+  if (hasApiKey && origin) {
+    response.headers.set("Access-Control-Allow-Origin", origin);
+    response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Account-Id, X-Api-Key, X-Shop");
+    response.headers.set("Access-Control-Allow-Credentials", "true");
+    return response;
+  }
 
   if (origin && allowedOrigins.includes(origin)) {
     response.headers.set("Access-Control-Allow-Origin", origin);
