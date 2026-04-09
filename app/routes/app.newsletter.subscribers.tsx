@@ -93,6 +93,8 @@ export async function action({ request }: ActionFunctionArgs) {
         create: { shop, email, firstName: firstName || null, lastName: lastName || null, status: "subscribed", source: "manual" },
         update: { status: "subscribed", firstName: firstName || undefined, lastName: lastName || undefined },
       });
+      const { enrollInFlows } = await import("~/services/automationEngine.server");
+      enrollInFlows({ shop, trigger: "subscriber_created", email, firstName: firstName || undefined }).catch(() => null);
       return json({ ok: true, intent });
     } catch (e: any) {
       return json({ ok: false, intent, error: "Failed to add subscriber." });

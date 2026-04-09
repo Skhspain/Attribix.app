@@ -9,7 +9,6 @@ type EnsureResult =
       accountID: string;
       action: "created" | "updated";
       webPixelId?: string;
-      browserScriptTagId?: string;
       ms: number;
       note?: string;
     }
@@ -23,14 +22,6 @@ type EnsureResult =
       authRedirect?: string;
       ms: number;
     };
-
-type ScriptTagEnsureResult = {
-  ok: boolean;
-  action: "created" | "updated" | "unchanged" | "skipped";
-  id?: string;
-  src?: string;
-  error?: string;
-};
 
 function msSince(t0: number) {
   return Date.now() - t0;
@@ -100,221 +91,9 @@ async function runGraphql(admin: any, query: string, variables?: any) {
 const META_NAMESPACE = "attribix";
 const META_KEY = "web_pixel_id";
 
-function getAppOrigin(request: Request) {
-  try {
-    if (process.env.APP_URL?.trim()) {
-      return process.env.APP_URL.trim().replace(/\/$/, "");
-    }
-
-    const url = new URL(request.url);
-    return `${url.protocol}//${url.host}`;
-  } catch {
-    return "https://attribix-app.fly.dev";
-  }
-}
-
-function getBrowserTrackScriptSrc(request: Request) {
-  const origin = getAppOrigin(request);
-  return `${origin}/attribix/browser-track`;
-}
-
-async function ensureBrowserContextScriptTag(
-  admin: any,
-  request: Request,
-  shop: string,
-): Promise<ScriptTagEnsureResult> {
-  try {
-    const desiredSrc = getBrowserTrackScriptSrc(request);
-
-    const LIST_QUERY = `#graphql
-      query ScriptTagsForAttribix {
-        scriptTags(first: 50) {
-          edges {
-            node {
-              id
-              src
-              displayScope
-            }
-          }
-        }
-      }
-    `;
-
-    const listRes = await runGraphql(admin, LIST_QUERY);
-
-    if (listRes.topErrorText) {
-      console.error("[webPixel] scriptTags query error", listRes.topErrorText);
-      return {
-        ok: false,
-        action: "skipped",
-        error: listRes.topErrorText,
-      };
-    }
-
-    const nodes =
-      listRes.data?.data?.scriptTags?.edges?.map((edge: any) => edge?.node).filter(Boolean) ?? [];
-
-    const existing = nodes.find((node: any) => {
-      const src = String(node?.src || "");
-      return (
-        src === desiredSrc ||
-        src.startsWith(`${desiredSrc}?`) ||
-        src.includes("/attribix/browser-track")
-      );
-    });
-
-    if (existing) {
-      const currentSrc = String(existing.src || "");
-      const currentScope = String(existing.displayScope || "");
-
-      if (currentSrc === desiredSrc && currentScope === "ONLINE_STORE") {
-        console.log("[webPixel] browser ScriptTag unchanged", {
-          shop,
-          id: existing.id,
-          src: existing.src,
-          displayScope: existing.displayScope,
-        });
-
-        return {
-          ok: true,
-          action: "unchanged",
-          id: existing.id,
-          src: existing.src,
-        };
-      }
-
-      const UPDATE_MUTATION = `#graphql
-        mutation ScriptTagUpdate($id: ID!, $input: ScriptTagInput!) {
-          scriptTagUpdate(id: $id, input: $input) {
-            scriptTag {
-              id
-              src
-              displayScope
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-      `;
-
-      const upd = await runGraphql(admin, UPDATE_MUTATION, {
-        id: existing.id,
-        input: {
-          src: desiredSrc,
-          displayScope: "ONLINE_STORE",
-          cache: false,
-        },
-      });
-
-      if (upd.topErrorText) {
-        console.error("[webPixel] scriptTagUpdate top-level error", upd.topErrorText);
-        return {
-          ok: false,
-          action: "skipped",
-          error: upd.topErrorText,
-        };
-      }
-
-      const userErrors = upd.data?.data?.scriptTagUpdate?.userErrors ?? [];
-      if (userErrors.length) {
-        const text = userErrors.map((e: any) => e?.message).filter(Boolean).join(" | ");
-        console.error("[webPixel] scriptTagUpdate userErrors", userErrors);
-        return {
-          ok: false,
-          action: "skipped",
-          error: text || "scriptTagUpdate returned userErrors",
-        };
-      }
-
-      const updated = upd.data?.data?.scriptTagUpdate?.scriptTag;
-
-      console.log("[webPixel] browser ScriptTag updated", {
-        shop,
-        id: updated?.id || existing.id,
-        src: updated?.src || desiredSrc,
-        displayScope: updated?.displayScope || "ONLINE_STORE",
-      });
-
-      return {
-        ok: true,
-        action: "updated",
-        id: updated?.id || existing.id,
-        src: updated?.src || desiredSrc,
-      };
-    }
-
-    const CREATE_MUTATION = `#graphql
-      mutation ScriptTagCreate($input: ScriptTagInput!) {
-        scriptTagCreate(input: $input) {
-          scriptTag {
-            id
-            src
-            displayScope
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    const crt = await runGraphql(admin, CREATE_MUTATION, {
-      input: {
-        src: desiredSrc,
-        displayScope: "ONLINE_STORE",
-        cache: false,
-      },
-    });
-
-    if (crt.topErrorText) {
-      console.error("[webPixel] scriptTagCreate top-level error", crt.topErrorText);
-      return {
-        ok: false,
-        action: "skipped",
-        error: crt.topErrorText,
-      };
-    }
-
-    const userErrors = crt.data?.data?.scriptTagCreate?.userErrors ?? [];
-    if (userErrors.length) {
-      const text = userErrors.map((e: any) => e?.message).filter(Boolean).join(" | ");
-      console.error("[webPixel] scriptTagCreate userErrors", userErrors);
-      return {
-        ok: false,
-        action: "skipped",
-        error: text || "scriptTagCreate returned userErrors",
-      };
-    }
-
-    const created = crt.data?.data?.scriptTagCreate?.scriptTag;
-
-    console.log("[webPixel] browser ScriptTag created", {
-      shop,
-      id: created?.id,
-      src: created?.src || desiredSrc,
-      displayScope: created?.displayScope || "ONLINE_STORE",
-    });
-
-    return {
-      ok: true,
-      action: "created",
-      id: created?.id,
-      src: created?.src || desiredSrc,
-    };
-  } catch (e: any) {
-    const message = e?.message || String(e);
-    console.error("[webPixel] ensureBrowserContextScriptTag unexpected error", message);
-
-    return {
-      ok: false,
-      action: "skipped",
-      error: message,
-    };
-  }
-}
+// ScriptTag injection removed — tracker is now delivered via the
+// "Attribix Tracker" Theme App Extension App Embed block (extensions/buy-now-button/blocks/tracker.liquid).
+// Merchants enable it once in Online Store → Themes → Customize → App Embeds.
 
 /**
  * IMPORTANT CHANGE:
@@ -628,21 +407,6 @@ async function ensureWebPixel(request: Request, accountID: string) {
       console.log("[webPixel] ENSURE HIT (created)", { webPixelId, ms: msSince(t0) });
     }
 
-    // 5) Ensure storefront browser helper script
-    const browserScript = await ensureBrowserContextScriptTag(admin, request, shop);
-
-    if (browserScript.ok) {
-      if (browserScript.action === "created") {
-        note += " Browser helper ScriptTag created.";
-      } else if (browserScript.action === "updated") {
-        note += " Browser helper ScriptTag updated.";
-      } else if (browserScript.action === "unchanged") {
-        note += " Browser helper ScriptTag already present.";
-      }
-    } else {
-      note += ` Browser helper ScriptTag was not ensured: ${browserScript.error || "unknown error"}`;
-    }
-
     return json<EnsureResult>(
       {
         ok: true,
@@ -650,7 +414,6 @@ async function ensureWebPixel(request: Request, accountID: string) {
         accountID,
         action: finalAction,
         webPixelId,
-        browserScriptTagId: browserScript.id,
         ms: msSince(t0),
         note,
       },

@@ -412,6 +412,43 @@ ${btn("Redeem my reward", "#92765a")}
 ${dividerFooter("No expiry on loyalty rewards.", "#f5ede3")}`, "#faf7f2")}
 );
 
+add({ id: "top_reviews", name: "Customer Reviews Showcase", category: "Social Proof", description: "Highlight your best reviews to build trust", primaryColor: "#f59e0b",
+html: wrap(`
+${header("#1c1917", `<p style="margin:0 0 8px;color:#f59e0b;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:3px;">What our customers say</p>
+<h1 style="margin:0;color:#fff;font-size:26px;font-weight:800;">Real reviews from real people ⭐</h1>`, "40px 40px 32px")}
+${body(`
+<p style="margin:0 0 28px;color:#6b7280;font-size:15px;line-height:1.7;text-align:center;">Don't just take our word for it — here's what our customers are saying about us.</p>
+
+<div style="border:1px solid #e5e7eb;border-radius:12px;padding:24px 28px;margin-bottom:16px;background:#fffbeb;">
+  <div style="color:#f59e0b;font-size:20px;letter-spacing:2px;margin-bottom:10px;">★★★★★</div>
+  <p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#111827;">"Absolutely love it!"</p>
+  <p style="margin:0 0 12px;color:#6b7280;font-size:14px;line-height:1.6;">The quality exceeded my expectations. I've already recommended it to three friends and they're all ordering too. Fast shipping, great packaging.</p>
+  <p style="margin:0;font-size:12px;color:#9ca3af;font-weight:600;">— Sarah M. · Verified purchase ✓</p>
+</div>
+
+<div style="border:1px solid #e5e7eb;border-radius:12px;padding:24px 28px;margin-bottom:16px;">
+  <div style="color:#f59e0b;font-size:20px;letter-spacing:2px;margin-bottom:10px;">★★★★★</div>
+  <p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#111827;">"Best purchase this year"</p>
+  <p style="margin:0 0 12px;color:#6b7280;font-size:14px;line-height:1.6;">Genuinely surprised by the quality for the price. Customer support was also super helpful when I had a question. Will definitely order again.</p>
+  <p style="margin:0;font-size:12px;color:#9ca3af;font-weight:600;">— Thomas K. · Verified purchase ✓</p>
+</div>
+
+<div style="border:1px solid #e5e7eb;border-radius:12px;padding:24px 28px;margin-bottom:24px;background:#f0fdf4;">
+  <div style="color:#f59e0b;font-size:20px;letter-spacing:2px;margin-bottom:10px;">★★★★★</div>
+  <p style="margin:0 0 10px;font-size:15px;font-weight:700;color:#111827;">"Could not be happier"</p>
+  <p style="margin:0 0 12px;color:#6b7280;font-size:14px;line-height:1.6;">Arrived quickly and exactly as described. The attention to detail is impressive. I've been a customer for 2 years and the quality never drops.</p>
+  <p style="margin:0;font-size:12px;color:#9ca3af;font-weight:600;">— Emma L. · Verified purchase ✓</p>
+</div>
+
+<div style="text-align:center;margin-bottom:8px;">
+  <p style="margin:0;font-size:28px;font-weight:900;color:#111827;">4.9 <span style="color:#f59e0b;">★</span></p>
+  <p style="margin:4px 0 0;font-size:13px;color:#9ca3af;">Average rating from 200+ reviews</p>
+</div>
+`)}
+${btn("Shop now", "#1c1917")}
+${dividerFooter("You can unsubscribe at any time.")}`, "#fffbeb")}
+);
+
 export const EMAIL_TEMPLATES: EmailTemplate[] = T;
 
 export const TEMPLATE_CATEGORIES = [

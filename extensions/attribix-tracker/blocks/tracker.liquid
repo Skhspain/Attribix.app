@@ -1,0 +1,83 @@
+{% comment %}
+  Attribix Tracker — App Embed Block
+  Enable once in Online Store → Themes → Customize → App Embeds.
+  Automatically runs on every storefront page: captures UTM params,
+  click IDs, visitor/session IDs, and sends page views to Attribix.
+{% endcomment %}
+
+<script>
+(function () {
+  var APP_URL = 'https://attribix-app.fly.dev';
+  var SHOP    = {{ shop.permanent_domain | json }};
+
+  function qp(name) {
+    try { return new URLSearchParams(window.location.search).get(name) || ''; } catch (e) { return ''; }
+  }
+  function gc(name) {
+    var m = document.cookie.match(new RegExp('(?:^|;\\s*)' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function sc(name, value, days) {
+    var exp = new Date(Date.now() + days * 864e5).toUTCString();
+    document.cookie = name + '=' + encodeURIComponent(value) + '; expires=' + exp + '; path=/; SameSite=Lax';
+  }
+  function uid() {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+
+  // Visitor ID (1 year)
+  var vid = gc('attribix_vid');
+  if (!vid) { vid = uid(); sc('attribix_vid', vid, 365); }
+
+  // Session ID (~30 min rolling — refreshed on every page view)
+  var sid = gc('attribix_sid');
+  if (!sid) { sid = uid(); }
+  sc('attribix_sid', sid, 0.02);
+
+  // First-touch UTM persistence (30 days)
+  ['utm_source','utm_medium','utm_campaign','utm_term','utm_content'].forEach(function (p) {
+    var v = qp(p);
+    if (v && !gc(p)) sc(p, v, 30);
+  });
+
+  // Last-touch click IDs (30 days — always overwrite so latest wins)
+  ['gclid','fbclid','ttclid','msclkid'].forEach(function (p) {
+    var v = qp(p);
+    if (v) sc(p, v, 30);
+  });
+
+  // Page-view ping
+  try {
+    fetch(APP_URL + '/api/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      keepalive: true,
+      body: JSON.stringify({
+        type:         'page_view',
+        shop:         SHOP,
+        url:          window.location.href,
+        referrer:     document.referrer,
+        visitorId:    vid,
+        sessionId:    sid,
+        utm_source:   gc('utm_source'),
+        utm_medium:   gc('utm_medium'),
+        utm_campaign: gc('utm_campaign'),
+        utm_term:     gc('utm_term'),
+        utm_content:  gc('utm_content'),
+        gclid:        gc('gclid'),
+        fbclid:       gc('fbclid'),
+        ttclid:       gc('ttclid'),
+        msclkid:      gc('msclkid'),
+      }),
+    }).catch(function () {});
+  } catch (e) {}
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Attribix Tracker",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}

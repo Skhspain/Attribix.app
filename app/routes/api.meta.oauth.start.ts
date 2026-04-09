@@ -69,7 +69,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       "ads_read",
       "ads_management",
       "business_management",
-      // add/remove as needed
+      "leads_retrieval",
+      "pages_show_list",
+      "pages_manage_ads",
     ].join(",")
   );
 

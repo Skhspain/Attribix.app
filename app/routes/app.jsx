@@ -4,9 +4,42 @@ import { Outlet, useLoaderData } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import shopify, { authenticate } from "~/shopify.server";
 
+const APP_BASE = (process.env.SHOPIFY_APP_URL || "https://api.attribix.app").replace(/\/$/, "");
+const WIDGET_SRC = `${APP_BASE}/reviews/widget.js`;
+
+async function ensureScriptTags(admin, shop) {
+  const PIXEL_SRC = `${APP_BASE}/pixel/loader.js?shop=${encodeURIComponent(shop)}`;
+
+  try {
+    const existing = await admin.graphql(`
+      { scriptTags(first: 20) { edges { node { id src } } } }
+    `);
+    const body = await existing.json();
+    const tags = body?.data?.scriptTags?.edges ?? [];
+    const existingSrcs = tags.map((e) => e.node.src);
+
+    // Register widget if missing
+    if (!existingSrcs.some((s) => s.includes("reviews/widget"))) {
+      await admin.graphql(`
+        mutation { scriptTagCreate(input: { src: "${WIDGET_SRC}", displayScope: ALL }) { scriptTag { id } userErrors { message } } }
+      `);
+    }
+
+    // Register pixel loader if missing
+    if (!existingSrcs.some((s) => s.includes("pixel/loader"))) {
+      await admin.graphql(`
+        mutation { scriptTagCreate(input: { src: "${PIXEL_SRC}", displayScope: ALL }) { scriptTag { id } userErrors { message } } }
+      `);
+    }
+  } catch (e) {
+    console.error("[app] scriptTag registration error:", e?.message ?? e);
+  }
+}
+
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   await shopify.registerWebhooks({ session });
+  await ensureScriptTags(admin, session.shop);
 
   return json({
     apiKey:
@@ -43,10 +76,15 @@ export default function AppRoute() {
         <a href="/app/analytics">Analytics</a>
         <a href="/app/meta-ads">Meta Ads</a>
         <a href="/app/google-ads">Google Ads</a>
+        <a href="/app/tiktok-ads">TikTok Ads</a>
         <a href="/app/leads">Lead Center</a>
+        <a href="/app/reviews">Reviews</a>
         <a href="/app/orders">Orders</a>
         <a href="/app/newsletter">Newsletter</a>
-        <a href="/app/ads">Integrations</a>
+        <a href="/app/seo">SEO Audit</a>
+        <a href="/app/feeds">Feeds</a>
+        <a href="/app/integrations/meta">Integrations</a>
+        <a href="/app/billing">Billing</a>
         <a href="/app/settings">Settings</a>
       </ui-nav-menu>
       <Outlet />

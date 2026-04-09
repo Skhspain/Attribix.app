@@ -1,6 +1,0 @@
-api_version = "2024-04"
-
-[[extensions]]
-type = "theme"
-name = "Attribix Buy Now Button"
-handle = "attribix-buy-now-button"

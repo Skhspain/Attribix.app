@@ -1,6 +1,7 @@
 // app/routes/app._index.jsx
 import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useMemo } from "react";
 import {
   Badge,
   BlockStack,
@@ -9,9 +10,7 @@ import {
   Card,
   DataTable,
   Grid,
-  Icon,
   InlineStack,
-  Layout,
   Page,
   Text,
 } from "@shopify/polaris";
@@ -21,6 +20,7 @@ import db from "~/db.server";
 export async function loader({ request }) {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
+  const anyDb = db;
 
   const since30 = new Date();
   since30.setDate(since30.getDate() - 30);
@@ -30,59 +30,123 @@ export async function loader({ request }) {
   since7.setDate(since7.getDate() - 7);
   since7.setHours(0, 0, 0, 0);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   const [
     settings,
     metaConn,
     googleConn,
-    revenue30,
-    revenue7,
-    orders30,
-    orders7,
+    purchases30,
+    adSpend30,
+    metaCampaigns30,
+    metaAds30,
+    trackedEvents30,
     recentPurchases,
-    totalSpend,
-    topSource,
   ] = await Promise.all([
     db.trackingSettings.findUnique({ where: { shop } }).catch(() => null),
     db.metaConnection.findUnique({ where: { shop } }).catch(() => null),
     db.googleConnection.findUnique({ where: { shop } }).catch(() => null),
-    db.purchase.aggregate({ where: { shop, createdAt: { gte: since30 } }, _sum: { totalValue: true } }).catch(() => ({ _sum: { totalValue: 0 } })),
-    db.purchase.aggregate({ where: { shop, createdAt: { gte: since7 } }, _sum: { totalValue: true } }).catch(() => ({ _sum: { totalValue: 0 } })),
-    db.purchase.count({ where: { shop, createdAt: { gte: since30 } } }).catch(() => 0),
-    db.purchase.count({ where: { shop, createdAt: { gte: since7 } } }).catch(() => 0),
+
+    // All purchases last 30d with full attribution info
+    db.purchase.findMany({
+      where: { shop, createdAt: { gte: since30 } },
+      select: {
+        id: true, orderId: true, totalValue: true, currency: true,
+        utmSource: true, utmMedium: true, utmCampaign: true,
+        fbclid: true, gclid: true, ttclid: true, msclkid: true,
+        createdAt: true,
+      },
+    }).catch(() => []),
+
+    // Ad spend per platform
+    db.adSpendDaily.findMany({
+      where: { shop, date: { gte: since30 } },
+      select: { platform: true, spend: true },
+    }).catch(() => []),
+
+    // Meta campaign insights
+    anyDb.metaCampaignDailyInsight?.findMany?.({
+      where: { shop, date: { gte: since30 } },
+      select: { spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true },
+    }).catch(() => []) ?? [],
+
+    // Meta ad-level insights
+    anyDb.metaAdDailyInsight?.findMany?.({
+      where: { shop, date: { gte: since30 } },
+      select: { adId: true, adName: true, spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true },
+    }).catch(() => []) ?? [],
+
+    // Tracked events for CVR
+    anyDb.trackedEvent?.findMany?.({
+      where: { shop, createdAt: { gte: since30 } },
+      select: { visitorId: true, utmSource: true, fbclid: true, gclid: true, ttclid: true, msclkid: true },
+    }).catch(() => []) ?? [],
+
+    // Recent orders for table
     db.purchase.findMany({
       where: { shop },
       orderBy: { createdAt: "desc" },
       take: 6,
-      select: {
-        orderId: true,
-        totalValue: true,
-        currency: true,
-        utmSource: true,
-        utmCampaign: true,
-        landingPage: true,
-        createdAt: true,
-      },
-    }).catch(() => []),
-    db.adSpendDaily.aggregate({ where: { shop }, _sum: { spend: true } }).catch(() => ({ _sum: { spend: 0 } })),
-    db.purchase.groupBy({
-      by: ["utmSource"],
-      where: { shop, createdAt: { gte: since30 }, utmSource: { not: null } },
-      _sum: { totalValue: true },
-      _count: { orderId: true },
-      orderBy: { _sum: { totalValue: "desc" } },
-      take: 1,
+      select: { orderId: true, totalValue: true, currency: true, utmSource: true, utmCampaign: true, createdAt: true },
     }).catch(() => []),
   ]);
 
-  const rev30 = revenue30?._sum?.totalValue ?? 0;
-  const rev7 = revenue7?._sum?.totalValue ?? 0;
-  const spend = totalSpend?._sum?.spend ?? 0;
-  const roas = spend > 0 ? rev30 / spend : null;
+  // Aggregate
+  const rev30 = purchases30.reduce((s, p) => s + Number(p.totalValue || 0), 0);
+  const orders30 = purchases30.length;
+  const rev7 = purchases30.filter(p => new Date(p.createdAt) >= since7).reduce((s, p) => s + Number(p.totalValue || 0), 0);
+  const orders7 = purchases30.filter(p => new Date(p.createdAt) >= since7).length;
 
-  // Pixel health: seen in last 24h = healthy, last 7d = warning, else = error
+  const totalSpend = adSpend30.reduce((s, r) => s + Number(r.spend || 0), 0);
+  const metaSpend = adSpend30.filter(r => String(r.platform).toLowerCase().includes("meta")).reduce((s, r) => s + Number(r.spend || 0), 0);
+  const googleSpend = adSpend30.filter(r => String(r.platform).toLowerCase().includes("google")).reduce((s, r) => s + Number(r.spend || 0), 0);
+
+  const metaKpis = metaCampaigns30.reduce((acc, r) => ({
+    spend: acc.spend + Number(r.spend || 0),
+    impressions: acc.impressions + Number(r.impressions || 0),
+    clicks: acc.clicks + Number(r.clicks || 0),
+    purchases: acc.purchases + Number(r.purchases || 0),
+    value: acc.value + Number(r.purchaseValue || 0),
+  }), { spend: 0, impressions: 0, clicks: 0, purchases: 0, value: 0 });
+
+  // Best ad by ROAS
+  const adMap = new Map();
+  for (const r of metaAds30) {
+    const id = String(r.adId);
+    const cur = adMap.get(id) || { name: r.adName || id, spend: 0, value: 0, clicks: 0, impressions: 0, purchases: 0 };
+    cur.spend += Number(r.spend || 0);
+    cur.value += Number(r.purchaseValue || 0);
+    cur.clicks += Number(r.clicks || 0);
+    cur.impressions += Number(r.impressions || 0);
+    cur.purchases += Number(r.purchases || 0);
+    adMap.set(id, cur);
+  }
+  const adList = Array.from(adMap.values()).filter(a => a.spend > 0);
+  const bestAd = adList.length ? adList.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0] : null;
+
+  // Source breakdown
+  function normalizeSource(p) {
+    const s = String(p.utmSource || "").toLowerCase();
+    if (s.includes("meta") || s.includes("facebook") || s.includes("instagram")) return "meta";
+    if (s.includes("google") || s.includes("adwords")) return "google";
+    if (s.includes("tiktok")) return "tiktok";
+    if (s.includes("email") || s.includes("klaviyo") || s.includes("mailchimp")) return "email";
+    if (s) return s;
+    if (p.fbclid) return "meta";
+    if (p.gclid) return "google";
+    if (p.ttclid) return "tiktok";
+    if (p.msclkid) return "microsoft";
+    return "unknown";
+  }
+
+  const sourceMap = new Map();
+  for (const p of purchases30) {
+    const src = normalizeSource(p);
+    const cur = sourceMap.get(src) || { orders: 0, revenue: 0 };
+    cur.orders++;
+    cur.revenue += Number(p.totalValue || 0);
+    sourceMap.set(src, cur);
+  }
+
+  // Pixel health
   const pixelLastSeen = settings?.pixelLastSeenAt ? new Date(settings.pixelLastSeenAt) : null;
   const hoursSincePixel = pixelLastSeen ? (Date.now() - pixelLastSeen.getTime()) / 3600000 : null;
   const pixelStatus = hoursSincePixel === null ? "never" : hoursSincePixel < 24 ? "healthy" : hoursSincePixel < 168 ? "warning" : "error";
@@ -90,96 +154,199 @@ export async function loader({ request }) {
   const metaConnected = !!(metaConn?.accessToken && metaConn.accessToken !== "__PENDING__" && metaConn.adAccountId);
   const googleConnected = !!(googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && googleConn.adCustomerId);
 
+  // Unique visitors per source for CVR
+  const visitorMap = new Map();
+  for (const e of trackedEvents30) {
+    const src = normalizeSource(e);
+    if (!visitorMap.has(src)) visitorMap.set(src, new Set());
+    if (e.visitorId) visitorMap.get(src).add(String(e.visitorId));
+  }
+
+  const sourceSummary = Array.from(sourceMap.entries())
+    .sort((a, b) => b[1].revenue - a[1].revenue)
+    .map(([src, r]) => ({
+      source: src,
+      orders: r.orders,
+      revenue: r.revenue,
+      share: rev30 > 0 ? Math.round((r.revenue / rev30) * 100) : 0,
+      visitors: visitorMap.get(src)?.size ?? 0,
+    }));
+
+  // Feature hub stats
+  const [subscriberCount, pendingReviews, avgReviewRating, leadCount, campaignCount] = await Promise.all([
+    db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } }).catch(() => 0),
+    db.review.count({ where: { shop, status: "pending" } }).catch(() => 0),
+    db.review.aggregate({ where: { shop, status: "approved" }, _avg: { rating: true }, _count: true }).catch(() => ({ _avg: { rating: null }, _count: 0 })),
+    db.lead.count({ where: { shop } }).catch(() => 0),
+    db.newsletterCampaign.count({ where: { shop, status: "sent" } }).catch(() => 0),
+  ]);
+
   return json({
     shop,
-    rev30,
-    rev7,
-    orders30,
-    orders7,
-    roas,
-    spend,
+    rev30, rev7, orders30, orders7,
+    totalSpend, metaSpend, googleSpend,
+    metaKpis,
+    bestAd,
+    sourceSummary,
     pixelStatus,
     pixelLastSeen: pixelLastSeen?.toISOString() ?? null,
     metaConnected,
     googleConnected,
     recentPurchases,
-    topSource: topSource?.[0]?.utmSource ?? null,
     attributionModel: settings?.attributionModel ?? "last_touch",
     attributionWindowDays: settings?.attributionWindowDays ?? 7,
+    featureHub: {
+      subscriberCount,
+      pendingReviews,
+      avgRating: avgReviewRating?._avg?.rating ? Number(avgReviewRating._avg.rating).toFixed(1) : null,
+      totalReviews: avgReviewRating?._count ?? 0,
+      leadCount,
+      campaignCount,
+    },
   });
 }
 
-function formatMoney(value, currency = "USD") {
+function fmt(value, currency = "NOK") {
   try {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: currency || "USD",
-      maximumFractionDigits: 0,
-    }).format(value || 0);
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "NOK", maximumFractionDigits: 0 }).format(value || 0);
   } catch {
     return `${Number(value || 0).toFixed(0)}`;
+  }
+}
+
+function fmtDec(value, currency = "NOK") {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: currency || "NOK", maximumFractionDigits: 2 }).format(value || 0);
+  } catch {
+    return `${Number(value || 0).toFixed(2)}`;
   }
 }
 
 function formatDate(value) {
   if (!value) return "—";
   try {
-    return new Intl.DateTimeFormat("en-GB", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(value));
-  } catch {
-    return "—";
-  }
+    return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+  } catch { return "—"; }
 }
 
-function sourceColor(source) {
-  const s = (source || "").toLowerCase();
-  if (s.includes("meta") || s.includes("facebook")) return "#1877f2";
-  if (s.includes("google")) return "#34a853";
-  if (s.includes("tiktok")) return "#010101";
-  if (s.includes("email")) return "#f59e0b";
-  return "#6b7280";
-}
-
-function sourceBadgeTone(source) {
-  const s = (source || "").toLowerCase();
-  if (s.includes("meta") || s.includes("facebook")) return "info";
-  if (s.includes("google")) return "success";
-  if (s.includes("tiktok")) return "attention";
+function sourceTone(s) {
+  const src = (s || "").toLowerCase();
+  if (src === "meta" || src === "facebook") return "info";
+  if (src === "google") return "success";
+  if (src === "tiktok") return "attention";
+  if (src === "email") return "warning";
   return "new";
 }
 
-function KpiCard({ title, value, sub, tone }) {
+function InsightRow({ tone, icon, title, body }) {
+  const colors = {
+    success: { bg: "#f0fdf4", border: "#22c55e" },
+    critical: { bg: "#fff1f2", border: "#ef4444" },
+    warning:  { bg: "#fffbeb", border: "#f59e0b" },
+    info:     { bg: "#f0f9ff", border: "#38bdf8" },
+  };
+  const { bg, border } = colors[tone] || colors.info;
   return (
-    <Card>
-      <BlockStack gap="100">
-        <Text as="p" variant="bodySm" tone="subdued">{title}</Text>
-        <Text as="p" variant="heading2xl" tone={tone}>{value}</Text>
-        {sub && <Text as="p" variant="bodySm" tone="subdued">{sub}</Text>}
+    <div style={{
+      display: "grid", gridTemplateColumns: "36px 1fr", gap: "0 12px", alignItems: "start",
+      background: bg, borderLeft: `3px solid ${border}`, borderRadius: "0 8px 8px 0", padding: "12px 14px",
+    }}>
+      <div style={{ fontSize: 18, lineHeight: 1.5 }}>{icon}</div>
+      <BlockStack gap="050">
+        <Text as="p" variant="bodyMd" fontWeight="semibold">{title}</Text>
+        <Text as="p" variant="bodySm" tone="subdued">{body}</Text>
       </BlockStack>
-    </Card>
+    </div>
   );
 }
 
 export default function AppIndex() {
   const data = useLoaderData();
   const navigate = useNavigate();
+  const currency = "NOK";
+
+  const roas = data.totalSpend > 0 ? data.rev30 / data.totalSpend : null;
+  const metaRoas = data.metaKpis.spend > 0 ? data.metaKpis.value / data.metaKpis.spend : null;
+  const aov = data.orders30 > 0 ? data.rev30 / data.orders30 : 0;
+
+  // Smart insights including lead quality
+  const insights = useMemo(() => {
+    const list = [];
+    const { rev30, orders30, totalSpend, metaSpend, googleSpend, metaKpis, bestAd, sourceSummary } = data;
+
+    // Attribution rate
+    const attributed = sourceSummary.filter(s => s.source !== "unknown").reduce((n, s) => n + s.orders, 0);
+    const attrRate = orders30 > 0 ? Math.round((attributed / orders30) * 100) : 0;
+    if (attrRate < 50 && orders30 > 0) {
+      list.push({ tone: "warning", icon: "⚠️", title: `${100 - attrRate}% of orders have no tracked source`, body: `${orders30 - attributed} of ${orders30} orders show as unknown. Add UTM parameters to your ad URLs so Attribix can attribute every sale correctly.` });
+    } else if (attrRate >= 80 && orders30 > 0) {
+      list.push({ tone: "success", icon: "✅", title: `${attrRate}% attribution rate — excellent`, body: `Attribix is tracking ${attributed} of ${orders30} orders to a source. Your UTM setup is working well.` });
+    }
+
+    // Meta ROAS vs break-even
+    if (metaKpis.spend > 0) {
+      if (metaRoas !== null && metaRoas < 1) {
+        list.push({ tone: "critical", icon: "🔴", title: `Meta ROAS ${Math.round(metaRoas * 100)}% — spending more than you earn`, body: `${fmtDec(metaKpis.spend, currency)} spent, only ${fmtDec(metaKpis.value, currency)} in reported Meta purchase value. Pause underperforming ads and review your targeting.` });
+      } else if (metaRoas !== null && metaRoas >= 1 && metaRoas < 2) {
+        list.push({ tone: "warning", icon: "⚠️", title: `Meta ROAS ${Math.round(metaRoas * 100)}% — below target`, body: `You're breaking even but margins are thin. Review your best-performing ad and shift budget toward it.` });
+      } else if (metaRoas !== null && metaRoas >= 3) {
+        list.push({ tone: "success", icon: "🚀", title: `Meta ROAS ${Math.round(metaRoas * 100)}% — strong performance`, body: `Solid returns. Consider scaling budget on your best campaigns to maximise this window.` });
+      }
+    }
+
+    // Lead quality: CTR → CVR → ROAS chain
+    if (metaKpis.impressions > 0 && metaKpis.clicks > 0 && metaKpis.purchases > 0) {
+      const ctr = (metaKpis.clicks / metaKpis.impressions) * 100;
+      const cvr = (metaKpis.purchases / metaKpis.clicks) * 100;
+      const cpl = metaKpis.clicks > 0 ? metaKpis.spend / metaKpis.clicks : 0; // cost per click (lead)
+      const revenuePerClick = metaKpis.clicks > 0 ? metaKpis.value / metaKpis.clicks : 0;
+
+      if (cvr < 1 && ctr > 1) {
+        list.push({ tone: "warning", icon: "📉", title: `Good CTR (${ctr.toFixed(2)}%) but low conversion rate (${cvr.toFixed(2)}%)`, body: `Ads are getting clicks but visitors aren't buying. Your landing page or offer may need work. Cost per click: ${fmtDec(cpl, currency)} · Revenue per click: ${fmtDec(revenuePerClick, currency)}.` });
+      } else if (cvr >= 2 && metaRoas !== null && metaRoas < 2) {
+        list.push({ tone: "info", icon: "💡", title: `Good CVR (${cvr.toFixed(2)}%) but ROAS is low — CPC is the issue`, body: `People who click are converting well, but you're paying too much per click (${fmtDec(cpl, currency)}). Try narrowing your audience or testing lower-cost placements.` });
+      } else if (cvr >= 2 && metaRoas !== null && metaRoas >= 2) {
+        list.push({ tone: "success", icon: "🎯", title: `Strong funnel: ${ctr.toFixed(2)}% CTR → ${cvr.toFixed(2)}% CVR → ${Math.round(metaRoas * 100)}% ROAS`, body: `Your ads, landing page, and offer are working together. Revenue per click: ${fmtDec(revenuePerClick, currency)}.` });
+      }
+    }
+
+    // Best ad
+    if (bestAd && bestAd.spend > 0) {
+      const adRoas = (bestAd.value / bestAd.spend).toFixed(2);
+      const adCtr = bestAd.impressions > 0 ? ((bestAd.clicks / bestAd.impressions) * 100).toFixed(2) : null;
+      list.push({ tone: "success", icon: "🏆", title: `Best ad: "${bestAd.name}" at ${adRoas}× ROAS`, body: `CTR: ${adCtr ? adCtr + "%" : "—"} · Spend: ${fmtDec(bestAd.spend, currency)} · Value: ${fmtDec(bestAd.value, currency)} · ${bestAd.purchases} purchases. Consider duplicating this creative.` });
+    }
+
+    // Unknown revenue dominance
+    const unknownEntry = sourceSummary.find(s => s.source === "unknown");
+    const unknownShare = unknownEntry ? Math.round((unknownEntry.revenue / rev30) * 100) : 0;
+    if (unknownShare > 60 && rev30 > 0) {
+      list.push({ tone: "info", icon: "💡", title: `${unknownShare}% of revenue has no tracked source`, body: `${fmtDec(unknownEntry.revenue, currency)} is coming from direct/unknown traffic — likely returning customers, email, or organic. Add UTM tags to all paid links to get full visibility.` });
+    }
+
+    // Google spend, no attributed orders
+    if (googleSpend > 0) {
+      const googleOrders = (sourceSummary.find(s => s.source === "google")?.orders) ?? 0;
+      if (googleOrders === 0) {
+        list.push({ tone: "warning", icon: "⚠️", title: "Google Ads spend but no attributed orders", body: `${fmtDec(googleSpend, currency)} spent on Google with 0 tracked conversions. Check that your Google Ads landing URLs include utm_source=google.` });
+      }
+    }
+
+    return list;
+  }, [data, metaRoas, aov, currency]);
 
   const pixelBadge = {
     healthy: { tone: "success", label: "Pixel active" },
-    warning:  { tone: "warning", label: "Pixel inactive >24h" },
+    warning:  { tone: "warning",  label: "Pixel inactive >24h" },
     error:    { tone: "critical", label: "Pixel not seen" },
     never:    { tone: "critical", label: "Pixel never seen" },
   }[data.pixelStatus];
 
   const purchaseRows = (data.recentPurchases || []).map((p) => [
-    <Text as="span" variant="bodySm">{p.orderId || "—"}</Text>,
-    <Text as="span" variant="bodySm">{formatMoney(p.totalValue, p.currency)}</Text>,
+    <Text key={p.orderId} as="span" variant="bodySm">{p.orderId || "—"}</Text>,
+    <Text as="span" variant="bodySm">{fmt(p.totalValue, p.currency)}</Text>,
     p.utmSource
-      ? <Badge tone={sourceBadgeTone(p.utmSource)}>{p.utmSource}</Badge>
+      ? <Badge tone={sourceTone(p.utmSource)}>{p.utmSource}</Badge>
       : <Text as="span" variant="bodySm" tone="subdued">direct</Text>,
     <Text as="span" variant="bodySm" tone="subdued">{p.utmCampaign || "—"}</Text>,
     <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,
@@ -189,44 +356,107 @@ export default function AppIndex() {
     <Page
       title="Overview"
       subtitle={data.shop}
-      primaryAction={{ content: "View attribution", onAction: () => navigate("/app/analytics") }}
+      primaryAction={{ content: "View analytics", onAction: () => navigate("/app/analytics") }}
     >
-      <BlockStack gap="500">
+      <BlockStack gap="600">
 
         {/* KPI row */}
         <Grid>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-            <KpiCard
-              title="Revenue (30d)"
-              value={formatMoney(data.rev30)}
-              sub={`${formatMoney(data.rev7)} last 7 days`}
-            />
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-            <KpiCard
-              title="Orders (30d)"
-              value={String(data.orders30)}
-              sub={`${data.orders7} last 7 days`}
-            />
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-            <KpiCard
-              title="ROAS"
-              value={data.roas !== null ? `${data.roas.toFixed(2)}x` : "—"}
-              sub={data.roas !== null ? "Revenue ÷ ad spend" : "Connect an ad account"}
-              tone={data.roas !== null && data.roas >= 2 ? "success" : undefined}
-            />
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
-            <KpiCard
-              title="Top source (30d)"
-              value={data.topSource || "—"}
-              sub="Highest revenue channel"
-            />
-          </Grid.Cell>
+          {[
+            { title: "Revenue (30d)", value: fmt(data.rev30, currency), sub: `${fmt(data.rev7, currency)} last 7 days` },
+            { title: "Orders (30d)", value: String(data.orders30), sub: `${data.orders7} last 7 days` },
+            { title: "Blended ROAS", value: roas !== null ? Math.round(roas * 100) + "%" : "—", sub: roas !== null ? `${fmtDec(data.totalSpend, currency)} total spend` : "Connect an ad account", tone: roas !== null && roas >= 2 ? "success" : undefined },
+            { title: "Avg order value", value: aov > 0 ? fmtDec(aov, currency) : "—", sub: "Last 30 days" },
+          ].map((kpi) => (
+            <Grid.Cell key={kpi.title} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+              <Card>
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" tone="subdued">{kpi.title}</Text>
+                  <Text as="p" variant="heading2xl" tone={kpi.tone}>{kpi.value}</Text>
+                  {kpi.sub && <Text as="p" variant="bodySm" tone="subdued">{kpi.sub}</Text>}
+                </BlockStack>
+              </Card>
+            </Grid.Cell>
+          ))}
         </Grid>
 
-        {/* Status cards */}
+        {/* Feature Hub */}
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">Your Attribix Tools</Text>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+              {[
+                { icon: "📊", title: "Analytics", desc: "Revenue & attribution", url: "/app/analytics" },
+                { icon: "🎯", title: "Meta Ads", desc: `${fmt(data.metaSpend)} spend`, url: "/app/meta-ads" },
+                { icon: "📈", title: "Google Ads", desc: `${fmt(data.googleSpend)} spend`, url: "/app/google-ads" },
+                { icon: "🎵", title: "TikTok Ads", desc: "Campaign performance", url: "/app/tiktok-ads" },
+                { icon: "📦", title: "Orders", desc: `${data.orders30} in 30 days`, url: "/app/orders" },
+                { icon: "📧", title: "Newsletter", desc: `${data.featureHub?.subscriberCount || 0} subs · ${data.featureHub?.campaignCount || 0} sent`, url: "/app/newsletter" },
+                { icon: "⭐", title: "Reviews", desc: `${data.featureHub?.totalReviews || 0} reviews${data.featureHub?.pendingReviews > 0 ? ` · ${data.featureHub.pendingReviews} pending` : ""}`, url: "/app/reviews" },
+                { icon: "👥", title: "Lead Center", desc: `${data.featureHub?.leadCount || 0} leads`, url: "/app/leads" },
+                { icon: "🔍", title: "SEO Audit", desc: "Score products", url: "/app/seo" },
+                { icon: "🔗", title: "Product Feeds", desc: "Google & Meta", url: "/app/feeds" },
+                { icon: "🔌", title: "Integrations", desc: "Meta, Google, Stripe", url: "/app/integrations/meta" },
+                { icon: "🏷️", title: "UTM Builder", desc: "Create tracked links", url: "/app/settings" },
+                { icon: "🛒", title: "Buy Now Button", desc: data.pixelStatus === "healthy" ? "Active" : "Inactive", url: "/app/buy-now" },
+                { icon: "💳", title: "Billing", desc: "Plans & subscription", url: "/app/billing" },
+              ].map(item => (
+                <div key={item.title} onClick={() => navigate(item.url)} style={{
+                  border: "1px solid #e1e3e5", borderRadius: 10, padding: "14px 16px",
+                  background: "#fff", cursor: "pointer", transition: "box-shadow 0.15s",
+                }}
+                  onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)")}
+                  onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+                >
+                  <div style={{ fontSize: 22, marginBottom: 6 }}>{item.icon}</div>
+                  <Text as="h3" variant="headingSm">{item.title}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{item.desc}</Text>
+                </div>
+              ))}
+            </div>
+          </BlockStack>
+        </Card>
+
+        {/* Insights */}
+        {insights.length > 0 && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">ATTRIBIX INSIGHTS</Text>
+              <BlockStack gap="200">
+                {insights.map((ins, i) => <InsightRow key={i} {...ins} />)}
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* Source breakdown */}
+        {data.sourceSummary.length > 0 && (
+          <Card>
+            <BlockStack gap="400">
+              <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">REVENUE BY SOURCE — LAST 30 DAYS</Text>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {data.sourceSummary.map(({ source, orders, revenue, share, visitors }) => {
+                  const cvr = visitors > 0 ? ((orders / visitors) * 100).toFixed(1) + "%" : null;
+                  const spend = source === "meta" ? data.metaSpend : source === "google" ? data.googleSpend : 0;
+                  const srcRoas = spend > 0 ? Math.round((revenue / spend) * 100) + "%" : null;
+                  return (
+                    <div key={source} style={{ border: "1px solid #e1e3e5", borderRadius: 12, padding: "16px 20px", minWidth: 150, background: "#fff" }}>
+                      <BlockStack gap="100">
+                        <Text as="p" variant="heading2xl" fontWeight="bold">{share}%</Text>
+                        <Badge tone={sourceTone(source)}>{source}</Badge>
+                        <Text as="p" variant="bodySm" tone="subdued">{orders} orders · {fmt(revenue, currency)}</Text>
+                        {cvr && <Text as="p" variant="bodySm" tone="subdued">CVR {cvr}</Text>}
+                        {srcRoas && <Text as="p" variant="bodySm" tone="subdued">ROAS {srcRoas}</Text>}
+                      </BlockStack>
+                    </div>
+                  );
+                })}
+              </div>
+            </BlockStack>
+          </Card>
+        )}
+
+        {/* Integration status */}
         <Grid>
           <Grid.Cell columnSpan={{ xs: 6, sm: 2, md: 2, lg: 4, xl: 4 }}>
             <Card>
@@ -236,76 +466,43 @@ export default function AppIndex() {
                   <Badge tone={pixelBadge.tone}>{pixelBadge.label}</Badge>
                 </InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  {data.pixelLastSeen
-                    ? `Last event: ${formatDate(data.pixelLastSeen)}`
-                    : "No pixel events recorded yet"}
+                  {data.pixelLastSeen ? `Last event: ${formatDate(data.pixelLastSeen)}` : "No pixel events recorded yet"}
                 </Text>
-                <Button size="slim" onClick={() => navigate("/app/settings")}>
-                  View settings
-                </Button>
+                <Button size="slim" onClick={() => navigate("/app/settings")}>View settings</Button>
               </BlockStack>
             </Card>
           </Grid.Cell>
-
           <Grid.Cell columnSpan={{ xs: 6, sm: 2, md: 2, lg: 4, xl: 4 }}>
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="h3" variant="headingSm">Meta Ads</Text>
-                  <Badge tone={data.metaConnected ? "success" : "new"}>
-                    {data.metaConnected ? "Connected" : "Not connected"}
-                  </Badge>
+                  <Badge tone={data.metaConnected ? "success" : "new"}>{data.metaConnected ? "Connected" : "Not connected"}</Badge>
                 </InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  {data.metaConnected
-                    ? "Spend data syncing. CAPI active."
-                    : "Connect Meta to sync ad spend and enable server-side CAPI."}
+                  {data.metaConnected ? `Spend ${fmtDec(data.metaSpend, currency)} · ROAS ${metaRoas !== null ? Math.round(metaRoas * 100) + "%" : "—"}` : "Connect Meta to sync ad spend and enable server-side CAPI."}
                 </Text>
-                <Button size="slim" onClick={() => navigate("/app/ads")}>
-                  {data.metaConnected ? "Manage" : "Connect"}
-                </Button>
+                <Button size="slim" onClick={() => navigate("/app/ads")}>{data.metaConnected ? "Manage" : "Connect"}</Button>
               </BlockStack>
             </Card>
           </Grid.Cell>
-
           <Grid.Cell columnSpan={{ xs: 6, sm: 2, md: 2, lg: 4, xl: 4 }}>
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="h3" variant="headingSm">Google Ads</Text>
-                  <Badge tone={data.googleConnected ? "success" : "new"}>
-                    {data.googleConnected ? "Connected" : "Not connected"}
-                  </Badge>
+                  <Badge tone={data.googleConnected ? "success" : "new"}>{data.googleConnected ? "Connected" : "Not connected"}</Badge>
                 </InlineStack>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  {data.googleConnected
-                    ? "Spend data syncing. Conversion upload active."
-                    : "Connect Google Ads to sync spend and upload conversions."}
+                  {data.googleConnected ? `Spend ${fmtDec(data.googleSpend, currency)} syncing.` : "Connect Google Ads to sync spend and upload conversions."}
                 </Text>
-                <Button size="slim" onClick={() => navigate("/app/ads")}>
-                  {data.googleConnected ? "Manage" : "Connect"}
-                </Button>
+                <Button size="slim" onClick={() => navigate("/app/ads")}>{data.googleConnected ? "Manage" : "Connect"}</Button>
               </BlockStack>
             </Card>
           </Grid.Cell>
         </Grid>
 
-        {/* Attribution settings summary */}
-        <Card>
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="100">
-              <Text as="h3" variant="headingSm">Attribution settings</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Model: <strong>{data.attributionModel === "first_touch" ? "First touch" : "Last touch"}</strong>
-                {"  ·  "}
-                Window: <strong>{data.attributionWindowDays} days</strong>
-              </Text>
-            </BlockStack>
-            <Button size="slim" onClick={() => navigate("/app/settings")}>Edit</Button>
-          </InlineStack>
-        </Card>
-
-        {/* Recent purchases */}
+        {/* Recent orders */}
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
@@ -320,11 +517,9 @@ export default function AppIndex() {
                 increasedTableDensity
               />
             ) : (
-              <Box paddingBlockStart="200">
-                <Text as="p" variant="bodyMd" tone="subdued">
-                  No attributed orders yet. Make sure the pixel is installed and tracking is enabled.
-                </Text>
-              </Box>
+              <Text as="p" variant="bodyMd" tone="subdued">
+                No attributed orders yet. Make sure the pixel is installed and tracking is enabled.
+              </Text>
             )}
           </BlockStack>
         </Card>

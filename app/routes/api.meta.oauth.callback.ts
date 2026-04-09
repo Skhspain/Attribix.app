@@ -57,10 +57,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   if (!shop) throw new Response("Missing shop in state", { status: 400 });
 
-  const appBaseUrl = process.env.SHOPIFY_APP_URL;
-  if (!appBaseUrl) throw new Response("Missing SHOPIFY_APP_URL", { status: 500 });
-
-  const redirectUri = `${appBaseUrl.replace(/\/$/, "")}/api/meta/oauth/callback`;
+  const redirectUri = process.env.META_REDIRECT_URI || `${(process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "")}/api/meta/oauth/callback`;
 
   const token = await exchangeMetaCodeForToken({
     code,

@@ -17,6 +17,7 @@ import {
   Text,
 } from "@shopify/polaris";
 import db from "../db.server";
+import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
@@ -87,59 +88,10 @@ function labelShort(iso: string) {
   }
 }
 
-function BarChart({ data }: { data: Array<{ label: string; revenue: number; spend: number }> }) {
-  const maxVal = Math.max(1, ...data.flatMap((d) => [d.revenue, d.spend]));
-  const showEvery = Math.ceil(data.length / 10);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; revenue: number; spend: number } | null>(null);
-
-  return (
-    <div style={{ width: "100%", overflowX: "auto", position: "relative" }}>
-      {tooltip && (
-        <div style={{
-          position: "fixed", left: tooltip.x + 12, top: tooltip.y - 10,
-          background: "#1f2937", color: "#fff", borderRadius: 8, padding: "8px 12px",
-          fontSize: 12, pointerEvents: "none", zIndex: 9999, whiteSpace: "nowrap",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.label}</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />
-            Conversion value: {tooltip.revenue.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#38bdf8", display: "inline-block" }} />
-            Spend: {tooltip.spend.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          </div>
-        </div>
-      )}
-      <div style={{
-        display: "grid", gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
-        gap: 3, alignItems: "end", minHeight: 200, minWidth: data.length * 24,
-      }}>
-        {data.map((row, i) => (
-          <div
-            key={row.label}
-            onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, ...row })}
-            onMouseLeave={() => setTooltip(null)}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end", cursor: "default" }}
-          >
-            <div style={{ width: "100%", height: 160, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
-              <div style={{ width: "44%", minHeight: 2, height: `${(row.revenue / maxVal) * 100}%`, borderRadius: "3px 3px 0 0", background: "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)" }} />
-              <div style={{ width: "44%", minHeight: 2, height: `${(row.spend / maxVal) * 100}%`, borderRadius: "3px 3px 0 0", background: "linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%)" }} />
-            </div>
-            <div style={{ marginTop: 6, fontSize: 10, color: "#9ca3af", textAlign: "center", whiteSpace: "nowrap" }}>
-              {i % showEvery === 0 ? row.label : ""}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export default function GoogleAdsDetail() {
   const data = useLoaderData<typeof loader>();
-  const [window, setWindow] = useState<"7" | "14" | "30" | "90">("30");
+  const [window, setWindow] = useState<"7" | "14" | "30" | "90">("7");
   const windowDays = Number(window);
 
   const windowCutoff = useMemo(() => {
@@ -255,7 +207,7 @@ export default function GoogleAdsDetail() {
         c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + "%" : "—",
         c.conversions.toFixed(2),
         fmtDecimal(c.value, currency),
-        c.spend > 0 ? (c.value / c.spend).toFixed(2) + "×" : "—",
+        c.spend > 0 ? Math.round((c.value / c.spend) * 100) + "%" : "—",
         c.conversions > 0 && c.spend > 0 ? fmtDecimal(c.spend / c.conversions, currency) : "—",
       ]);
   }, [campaigns, currency]);
@@ -315,7 +267,7 @@ export default function GoogleAdsDetail() {
               <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? kpis.roas.toFixed(2) + "×" : "—"}</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? Math.round(kpis.roas * 100) + "%" : "—"}</p>
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
@@ -354,7 +306,7 @@ export default function GoogleAdsDetail() {
             },
             {
               label: "ROAS",
-              value: kpis.roas !== null ? kpis.roas.toFixed(2) + "×" : "—",
+              value: kpis.roas !== null ? Math.round(kpis.roas * 100) + "%" : "—",
               sub: `${kpis.conversions.toFixed(1)} conversions · ${fmtDecimal(kpis.value, currency)} value`,
             },
             { label: "Conversions", value: kpis.conversions.toFixed(1) },
@@ -388,7 +340,7 @@ export default function GoogleAdsDetail() {
               </InlineStack>
             </InlineStack>
             {chartData.length > 0 ? (
-              <BarChart data={chartData} />
+              <RevenueSpendChart data={chartData} currency={currency} showRoasLabels={windowDays <= 14} revenueLabel="Conv. value" />
             ) : (
               <Text as="p" tone="subdued">No data for this window.</Text>
             )}
@@ -418,7 +370,7 @@ export default function GoogleAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#15803d" }}>
-                          {topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}
+                          {topCampaign.spend > 0 ? Math.round((topCampaign.value / topCampaign.spend) * 100) + "%" : "—"}
                         </p>
                       </div>
                       <div>
@@ -471,7 +423,7 @@ export default function GoogleAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#dc2626" }}>
-                          {worstCampaign.spend > 0 ? (worstCampaign.value / worstCampaign.spend).toFixed(2) + "×" : "—"}
+                          {worstCampaign.spend > 0 ? Math.round((worstCampaign.value / worstCampaign.spend) * 100) + "%" : "—"}
                         </p>
                       </div>
                       <div>

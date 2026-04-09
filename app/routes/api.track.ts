@@ -4,6 +4,7 @@ import { db } from "~/db.server";
 import { sendServerConversions } from "~/services/serverConversions.server";
 import { normalizeTrackedEvent } from "~/services/trackingNormalizer.server";
 import { touchTrackingHealth } from "~/models/trackingSettings.server";
+import { upsertTouchpoint } from "~/services/touchpoints.server";
 
 function corsify(request: Request, res: Response) {
   const origin = request.headers.get("origin");
@@ -784,6 +785,24 @@ export async function action({ request }: ActionFunctionArgs) {
       } catch (healthError: any) {
         console.error("[/api/track] touchTrackingHealth error:", healthError?.message || healthError);
       }
+    }
+
+    // ── Upsert touchpoint for multi-touch attribution journey ──
+    if (resolvedShop && visitorId && sessionId) {
+      upsertTouchpoint({
+        shop:        resolvedShop,
+        visitorId,
+        sessionId,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        fbclid,
+        gclid,
+        ttclid,
+        msclkid,
+        referrer,
+        landingPage: url,
+      }).catch(() => null); // fire-and-forget, non-fatal
     }
 
     const possibleOrderId =

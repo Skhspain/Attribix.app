@@ -1,0 +1,43 @@
+# fly.toml
+app = "attribix-app"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  APP_URL = "https://attribix-app.fly.dev"
+  NODE_ENV = "production"
+  HOST = "0.0.0.0"
+  PORT = "3000"
+
+[http_service]
+  internal_port = 3000
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+[checks]
+  [checks.health]
+    port = 3000
+    type = "http"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "45s"
+    method = "get"
+    path = "/health"
+
+[deploy]
+  # Using db push while schema is still evolving
+  # Important: production uses the Postgres schema file
+  release_command = "npx prisma db push --accept-data-loss --schema=prisma/schema.postgres.prisma"
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1024MB"

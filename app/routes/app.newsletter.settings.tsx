@@ -1,6 +1,5 @@
 // app/routes/app.newsletter.settings.tsx
-// Newsletter sender settings — default from name/email, reply-to, footer text.
-// These pre-fill every new campaign.
+// Newsletter sender identity, domain health, footer, monthly usage.
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
@@ -27,9 +26,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const domain = fromEmail.split("@")[1];
     try {
       const { resolveTxt } = await import("dns/promises");
-      const [spfRecords, dkimRecords] = await Promise.allSettled([
+      const [spfRecords] = await Promise.allSettled([
         resolveTxt(domain).then(recs => recs.some(r => r.join("").includes("v=spf1"))),
-        resolveTxt(`default._domainkey.${domain}`).then(() => true).catch(() => false),
       ]);
       const hasSPF = spfRecords.status === "fulfilled" && spfRecords.value;
       domainStatus = hasSPF ? "ok" : "warning";

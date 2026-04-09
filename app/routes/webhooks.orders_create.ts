@@ -4,6 +4,9 @@ import { json } from "@remix-run/node";
 import { db } from "~/db.server";
 import shopify from "~/shopify.server";
 import { sendServerConversions } from "~/services/serverConversions.server";
+import { scheduleReviewRequest } from "~/services/reviewEmail.server";
+import { enrollInFlows } from "~/services/automationEngine.server";
+import { buildJourneyCredits } from "~/services/touchpoints.server";
 
 function pickFirstString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length ? x.trim() : null;
@@ -93,6 +96,16 @@ export async function action({ request }: ActionFunctionArgs) {
       pickFirstString(payload?.client_details?.browser_ip) ||
       null;
 
+    const country =
+      pickFirstString(payload?.billing_address?.country_code) ||
+      pickFirstString(payload?.shipping_address?.country_code) ||
+      null;
+
+    const city =
+      pickFirstString(payload?.billing_address?.city) ||
+      pickFirstString(payload?.shipping_address?.city) ||
+      null;
+
     const userAgent =
       pickFirstString(payload?.client_details?.user_agent) ||
       null;
@@ -127,6 +140,8 @@ export async function action({ request }: ActionFunctionArgs) {
           gclid: utm.gclid,
           ttclid: utm.ttclid,
           msclkid: utm.msclkid,
+          country,
+          city,
         },
         update: {
           totalValue,
@@ -141,8 +156,43 @@ export async function action({ request }: ActionFunctionArgs) {
           gclid: utm.gclid ?? undefined,
           ttclid: utm.ttclid ?? undefined,
           msclkid: utm.msclkid ?? undefined,
+          country: country ?? undefined,
+          city: city ?? undefined,
         },
       });
+
+      // Schedule review request email (fire-and-forget)
+      scheduleReviewRequest({ shop, orderId, payload }).catch((e: any) =>
+        console.error("[webhooks.orders_create] review schedule error:", e?.message)
+      );
+
+      // Build multi-touch journey credits (fire-and-forget)
+      buildJourneyCredits({
+        shop,
+        orderId: orderId!,
+        visitorId: visitorId ?? null,
+        revenue: totalValue,
+        currency,
+        purchaseTime: new Date(payload?.created_at || Date.now()),
+        fallback: {
+          utmSource:   utm.utmSource,
+          utmMedium:   utm.utmMedium,
+          utmCampaign: utm.utmCampaign,
+          fbclid:      utm.fbclid,
+          gclid:       utm.gclid,
+          ttclid:      utm.ttclid,
+          msclkid:     utm.msclkid,
+        },
+      }).catch((e: any) =>
+        console.error("[webhooks.orders_create] buildJourneyCredits error:", e?.message)
+      );
+
+      // Enroll in order_created automation flows
+      const customerEmail = payload?.email || payload?.customer?.email;
+      if (customerEmail) {
+        const firstName = payload?.customer?.first_name || payload?.billing_address?.first_name || undefined;
+        enrollInFlows({ shop, trigger: "order_created", email: customerEmail, firstName, triggeredBy: orderId ?? undefined }).catch(() => null);
+      }
 
       try {
         const conversionResult = await sendServerConversions({

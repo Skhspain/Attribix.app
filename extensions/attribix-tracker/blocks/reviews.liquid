@@ -1,0 +1,79 @@
+<div id="attribix-reviews"></div>
+
+<script>
+(function() {
+  var container = document.getElementById('attribix-reviews');
+  if (!container) return;
+
+  var shop = '{{ shop.permanent_domain }}';
+  var productId = '{{ product.id }}';
+  if (!shop || !productId) return;
+
+  var appUrl = 'https://api.attribix.app';
+  var apiUrl = appUrl + '/reviews/api/' + encodeURIComponent(shop) + '/' + encodeURIComponent(productId);
+  var submitUrl = appUrl + '/reviews/submit/' + encodeURIComponent(shop) + '/' + encodeURIComponent(productId) + '?product={{ product.title | url_encode }}';
+
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function stars(r,c) { var h=''; for(var i=1;i<=5;i++) h+='<span style="color:'+(i<=r?c:'#d1d5db')+';font-size:14px;">&#9733;</span>'; return h; }
+
+  fetch(apiUrl).then(function(r){return r.json()}).then(function(data) {
+    var reviews = data.reviews || [];
+    var avg = data.avg;
+    var count = data.count;
+    var s = data.settings || {};
+    var pc = s.primaryColor || '#4f46e5';
+    var sc = s.starColor || '#f59e0b';
+    var bc = s.borderColor || '#e5e7eb';
+
+    var html = '<div style="font-family:inherit;padding:24px 0;">';
+    html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap;">';
+    html += '<h3 style="margin:0;font-size:18px;font-weight:700;">Customer Reviews</h3>';
+    if (avg) {
+      html += '<div style="display:flex;align-items:center;gap:6px;">';
+      html += stars(Math.round(avg),sc);
+      html += '<span style="font-weight:600;">' + avg.toFixed(1) + '</span>';
+      html += '<span style="color:#6b7280;font-size:14px;">(' + count + ')</span>';
+      html += '</div>';
+    }
+    html += '<a href="' + submitUrl + '" style="margin-left:auto;padding:8px 18px;background:'+pc+';color:#fff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">Write a review</a>';
+    html += '</div>';
+
+    if (!reviews.length) html += '<p style="color:#6b7280;">No reviews yet. Be the first!</p>';
+
+    reviews.forEach(function(r) {
+      html += '<div style="border-top:1px solid '+bc+';padding:16px 0;">';
+      html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">'+stars(r.rating,sc);
+      if (r.verifiedPurchase) html += '<span style="font-size:11px;background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:99px;font-weight:600;">Verified</span>';
+      html += '</div>';
+      if (r.title) html += '<div style="font-weight:600;margin-bottom:4px;">'+esc(r.title)+'</div>';
+      html += '<div style="color:#374151;font-size:14px;line-height:1.6;margin-bottom:8px;">'+esc(r.body)+'</div>';
+      if (r.images && r.images.length) {
+        html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">';
+        r.images.forEach(function(img){html+='<img src="'+esc(img)+'" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid '+bc+';">';});
+        html += '</div>';
+      }
+      var meta = [];
+      if (s.showReviewerName !== false) meta.push(esc(r.reviewerName));
+      if (s.showDate !== false) meta.push(new Date(r.createdAt).toLocaleDateString());
+      if (meta.length) html += '<div style="color:#9ca3af;font-size:12px;">'+meta.join(' &middot; ')+'</div>';
+      if (r.reply) {
+        html += '<div style="background:#f9fafb;border-left:3px solid '+pc+';padding:10px 12px;margin-top:10px;border-radius:0 6px 6px 0;">';
+        html += '<div style="font-size:12px;font-weight:600;color:'+pc+';margin-bottom:4px;">Store reply</div>';
+        html += '<div style="font-size:13px;color:#374151;">'+esc(r.reply)+'</div></div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  }).catch(function(){});
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Attribix Reviews",
+  "target": "section",
+  "templates": ["product"],
+  "settings": []
+}
+{% endschema %}

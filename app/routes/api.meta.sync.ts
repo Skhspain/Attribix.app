@@ -41,6 +41,8 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, error: "No ad account selected" }, { status: 400 });
   }
 
+  console.log(`[metaSync] manual sync | shop=${shop} adAccountId=${conn.adAccountId} days=${days}`);
+
   const until = new Date();
   const since = new Date();
   since.setDate(until.getDate() - (days - 1));
@@ -60,6 +62,7 @@ export async function action({ request }: ActionFunctionArgs) {
   });
 
   const campaignRows = campaignInsights?.data ?? [];
+  console.log(`[metaSync] campaign API returned ${campaignRows.length} rows`);
 
   for (const r of campaignRows) {
     const date = new Date(r.date_start);
@@ -95,6 +98,7 @@ export async function action({ request }: ActionFunctionArgs) {
   });
 
   const adRows = adInsights?.data ?? [];
+  console.log(`[metaSync] ad API returned ${adRows.length} rows`);
 
   for (const r of adRows) {
     const date = new Date(r.date_start);

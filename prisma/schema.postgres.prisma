@@ -110,6 +110,63 @@ model Purchase {
   @@index([fbp])
 }
 
+// ─── Multi-touch attribution journey ─────────────────────────────────────────
+
+model Touchpoint {
+  id          String   @id @default(cuid())
+  shop        String
+  visitorId   String
+  sessionId   String?
+  channel     String
+  utmSource   String?  @db.Text
+  utmMedium   String?
+  utmCampaign String?  @db.Text
+  fbclid      String?  @db.Text
+  gclid       String?  @db.Text
+  ttclid      String?  @db.Text
+  msclkid     String?  @db.Text
+  referrer    String?  @db.Text
+  landingPage String?  @db.Text
+  touchedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@unique([shop, visitorId, sessionId])
+  @@index([shop, visitorId, touchedAt])
+  @@index([shop, channel])
+  @@index([shop, touchedAt])
+}
+
+model PurchaseTouchpoint {
+  id           String   @id @default(cuid())
+  shop         String
+  orderId      String
+  visitorId    String?
+  touchpointId String?
+  position     Int
+  totalSteps   Int
+  channel      String
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  fbclid       String?  @db.Text
+  gclid        String?  @db.Text
+  revenue      Float
+  currency     String   @default("USD")
+
+  creditFirstTouch Float @default(0)
+  creditLastTouch  Float @default(0)
+  creditLinear     Float @default(0)
+  creditTimeDecay  Float @default(0)
+
+  touchedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([shop, orderId])
+  @@index([shop, channel])
+  @@index([shop, createdAt])
+  @@index([visitorId])
+}
+
 model AdSpendDaily {
   id        String   @id @default(cuid())
   shop      String   @default("")
@@ -339,4 +396,185 @@ model Lead {
   @@index([shop, source])
   @@index([shop, createdAt])
   @@index([email])
+}
+
+// ─── Reviews ──────────────────────────────────────────────────────────────────
+
+model Review {
+  id              String    @id @default(cuid())
+  shop            String
+  productId       String
+  productTitle    String?
+  orderId         String?
+  customerId      String?
+  reviewerName    String
+  reviewerEmail   String
+  rating          Int
+  title           String?
+  body            String    @db.Text
+  images          String?   @db.Text // JSON array of base64 data URLs
+  status          String    @default("pending")
+  verifiedPurchase Boolean  @default(false)
+  reply           String?   @db.Text
+  repliedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([shop, productId, status])
+  @@index([shop, status])
+  @@index([shop, createdAt])
+}
+
+model ReviewSettings {
+  shop               String  @id
+  autoApprove        Boolean @default(false)
+  sendRequestEmail   Boolean @default(true)
+  requestDelayDays   Int     @default(7)
+  emailSubject       String  @default("How was your order from {shop}?")
+  emailBody          String  @db.Text @default("Hi {name},\n\nThank you for your recent order! We'd love to hear what you think.\n\nClick the link below to leave a quick review — it only takes a minute.\n\n{review_link}\n\nThank you!")
+  discountEnabled    Boolean @default(false)
+  discountType       String  @default("percentage")
+  discountValue      Float   @default(10)
+  discountExpiryDays Int     @default(30)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model ReviewWidgetSettings {
+  shop              String  @id
+  primaryColor      String  @default("#4f46e5")
+  starColor         String  @default("#f59e0b")
+  backgroundColor   String  @default("#ffffff")
+  borderColor       String  @default("#e5e7eb")
+  layout            String  @default("list")
+  showVerifiedBadge Boolean @default(true)
+  showReviewerName  Boolean @default(true)
+  showDate          Boolean @default(true)
+  allowImages       Boolean @default(true)
+  translateTo       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ─── Automation Flows ─────────────────────────────────────────────────────────
+
+model AutomationFlow {
+  id          String   @id @default(cuid())
+  shop        String
+  name        String
+  description String?
+  trigger     String
+  enabled     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  steps       AutomationStep[]
+  enrollments AutomationEnrollment[]
+
+  @@index([shop, trigger, enabled])
+  @@index([shop])
+}
+
+model AutomationStep {
+  id          String   @id @default(cuid())
+  flowId      String
+  position    Int
+  delayDays   Int      @default(0)
+  delayHours  Int      @default(0)
+  subject     String   @default("")
+  htmlContent String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  flow        AutomationFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId, position])
+}
+
+model AutomationEnrollment {
+  id          String    @id @default(cuid())
+  shop        String
+  flowId      String
+  email       String
+  firstName   String?
+  currentStep Int       @default(0)
+  nextSendAt  DateTime?
+  status      String    @default("active")
+  triggeredBy String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  flow        AutomationFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, email])
+  @@index([status, nextSendAt])
+  @@index([shop])
+}
+
+// ─── Analytics: Segments & Dashboards ────────────────────────────────────────
+
+model CustomerSegment {
+  id        String   @id @default(cuid())
+  shop      String
+  name      String
+  filters   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model CustomDashboard {
+  id        String   @id @default(cuid())
+  shop      String
+  name      String
+  widgets   String   @db.Text
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model OrgStore {
+  id        String   @id @default(cuid())
+  orgId     String
+  shop      String   @unique
+  label     String?
+  createdAt DateTime @default(now())
+
+  @@index([orgId])
+}
+
+model Org {
+  id          String   @id @default(cuid())
+  name        String
+  ownerEmail  String
+  clerkUserId String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model NewsletterImage {
+  id        String   @id @default(cuid())
+  shop      String
+  filename  String
+  mimeType  String
+  data      String   @db.Text // base64-encoded image data
+  size      Int
+  createdAt DateTime @default(now())
+
+  @@index([shop])
+  @@index([createdAt])
+}
+
+model StripeConnection {
+  id           String    @id @default(cuid())
+  shop         String    @unique
+  apiKey       String
+  accountName  String?
+  currency     String?
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }

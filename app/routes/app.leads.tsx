@@ -8,8 +8,6 @@ import db from "~/db.server";
 import {
   Page,
   Card,
-  DataTable,
-  Badge,
   Select,
   Button,
   Modal,
@@ -25,7 +23,7 @@ import {
   DropZone,
   Link,
 } from "@shopify/polaris";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,6 +69,7 @@ function sourceLabel(source: string | null): string {
     manual: "Manual",
     contact_form: "Contact Form",
     import: "Import",
+    google_form: "Google Form",
   };
   return source ? (map[source] ?? source) : "—";
 }
@@ -86,6 +85,34 @@ function statusTone(
     lost: "subdued",
   };
   return map[status] ?? "info";
+}
+
+function rowColors(status: string): { bg: string; border: string } {
+  if (status === "converted") return { bg: "#f0fdf4", border: "#22c55e" };
+  if (status === "lost")      return { bg: "#fef2f2", border: "#ef4444" };
+  if (status === "contacted") return { bg: "#fffbeb", border: "#f59e0b" };
+  if (status === "qualified") return { bg: "#fffbeb", border: "#f59e0b" };
+  // new → white / no color
+  return { bg: "#ffffff", border: "#e5e7eb" };
+}
+
+function StatusDot({ status }: { status: string }) {
+  const { border } = rowColors(status);
+  const label =
+    status === "converted" ? "Converted" :
+    status === "lost"      ? "Lost" :
+    status === "new"       ? "New" :
+    status === "contacted" ? "Contacted" :
+    status === "qualified" ? "Qualified" : status;
+  // New leads get a subdued grey dot
+  const dotColor = status === "new" ? "#9ca3af" : border;
+  const textColor = status === "new" ? "#6b7280" : border;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: textColor }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, display: "inline-block", flexShrink: 0 }} />
+      {label}
+    </span>
+  );
 }
 
 function formatAttribution(lead: Lead): string {
@@ -146,6 +173,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const conversionRate =
     totalLeads > 0 ? Math.round((converted / totalLeads) * 100) : 0;
 
+  // Webhook token + Meta connection status
+  const trackingSettings = await anyDb.trackingSettings?.findUnique?.({ where: { shop } }).catch(() => null);
+  const metaConnection = await anyDb.metaConnection?.findUnique?.({ where: { shop }, select: { id: true, accessToken: true } }).catch(() => null);
+  const metaConnected = !!metaConnection && metaConnection.accessToken !== "__PENDING__";
+  const webhookToken = trackingSettings?.leadWebhookToken || null;
+  const apiBase = process.env.APP_URL || "https://api.attribix.app";
+  const webhookUrl = webhookToken ? `${apiBase}/api/leads/webhook?shop=${encodeURIComponent(shop)}&token=${encodeURIComponent(webhookToken)}` : null;
+
   return json({
     leads: leads.map((l: Lead) => ({
       ...l,
@@ -156,6 +191,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     stats: { totalLeads, newToday, conversionRate, qualified },
     statusFilter,
     sourceFilter,
+    webhookUrl,
+    webhookToken: !!webhookToken,
+    metaConnected,
+    shop,
   });
 }
 
@@ -202,12 +241,19 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (!email) return json({ ok: false, error: "Email is required" }, { status: 400 });
 
-    await anyDb.lead
-      ?.upsert?.({
-        where: { shop_email: { shop, email: email.toLowerCase().trim() } },
+    const cleanEmail = email.toLowerCase().trim();
+
+    // Check if lead already exists so we can give accurate feedback
+    const existing = await anyDb.lead
+      ?.findUnique?.({ where: { shop_email: { shop, email: cleanEmail } }, select: { id: true } })
+      .catch(() => null);
+
+    try {
+      await anyDb.lead?.upsert?.({
+        where: { shop_email: { shop, email: cleanEmail } },
         create: {
           shop,
-          email: email.toLowerCase().trim(),
+          email: cleanEmail,
           firstName: firstName ?? null,
           lastName: lastName ?? null,
           phone: phone ?? null,
@@ -223,11 +269,12 @@ export async function action({ request }: ActionFunctionArgs) {
           company: company ?? undefined,
           notes: notes ?? undefined,
         },
-      })
-      .catch((err: Error) => {
-        console.error("[leads] create_lead error:", err?.message);
       });
-    return json({ ok: true });
+      return json({ ok: true, created: !existing, updated: !!existing });
+    } catch (err: any) {
+      console.error("[leads] create_lead error:", err?.message);
+      return json({ ok: false, error: err?.message ?? "Failed to save lead" }, { status: 500 });
+    }
   }
 
   if (intent === "delete_lead") {
@@ -306,6 +353,100 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: true, imported, skipped, errors: errors.slice(0, 10) });
   }
 
+  if (intent === "generate_webhook_token") {
+    const crypto = await import("crypto");
+    const token = crypto.randomBytes(24).toString("hex");
+    await anyDb.trackingSettings?.upsert?.({
+      where: { shop },
+      create: { shop, leadWebhookToken: token },
+      update: { leadWebhookToken: token },
+    });
+    return json({ ok: true, token });
+  }
+
+  if (intent === "sync_meta_leads") {
+    try {
+      const metaConn = await anyDb.metaConnection?.findUnique?.({ where: { shop } });
+      if (!metaConn || metaConn.accessToken === "__PENDING__") {
+        return json({ ok: false, error: "Meta not connected. Connect Meta in Integrations first." }, { status: 400 });
+      }
+      // Fetch lead gen forms from the ad account's associated pages
+      const token = metaConn.accessToken;
+      const adAccountId = metaConn.adAccountId;
+
+      // First get pages connected to the ad account / user
+      const pagesRes = await fetch(`https://graph.facebook.com/v20.0/me/accounts?fields=id,name&access_token=${token}&limit=100`);
+      const pagesData = await pagesRes.json();
+      const pages = pagesData?.data || [];
+
+      if (pages.length === 0) {
+        return json({ ok: false, error: "No Facebook Pages found. Ensure your Meta app has pages_manage_ads permission." }, { status: 400 });
+      }
+
+      let totalImported = 0;
+      let totalSkipped = 0;
+
+      for (const page of pages) {
+        // Get lead gen forms for this page
+        const formsRes = await fetch(`https://graph.facebook.com/v20.0/${page.id}/leadgen_forms?fields=id,name,status&access_token=${token}&limit=100`);
+        const formsData = await formsRes.json();
+        const forms = formsData?.data || [];
+
+        for (const form of forms) {
+          // Fetch leads from each form (last 90 days)
+          const leadsRes = await fetch(`https://graph.facebook.com/v20.0/${form.id}/leads?fields=id,created_time,field_data&limit=500&access_token=${token}`);
+          const leadsData = await leadsRes.json();
+          const formLeads = leadsData?.data || [];
+
+          for (const metaLead of formLeads) {
+            const fields = metaLead.field_data || [];
+            const getField = (names: string[]) => {
+              for (const n of names) {
+                const f = fields.find((fd: any) => fd.name?.toLowerCase() === n.toLowerCase());
+                if (f?.values?.[0]) return f.values[0];
+              }
+              return null;
+            };
+
+            const email = getField(["email", "e-mail", "e_mail"])?.toLowerCase()?.trim();
+            if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { totalSkipped++; continue; }
+
+            const fullName = getField(["full_name", "name"]);
+            const firstName = getField(["first_name", "firstname"]) || (fullName?.split(/\s+/)?.[0]) || null;
+            const lastName = getField(["last_name", "lastname"]) || (fullName?.split(/\s+/)?.slice(1)?.join(" ")) || null;
+
+            try {
+              await anyDb.lead?.upsert?.({
+                where: { shop_email: { shop, email } },
+                create: {
+                  shop, email,
+                  firstName,
+                  lastName,
+                  phone: getField(["phone_number", "phone", "tel"]),
+                  company: getField(["company_name", "company", "organization"]),
+                  source: "meta_ad",
+                  status: "new",
+                  notes: `Meta Lead Form: ${form.name || form.id}`,
+                },
+                update: {
+                  firstName: firstName || undefined,
+                  lastName: lastName || undefined,
+                  phone: getField(["phone_number", "phone", "tel"]) || undefined,
+                },
+              });
+              totalImported++;
+            } catch { totalSkipped++; }
+          }
+        }
+      }
+
+      return json({ ok: true, imported: totalImported, skipped: totalSkipped, pages: pages.length });
+    } catch (e: any) {
+      console.error("[leads] meta sync error:", e.message);
+      return json({ ok: false, error: e.message || "Failed to sync Meta leads" }, { status: 500 });
+    }
+  }
+
   return json({ ok: false, error: "Unknown intent" }, { status: 400 });
 }
 
@@ -377,7 +518,7 @@ function AddLeadModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const fetcher = useFetcher<{ ok: boolean; error?: string }>();
+  const fetcher = useFetcher<{ ok: boolean; error?: string; created?: boolean; updated?: boolean }>();
   const [email, setEmail] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -386,15 +527,20 @@ function AddLeadModal({
   const [notes, setNotes] = useState("");
   const [source, setSource] = useState("manual");
 
-  const isSaving = fetcher.state !== "idle";
-  const saved = fetcher.data?.ok && fetcher.state === "idle";
+  // Track whether a submission happened in THIS modal session.
+  // fetcher.data persists between modal opens, so without this guard
+  // reopening the modal would see saved=true immediately and close again.
+  const didSubmitRef = useRef(false);
 
-  const handleSubmit = useCallback(() => {
-    fetcher.submit(
-      { _intent: "create_lead", email, firstName, lastName, phone, company, notes, source },
-      { method: "post", encType: "application/json" }
-    );
-  }, [fetcher, email, firstName, lastName, phone, company, notes, source]);
+  const isSaving = fetcher.state !== "idle";
+  const saved = fetcher.data?.ok === true && fetcher.state === "idle";
+
+  // Reset the submission guard whenever the modal opens
+  useEffect(() => {
+    if (open) {
+      didSubmitRef.current = false;
+    }
+  }, [open]);
 
   const handleClose = useCallback(() => {
     setEmail("");
@@ -404,13 +550,24 @@ function AddLeadModal({
     setCompany("");
     setNotes("");
     setSource("manual");
+    didSubmitRef.current = false;
     onClose();
   }, [onClose]);
 
-  // Auto-close on success
-  if (saved && open) {
-    handleClose();
-  }
+  // Auto-close only on a NEW lead created in this session
+  useEffect(() => {
+    if (fetcher.data?.created && open && didSubmitRef.current && fetcher.state === "idle") {
+      handleClose();
+    }
+  }, [fetcher.data, fetcher.state, open, handleClose]);
+
+  const handleSubmit = useCallback(() => {
+    didSubmitRef.current = true;
+    fetcher.submit(
+      { _intent: "create_lead", email, firstName, lastName, phone, company, notes, source },
+      { method: "post", encType: "application/json" }
+    );
+  }, [fetcher, email, firstName, lastName, phone, company, notes, source]);
 
   const sourceOptions = [
     { label: "Manual", value: "manual" },
@@ -421,23 +578,35 @@ function AddLeadModal({
     { label: "Import", value: "import" },
   ];
 
+  // Show result state (only if this session submitted)
+  const showResult = fetcher.state === "idle" && fetcher.data && didSubmitRef.current;
+
   return (
     <Modal
       open={open}
       onClose={handleClose}
       title="Add lead"
-      primaryAction={{
+      primaryAction={showResult && fetcher.data?.updated ? undefined : {
         content: isSaving ? "Saving..." : "Add lead",
         onAction: handleSubmit,
         loading: isSaving,
         disabled: !email || isSaving,
       }}
-      secondaryActions={[{ content: "Cancel", onAction: handleClose }]}
+      secondaryActions={[{ content: showResult ? "Close" : "Cancel", onAction: handleClose }]}
     >
       <Modal.Section>
-        {fetcher.data?.error && (
+        {showResult && fetcher.data?.error && (
           <Box paddingBlockEnd="400">
-            <Banner tone="critical">{fetcher.data.error}</Banner>
+            <Banner tone="critical">
+              ❌ {fetcher.data.error}
+            </Banner>
+          </Box>
+        )}
+        {showResult && fetcher.data?.updated && (
+          <Box paddingBlockEnd="400">
+            <Banner tone="warning">
+              ⚠️ A lead with this email already exists — their details have been updated instead. To add a new lead, use a different email address.
+            </Banner>
           </Box>
         )}
         <Form onSubmit={handleSubmit}>
@@ -636,10 +805,28 @@ function ImportLeadsModal({ open, onClose }: { open: boolean; onClose: () => voi
 
           {/* Success result */}
           {done && (
-            <Banner tone="success">
-              ✅ Imported <strong>{result?.imported}</strong> lead{result?.imported !== 1 ? "s" : ""}
-              {(result?.skipped ?? 0) > 0 && ` · ${result?.skipped} skipped (invalid email or duplicate)`}
-            </Banner>
+            <BlockStack gap="200">
+              <Banner tone="success">
+                ✅ Import complete
+              </Banner>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginTop: 4 }}>
+                {[
+                  { label: "Leads created", value: result?.imported ?? 0, color: "#10b981" },
+                  { label: "Skipped / duplicates", value: result?.skipped ?? 0, color: "#f59e0b" },
+                  { label: "Total in file", value: (result?.imported ?? 0) + (result?.skipped ?? 0), color: "#6b7280" },
+                ].map(s => (
+                  <div key={s.label} style={{ background: "#f9fafb", borderRadius: 8, padding: "12px 14px", border: "1px solid #e5e7eb" }}>
+                    <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              {(result?.errors?.length ?? 0) > 0 && (
+                <Text as="p" variant="bodySm" tone="caution">
+                  Failed emails: {result?.errors?.join(", ")}
+                </Text>
+              )}
+            </BlockStack>
           )}
 
           {/* Error */}
@@ -705,10 +892,13 @@ function ImportLeadsModal({ open, onClose }: { open: boolean; onClose: () => voi
 // ─── Page Component ───────────────────────────────────────────────────────────
 
 export default function LeadsPage() {
-  const { leads, stats, statusFilter, sourceFilter } = useLoaderData<typeof loader>();
+  const { leads, stats, statusFilter, sourceFilter, webhookUrl, webhookToken, metaConnected, shop } = useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [webhookSectionOpen, setWebhookSectionOpen] = useState(false);
+  const webhookFetcher = useFetcher();
+  const metaSyncFetcher = useFetcher();
 
   const handleStatusFilter = useCallback(
     (val: string) => {
@@ -743,46 +933,18 @@ export default function LeadsPage() {
     { label: "Contact Form", value: "contact_form" },
     { label: "Meta Ad", value: "meta_ad" },
     { label: "Google Ad", value: "google_ad" },
+    { label: "Google Form", value: "google_form" },
     { label: "Manual", value: "manual" },
     { label: "Import", value: "import" },
   ];
 
-  const rows = leads.map((lead) => [
-    // Name / Email
-    <BlockStack gap="050" key={lead.id + "_name"}>
-      <Text as="span" variant="bodyMd" fontWeight="semibold">
-        {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || "—"}
-      </Text>
-      <Text as="span" variant="bodySm" tone="subdued">
-        {lead.email}
-      </Text>
-      {lead.company && (
-        <Text as="span" variant="bodySm" tone="subdued">
-          {lead.company}
-        </Text>
-      )}
-    </BlockStack>,
-    // Source
-    <Text as="span" variant="bodySm" key={lead.id + "_src"}>
-      {sourceLabel(lead.source)}
-    </Text>,
-    // Status
-    <Badge key={lead.id + "_badge"} tone={statusTone(lead.status)}>
-      {lead.status.charAt(0).toUpperCase() + lead.status.slice(1)}
-    </Badge>,
-    // Attribution
-    <Text as="span" variant="bodySm" tone="subdued" key={lead.id + "_attr"}>
-      {formatAttribution(lead)}
-    </Text>,
-    // Created
-    <Text as="span" variant="bodySm" tone="subdued" key={lead.id + "_date"}>
-      {formatDate(lead.createdAt)}
-    </Text>,
-    // Actions
-    <div key={lead.id + "_actions"} style={{ minWidth: 140 }}>
-      <StatusSelect lead={lead} />
-    </div>,
-  ]);
+  // Legend for the color coding
+  const statusLegend = [
+    { label: "New", color: "#9ca3af" },
+    { label: "In progress (contacted / qualified)", color: "#f59e0b" },
+    { label: "Converted", color: "#22c55e" },
+    { label: "Lost", color: "#ef4444" },
+  ];
 
   return (
     <Page
@@ -792,10 +954,16 @@ export default function LeadsPage() {
         content: "Add lead",
         onAction: () => setAddModalOpen(true),
       }}
-      secondaryActions={[{
-        content: "Import CSV",
-        onAction: () => setImportModalOpen(true),
-      }]}
+      secondaryActions={[
+        {
+          content: "Import CSV",
+          onAction: () => setImportModalOpen(true),
+        },
+        {
+          content: "Export CSV",
+          onAction: () => window.open("/app/leads/export", "_blank"),
+        },
+      ]}
     >
       <BlockStack gap="500">
         {/* Stats row */}
@@ -810,27 +978,168 @@ export default function LeadsPage() {
           <StatCard label="Qualified" value={stats.qualified} />
         </div>
 
-        {/* Filters */}
+        {/* Import Sources: Webhook + Meta Sync */}
         <Card>
-          <InlineStack gap="400" wrap blockAlign="end">
-            <div style={{ minWidth: 180 }}>
-              <Select
-                label="Status"
-                options={statusOptions}
-                value={statusFilter}
-                onChange={handleStatusFilter}
-              />
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingSm">Import Sources</Text>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              {/* Meta Lead Sync */}
+              <div style={{ flex: 1, minWidth: 280, padding: 16, background: "#f0f4ff", borderRadius: 8, border: "1px solid #c7d2fe" }}>
+                <InlineStack gap="200" blockAlign="center">
+                  <span style={{ fontSize: 20 }}>📘</span>
+                  <Text as="h3" variant="headingSm">Meta Lead Ads</Text>
+                </InlineStack>
+                <div style={{ marginTop: 8 }}>
+                  {metaConnected ? (
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodySm" tone="subdued">Pull leads from your Meta Lead Ad forms.</Text>
+                      <Button
+                        variant="primary"
+                        size="slim"
+                        loading={metaSyncFetcher.state !== "idle"}
+                        onClick={() => metaSyncFetcher.submit(
+                          { _intent: "sync_meta_leads" },
+                          { method: "post", encType: "application/json" }
+                        )}
+                      >
+                        Sync Meta Leads
+                      </Button>
+                      {metaSyncFetcher.data?.ok && (
+                        <Banner tone="success">
+                          Imported {(metaSyncFetcher.data as any).imported} leads from {(metaSyncFetcher.data as any).pages} page(s). {(metaSyncFetcher.data as any).skipped > 0 ? `${(metaSyncFetcher.data as any).skipped} skipped.` : ""}
+                        </Banner>
+                      )}
+                      {metaSyncFetcher.data && !metaSyncFetcher.data.ok && (
+                        <Banner tone="critical">{(metaSyncFetcher.data as any).error}</Banner>
+                      )}
+                    </BlockStack>
+                  ) : (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Connect Meta in <Link url="/app/integrations/meta">Integrations</Link> to sync leads from Lead Ad forms.
+                    </Text>
+                  )}
+                </div>
+              </div>
+
+              {/* Google Forms Webhook */}
+              <div style={{ flex: 1, minWidth: 280, padding: 16, background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0" }}>
+                <InlineStack gap="200" blockAlign="center">
+                  <span style={{ fontSize: 20 }}>📝</span>
+                  <Text as="h3" variant="headingSm">Google Forms / Webhook</Text>
+                </InlineStack>
+                <div style={{ marginTop: 8 }}>
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Receive leads automatically from Google Forms, Typeform, or any service that can POST JSON.
+                    </Text>
+                    {webhookUrl ? (
+                      <BlockStack gap="200">
+                        <Text as="p" variant="bodySm" fontWeight="semibold">Webhook URL:</Text>
+                        <div style={{ padding: "8px 12px", background: "#fff", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 12, fontFamily: "monospace", wordBreak: "break-all" }}>
+                          {webhookUrl}
+                        </div>
+                        <InlineStack gap="200">
+                          <Button size="slim" onClick={() => navigator.clipboard.writeText(webhookUrl)}>Copy URL</Button>
+                          <Button size="slim" variant="plain" onClick={() => setWebhookSectionOpen(!webhookSectionOpen)}>
+                            {webhookSectionOpen ? "Hide setup guide" : "Setup guide"}
+                          </Button>
+                        </InlineStack>
+                        {webhookSectionOpen && (
+                          <div style={{ marginTop: 8, padding: 12, background: "#fff", borderRadius: 6, border: "1px solid #e5e7eb" }}>
+                            <Text as="p" variant="bodySm" fontWeight="semibold">Google Forms Apps Script:</Text>
+                            <div style={{ marginTop: 8, padding: 10, background: "#1e293b", color: "#e2e8f0", borderRadius: 6, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", overflowX: "auto" }}>
+{`function onFormSubmit(e) {
+  var items = e.response.getItemResponses();
+  var data = {};
+  items.forEach(function(item) {
+    var title = item.getItem().getTitle().toLowerCase();
+    if (title.includes("email")) data.email = item.getResponse();
+    else if (title.includes("name")) data.name = item.getResponse();
+    else if (title.includes("phone")) data.phone = item.getResponse();
+    else if (title.includes("company")) data.company = item.getResponse();
+    else data[title] = item.getResponse();
+  });
+  UrlFetchApp.fetch("${webhookUrl}", {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(data)
+  });
+}`}
+                            </div>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              Paste this in your Google Form's Apps Script editor (Extensions → Apps Script), then set a trigger for "onFormSubmit".
+                            </Text>
+                          </div>
+                        )}
+                      </BlockStack>
+                    ) : (
+                      <Button
+                        variant="primary"
+                        size="slim"
+                        loading={webhookFetcher.state !== "idle"}
+                        onClick={() => webhookFetcher.submit(
+                          { _intent: "generate_webhook_token" },
+                          { method: "post", encType: "application/json" }
+                        )}
+                      >
+                        Generate Webhook URL
+                      </Button>
+                    )}
+                  </BlockStack>
+                </div>
+              </div>
             </div>
-            <div style={{ minWidth: 180 }}>
-              <Select
-                label="Source"
-                options={sourceOptions}
-                value={sourceFilter}
-                onChange={handleSourceFilter}
-              />
+          </BlockStack>
+        </Card>
+
+        {/* Filters + Export */}
+        <Card>
+          <InlineStack gap="400" wrap blockAlign="end" align="space-between">
+            <InlineStack gap="400" wrap blockAlign="end">
+              <div style={{ minWidth: 180 }}>
+                <Select
+                  label="Status"
+                  options={statusOptions}
+                  value={statusFilter}
+                  onChange={handleStatusFilter}
+                />
+              </div>
+              <div style={{ minWidth: 180 }}>
+                <Select
+                  label="Source"
+                  options={sourceOptions}
+                  value={sourceFilter}
+                  onChange={handleSourceFilter}
+                />
+              </div>
+            </InlineStack>
+            <div style={{ paddingTop: 20 }}>
+              <Button
+                variant="plain"
+                icon={<span style={{ fontSize: 14 }}>⬇️</span>}
+                onClick={() => {
+                  const params = new URLSearchParams();
+                  if (statusFilter !== "all") params.set("status", statusFilter);
+                  if (sourceFilter !== "all") params.set("source", sourceFilter);
+                  const qs = params.toString();
+                  window.open(`/app/leads/export${qs ? `?${qs}` : ""}`, "_blank");
+                }}
+              >
+                Export CSV ({leads.length}{statusFilter !== "all" || sourceFilter !== "all" ? " filtered" : ""})
+              </Button>
             </div>
           </InlineStack>
         </Card>
+
+        {/* Color legend */}
+        <InlineStack gap="300" blockAlign="center">
+          {statusLegend.map(l => (
+            <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <span style={{ width: 10, height: 10, borderRadius: "50%", background: l.color, display: "inline-block" }} />
+              <span style={{ color: "#6b7280" }}>{l.label}</span>
+            </span>
+          ))}
+        </InlineStack>
 
         {/* Table */}
         <Card padding="0">
@@ -845,13 +1154,61 @@ export default function LeadsPage() {
               </Text>
             </EmptyState>
           ) : (
-            <DataTable
-              columnContentTypes={["text", "text", "text", "text", "text", "text"]}
-              headings={["Name / Email", "Source", "Status", "Attribution", "Created", "Change status"]}
-              rows={rows}
-              hasZebraStripingOnData
-              increasedTableDensity
-            />
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid #e5e7eb", background: "#f9fafb" }}>
+                    {["Name / Email", "Source", "Status", "Attribution", "Created", "Change status"].map(h => (
+                      <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads.map((lead) => {
+                    const { bg, border } = rowColors(lead.status);
+                    return (
+                      <tr
+                        key={lead.id}
+                        style={{
+                          borderBottom: "1px solid #e5e7eb",
+                          background: bg,
+                          borderLeft: `4px solid ${border}`,
+                        }}
+                      >
+                        {/* Name / Email */}
+                        <td style={{ padding: "10px 14px", minWidth: 180 }}>
+                          <div style={{ fontWeight: 600, color: "#111827" }}>
+                            {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || "—"}
+                          </div>
+                          <div style={{ color: "#6b7280", fontSize: 12 }}>{lead.email}</div>
+                          {lead.company && <div style={{ color: "#9ca3af", fontSize: 12 }}>{lead.company}</div>}
+                        </td>
+                        {/* Source */}
+                        <td style={{ padding: "10px 14px", color: "#374151", whiteSpace: "nowrap" }}>
+                          {sourceLabel(lead.source)}
+                        </td>
+                        {/* Status */}
+                        <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                          <StatusDot status={lead.status} />
+                        </td>
+                        {/* Attribution */}
+                        <td style={{ padding: "10px 14px", color: "#6b7280", fontSize: 12, maxWidth: 200 }}>
+                          {formatAttribution(lead)}
+                        </td>
+                        {/* Created */}
+                        <td style={{ padding: "10px 14px", color: "#9ca3af", whiteSpace: "nowrap" }}>
+                          {formatDate(lead.createdAt)}
+                        </td>
+                        {/* Change status */}
+                        <td style={{ padding: "10px 14px", minWidth: 160 }}>
+                          <StatusSelect lead={lead} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </Card>
       </BlockStack>

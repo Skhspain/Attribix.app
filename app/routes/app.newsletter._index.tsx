@@ -231,11 +231,7 @@ export default function NewsletterOverview() {
                 {avgOpenRate > 0 ? `${avgOpenRate}% average open rate. ` : ""}Send consistently to maximise revenue.
               </Text>
             </BlockStack>
-            <a href="/app/newsletter/campaigns/new" style={{
-              display: "inline-block", padding: "10px 20px", borderRadius: 8,
-              background: "#008060", color: "#fff", fontWeight: 700, fontSize: 14,
-              textDecoration: "none", fontFamily: "inherit",
-            }}>Send a campaign →</a>
+            <Button url="/app/newsletter/campaigns/new" variant="primary">Send a newsletter →</Button>
           </div>
         )}
 

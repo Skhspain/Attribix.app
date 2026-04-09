@@ -20,11 +20,15 @@ import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 
 export async function loader({ request }) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
 
+  const { getShopPlan, getHistoryCutoff } = await import("~/services/plan.server");
+  const plan = await getShopPlan(shop, admin);
+  const historyCutoff = getHistoryCutoff(plan);
+
   const purchases = await db.purchase.findMany({
-    where: { shop },
+    where: { shop, createdAt: { gte: historyCutoff } },
     orderBy: { createdAt: "desc" },
     take: 250,
     select: {
@@ -44,15 +48,15 @@ export async function loader({ request }) {
   }).catch(() => []);
 
   const totalRevenue = await db.purchase.aggregate({
-    where: { shop },
+    where: { shop, createdAt: { gte: historyCutoff } },
     _sum: { totalValue: true },
   }).catch(() => ({ _sum: { totalValue: 0 } }));
 
   const attributedCount = await db.purchase.count({
-    where: { shop, utmSource: { not: null } },
+    where: { shop, createdAt: { gte: historyCutoff }, utmSource: { not: null } },
   }).catch(() => 0);
 
-  const totalCount = await db.purchase.count({ where: { shop } }).catch(() => 0);
+  const totalCount = await db.purchase.count({ where: { shop, createdAt: { gte: historyCutoff } } }).catch(() => 0);
 
   return json({
     purchases,
@@ -166,6 +170,27 @@ export default function AppOrders() {
 
   const attributionRate = totalCount > 0 ? Math.round((attributedCount / totalCount) * 100) : 0;
 
+  // Source breakdown for overview cards
+  const sourceBreakdown = useMemo(() => {
+    const map = new Map();
+    for (const p of purchases) {
+      const src = normalizeSource(p) || "direct";
+      const cur = map.get(src) || { orders: 0, revenue: 0 };
+      cur.orders++;
+      cur.revenue += Number(p.totalValue || 0);
+      map.set(src, cur);
+    }
+    const totalRev = Array.from(map.values()).reduce((s, r) => s + r.revenue, 0);
+    return Array.from(map.entries())
+      .sort((a, b) => b[1].orders - a[1].orders)
+      .map(([src, r]) => ({
+        source: src,
+        orders: r.orders,
+        revenue: r.revenue,
+        share: totalRev > 0 ? Math.round((r.revenue / totalRev) * 100) : 0,
+      }));
+  }, [purchases]);
+
   const rows = filtered.map((p) => {
     const source = normalizeSource(p);
     return [
@@ -213,6 +238,42 @@ export default function AppOrders() {
             </BlockStack>
           </Card>
         </InlineStack>
+
+        {/* Source overview */}
+        <BlockStack gap="200">
+          <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">TOP SOURCES</Text>
+          <InlineStack gap="300" wrap>
+            {sourceBreakdown.map(({ source, orders, revenue, share }) => (
+              <div
+                key={source}
+                onClick={() => setSourceFilter(source === "direct" ? "direct" : source)}
+                style={{
+                  cursor: "pointer",
+                  border: `2px solid ${sourceFilter === source || (sourceFilter === "direct" && source === "direct") ? "#303030" : "#e1e3e5"}`,
+                  borderRadius: 12,
+                  padding: "12px 16px",
+                  minWidth: 140,
+                  background: sourceFilter === source || (sourceFilter === "direct" && source === "direct") ? "#f6f6f7" : "#fff",
+                  transition: "border-color 0.15s",
+                }}
+              >
+                <BlockStack gap="050">
+                  <Text as="p" variant="headingXl" fontWeight="bold">{share}%</Text>
+                  <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
+                  <Text as="p" variant="bodySm" tone="subdued">{orders} orders · {formatMoney(revenue)}</Text>
+                </BlockStack>
+              </div>
+            ))}
+            {sourceFilter !== "all" && (
+              <div
+                onClick={() => setSourceFilter("all")}
+                style={{ cursor: "pointer", display: "flex", alignItems: "center", padding: "0 8px" }}
+              >
+                <Text as="p" variant="bodySm" tone="subdued">Clear ×</Text>
+              </div>
+            )}
+          </InlineStack>
+        </BlockStack>
 
         <Card padding="0">
           <Box padding="400" paddingBlockEnd="0">

@@ -1,0 +1,7 @@
+api_version = "2024-04"
+
+[[extensions]]
+uid = "71eee5eb-3dbe-afb5-6c01-5f3eab5c7676ed2e2fd1"
+type = "theme"
+name = "Attribix Tracker"
+handle = "attribix-tracker"

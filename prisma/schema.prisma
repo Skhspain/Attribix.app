@@ -112,6 +112,67 @@ model Purchase {
   @@index([fbp])
 }
 
+// ─── Multi-touch attribution journey ─────────────────────────────────────────
+
+// One row per de-duplicated attributed session (UTM or click ID present).
+// Created/updated each time the tracking pixel fires with attribution data.
+model Touchpoint {
+  id          String   @id @default(cuid())
+  shop        String
+  visitorId   String
+  sessionId   String?
+  channel     String   // "Meta Ads" | "Google Ads" | "TikTok Ads" | etc.
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  fbclid      String?
+  gclid       String?
+  ttclid      String?
+  msclkid     String?
+  referrer    String?
+  landingPage String?
+  touchedAt   DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@unique([shop, visitorId, sessionId])
+  @@index([shop, visitorId, touchedAt])
+  @@index([shop, channel])
+  @@index([shop, touchedAt])
+}
+
+// One row per touchpoint per order — stores pre-computed multi-touch credits.
+model PurchaseTouchpoint {
+  id           String   @id @default(cuid())
+  shop         String
+  orderId      String
+  visitorId    String?
+  touchpointId String?
+  position     Int      // 1 = first touch, N = last touch
+  totalSteps   Int
+  channel      String
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  fbclid       String?
+  gclid        String?
+  revenue      Float
+  currency     String   @default("USD")
+
+  // Credit fraction for each model (0.0–1.0, sum across order = 1.0)
+  creditFirstTouch Float @default(0)
+  creditLastTouch  Float @default(0)
+  creditLinear     Float @default(0)
+  creditTimeDecay  Float @default(0)
+
+  touchedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([shop, orderId])
+  @@index([shop, channel])
+  @@index([shop, createdAt])
+  @@index([visitorId])
+}
+
 model AdSpendDaily {
   id       String   @id @default(cuid())
   shop     String   @default("")
@@ -147,6 +208,7 @@ model TrackingSettings {
 
   attributionModel      String  @default("last_touch")
   attributionWindowDays Int     @default(7)
+  leadWebhookToken      String?
 
   @@index([shop])
   @@index([trackingKey])
@@ -340,4 +402,242 @@ model Lead {
   @@index([shop, source])
   @@index([shop, createdAt])
   @@index([email])
+}
+
+// ─── Reviews ──────────────────────────────────────────────────────────────────
+
+model Review {
+  id              String    @id @default(cuid())
+  shop            String
+  productId       String
+  productTitle    String?
+  orderId         String?
+  customerId      String?
+  reviewerName    String
+  reviewerEmail   String
+  rating          Int       // 1–5
+  title           String?
+  body            String
+  images          String?   // JSON array of base64 data URLs
+  status          String    @default("pending") // pending | approved | rejected
+  verifiedPurchase Boolean  @default(false)
+  reply           String?
+  repliedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([shop, productId, status])
+  @@index([shop, status])
+  @@index([shop, createdAt])
+}
+
+model ReviewSettings {
+  shop               String  @id
+  autoApprove        Boolean @default(false)
+  sendRequestEmail   Boolean @default(true)
+  requestDelayDays   Int     @default(7)
+  emailSubject       String  @default("How was your order from {shop}?")
+  emailBody          String  @default("Hi {name},\n\nThank you for your recent order! We'd love to hear what you think.\n\nClick the link below to leave a quick review — it only takes a minute.\n\n{review_link}\n\nThank you!")
+  discountEnabled    Boolean @default(false)
+  discountType       String  @default("percentage") // percentage | fixed
+  discountValue      Float   @default(10)
+  discountExpiryDays Int     @default(30)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model ReviewWidgetSettings {
+  shop              String  @id
+  primaryColor      String  @default("#4f46e5")
+  starColor         String  @default("#f59e0b")
+  backgroundColor   String  @default("#ffffff")
+  borderColor       String  @default("#e5e7eb")
+  layout            String  @default("list") // list | grid
+  showVerifiedBadge Boolean @default(true)
+  showReviewerName  Boolean @default(true)
+  showDate          Boolean @default(true)
+  allowImages       Boolean @default(true)
+  translateTo       String? // e.g. "en", "no", "de" — null = no translation
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ─── Automation Flows ─────────────────────────────────────────────────────────
+
+model AutomationFlow {
+  id          String   @id @default(cuid())
+  shop        String
+  name        String
+  description String?
+  trigger     String   // subscriber_created | order_created | win_back
+  enabled     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  steps       AutomationStep[]
+  enrollments AutomationEnrollment[]
+
+  @@index([shop, trigger, enabled])
+  @@index([shop])
+}
+
+model AutomationStep {
+  id          String   @id @default(cuid())
+  flowId      String
+  position    Int
+  delayDays   Int      @default(0)
+  delayHours  Int      @default(0)
+  subject     String   @default("")
+  htmlContent String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  flow        AutomationFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@index([flowId, position])
+}
+
+model AutomationEnrollment {
+  id          String    @id @default(cuid())
+  shop        String
+  flowId      String
+  email       String
+  firstName   String?
+  currentStep Int       @default(0)
+  nextSendAt  DateTime?
+  status      String    @default("active") // active | completed | cancelled
+  triggeredBy String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  flow        AutomationFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, email])
+  @@index([status, nextSendAt])
+  @@index([shop])
+}
+
+// ─── Analytics: Segments & Dashboards ────────────────────────────────────────
+
+model CustomerSegment {
+  id        String   @id @default(cuid())
+  shop      String
+  name      String
+  filters   String   // JSON: array of filter rules
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model CustomDashboard {
+  id        String   @id @default(cuid())
+  shop      String
+  name      String
+  widgets   String   // JSON: array of widget configs
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shop])
+}
+
+model OrgStore {
+  id        String   @id @default(cuid())
+  orgId     String
+  shop      String   @unique
+  label     String?
+  createdAt DateTime @default(now())
+
+  @@index([orgId])
+}
+
+model Org {
+  id          String   @id @default(cuid())
+  name        String
+  ownerEmail  String
+  clerkUserId String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model NewsletterImage {
+  id        String   @id @default(cuid())
+  shop      String
+  filename  String
+  mimeType  String
+  data      String   // base64-encoded image data
+  size      Int
+  createdAt DateTime @default(now())
+
+  @@index([shop])
+  @@index([createdAt])
+}
+
+model StripeConnection {
+  id           String    @id @default(cuid())
+  shop         String    @unique
+  apiKey       String
+  accountName  String?
+  currency     String?
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ─── TikTok Ads ───────────────────────────────────────────────────────────────
+
+model TikTokConnection {
+  id            String    @id @default(cuid())
+  shop          String    @unique
+  accessToken   String
+  advertiserId  String?
+  lastSyncedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([shop])
+}
+
+model TikTokCampaignDailyInsight {
+  id              String   @id @default(cuid())
+  shop            String
+  date            DateTime
+  campaignId      String
+  campaignName    String?
+  spend           Float    @default(0)
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  conversions     Int      @default(0)
+  conversionValue Float    @default(0)
+  raw             String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shop, date, campaignId])
+  @@index([shop])
+  @@index([shop, date])
+}
+
+model TikTokAdDailyInsight {
+  id              String   @id @default(cuid())
+  shop            String
+  date            DateTime
+  campaignId      String
+  campaignName    String?
+  adGroupId       String
+  adGroupName     String?
+  adId            String
+  adName          String?
+  spend           Float    @default(0)
+  impressions     Int      @default(0)
+  clicks          Int      @default(0)
+  conversions     Int      @default(0)
+  conversionValue Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([shop, date, adId])
+  @@index([shop])
+  @@index([shop, date])
 }

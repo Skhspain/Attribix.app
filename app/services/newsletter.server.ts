@@ -253,11 +253,18 @@ export async function sendCampaign(campaignId: string): Promise<{
     const unsubUrl = `${APP_URL}/newsletter/unsubscribe?token=${token}`;
     const footer = buildUnsubscribeFooter(unsubUrl);
 
-    // Personalise: replace {{first_name}} placeholders
+    // Personalise: replace all template placeholders
     const firstName = sub.firstName || "";
+    const shopDomain = campaign.shop.replace(".myshopify.com", "");
+    const shopUrl = `https://${campaign.shop.includes(".") ? campaign.shop : campaign.shop + ".myshopify.com"}`;
+
     let html = campaign.htmlContent
       .replace(/\{\{first_name\}\}/gi, firstName)
-      .replace(/\{\{email\}\}/gi, sub.email);
+      .replace(/\{\{name\}\}/gi, firstName)
+      .replace(/\{\{email\}\}/gi, sub.email)
+      .replace(/\{\{shop_url\}\}/gi, shopUrl)
+      .replace(/\{\{shop\}\}/gi, shopDomain)
+      .replace(/\{\{unsubscribe_url\}\}/gi, `${APP_URL}/newsletter/unsubscribe?token=${generateUnsubscribeToken(campaign.shop, sub.email)}`);
 
     // Wrap all http(s) links with click-tracking redirect (skip mailto: and #)
     html = html.replace(

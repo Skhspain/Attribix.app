@@ -67,9 +67,10 @@ export async function loader({ request }) {
   const embedded = url.searchParams.get("embedded") || "1";
   const appOrigin = getAppOrigin(request);
 
-  const conn = await db.metaConnection
-    .findUnique({ where: { shop } })
-    .catch(() => null);
+  const [conn, trackingSettings] = await Promise.all([
+    db.metaConnection.findUnique({ where: { shop } }).catch(() => null),
+    db.trackingSettings.findUnique({ where: { shop } }).catch(() => null),
+  ]);
 
   const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
   const adAccountId = conn?.adAccountId || "";
@@ -83,6 +84,8 @@ export async function loader({ request }) {
     connected,
     adAccountId,
     expiresAt,
+    fbPixelId: trackingSettings?.fbPixelId || "",
+    fbToken: trackingSettings?.fbToken || "",
   });
 }
 
@@ -106,7 +109,47 @@ function MetaIntegrationsInner({ data }) {
   const [syncError, setSyncError] = useState(null);
   const [syncOk, setSyncOk] = useState(null);
 
+  const [pixelId, setPixelId] = useState(data.fbPixelId || "");
+  const [capiToken, setCapiToken] = useState(data.fbToken || "");
+  const [pixelSaving, setPixelSaving] = useState(false);
+  const [pixelSaved, setPixelSaved] = useState(false);
+  const [availablePixels, setAvailablePixels] = useState([]);
+  const [pixelsLoading, setPixelsLoading] = useState(false);
+  const [pixelInputMode, setPixelInputMode] = useState("auto"); // "auto" or "manual"
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  async function savePixelSettings() {
+    setPixelSaving(true);
+    setPixelSaved(false);
+    try {
+      await authFetch("/api/meta/pixel-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fbPixelId: pixelId, fbToken: capiToken }),
+      });
+      setPixelSaved(true);
+      setTimeout(() => setPixelSaved(false), 3000);
+    } catch (e) { console.error(e); }
+    setPixelSaving(false);
+  }
+
   const connected = !!data.connected;
+
+  // Auto-fetch pixels from Meta
+  useEffect(() => {
+    if (!connected || !data.adAccountId) return;
+    setPixelsLoading(true);
+    authFetch("/api/meta/pixels")
+      .then(function(r) { return r.json(); })
+      .then(function(result) {
+        if (result.ok && result.pixels && result.pixels.length > 0) {
+          setAvailablePixels(result.pixels);
+          if (!pixelId && result.pixels[0]) setPixelId(result.pixels[0].id);
+        }
+      })
+      .catch(function(e) { console.error(e); })
+      .finally(function() { setPixelsLoading(false); });
+  }, [connected, data.adAccountId]);
 
   async function fetchAdAccounts() {
     try {
@@ -197,7 +240,7 @@ function MetaIntegrationsInner({ data }) {
         throw new Error(payload?.error || `HTTP ${res.status}`);
       }
 
-      setSyncOk({ rows: payload.rows, days: payload.days });
+      setSyncOk({ campaignRows: payload.campaignRows, adRows: payload.adRows, days: payload.days });
     } catch (e) {
       setSyncError(String(e?.message || e));
     } finally {
@@ -207,7 +250,7 @@ function MetaIntegrationsInner({ data }) {
 
   function startMetaOAuth() {
     const returnTo = "/app/integrations/meta";
-    const base = data.appOrigin || window.location.origin;
+    const base = "https://attribix.app";
 
     const startUrl =
       `${base}/api/meta/oauth/start?shop=${encodeURIComponent(data.shop)}` +
@@ -215,10 +258,23 @@ function MetaIntegrationsInner({ data }) {
       `&embedded=${encodeURIComponent(data.embedded || "1")}` +
       `&returnTo=${encodeURIComponent(returnTo)}`;
 
-    try {
-      window.top.location.href = startUrl;
-    } catch {
-      window.location.href = startUrl;
+    // Open in popup to avoid Chrome's lookalike domain warning
+    const w = 600, h = 700;
+    const left = (screen.width - w) / 2;
+    const top = (screen.height - h) / 2;
+    const popup = window.open(startUrl, "meta_oauth", `width=${w},height=${h},left=${left},top=${top},toolbar=no,menubar=no`);
+
+    // Poll for popup close — then refresh to pick up new connection
+    if (popup) {
+      const timer = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(timer);
+          revalidator.revalidate();
+        }
+      }, 1000);
+    } else {
+      // Popup blocked — fall back to redirect
+      try { window.top.location.href = startUrl; } catch { window.location.href = startUrl; }
     }
   }
 
@@ -384,7 +440,10 @@ function MetaIntegrationsInner({ data }) {
                 {syncOk && (
                   <Banner tone="success" title="Sync complete">
                     <Text as="p">
-                      Synced {syncOk.rows} campaign day-rows for the last {syncOk.days} days.
+                      {syncOk.campaignRows > 0
+                        ? `Synced ${syncOk.campaignRows} campaign rows and ${syncOk.adRows} ad rows for the last ${syncOk.days} days.`
+                        : `Sync ran but found 0 campaign rows for the last ${syncOk.days} days. Check that your ad account has active campaigns with spend in this period.`
+                      }
                     </Text>
                   </Banner>
                 )}
@@ -398,6 +457,96 @@ function MetaIntegrationsInner({ data }) {
             </Card>
           </Layout.Section>
         )}
+
+        {/* Meta Pixel & CAPI */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Meta Pixel & Conversions API</Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                Add your Meta Pixel ID to enable browser-side tracking. Add a Conversions API token to send server-side events for better attribution accuracy (especially with iOS privacy and ad blockers).
+              </Text>
+
+              <Divider />
+
+              <BlockStack gap="300">
+                {/* Auto-detected pixels */}
+                {availablePixels.length > 0 && (
+                  <div style={{ maxWidth: 400 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Select Pixel from your account</label>
+                    <Select
+                      label=""
+                      labelHidden
+                      options={[
+                        { label: "Select a pixel...", value: "" },
+                        ...availablePixels.map(p => ({ label: `${p.name} (${p.id})`, value: p.id })),
+                      ]}
+                      value={pixelId}
+                      onChange={(v) => { setPixelId(v); setPixelInputMode("auto"); }}
+                    />
+                    <p style={{ fontSize: 12, color: "#16a34a", marginTop: 4 }}>✓ {availablePixels.length} pixel{availablePixels.length !== 1 ? "s" : ""} found from your Meta ad account</p>
+                  </div>
+                )}
+
+                {pixelsLoading && (
+                  <InlineStack gap="200" blockAlign="center">
+                    <Spinner size="small" />
+                    <Text as="p" variant="bodySm" tone="subdued">Loading pixels from Meta...</Text>
+                  </InlineStack>
+                )}
+
+                {/* Manual input toggle */}
+                <div>
+                  <Button variant="plain" onClick={() => setPixelInputMode(pixelInputMode === "manual" ? "auto" : "manual")}>
+                    {pixelInputMode === "manual" ? "Use auto-detected pixel" : "Enter pixel ID manually"}
+                  </Button>
+                </div>
+
+                {pixelInputMode === "manual" && (
+                  <div style={{ maxWidth: 400 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Meta Pixel ID (manual)</label>
+                    <input
+                      value={pixelId}
+                      onChange={e => setPixelId(e.target.value)}
+                      placeholder="e.g. 1234567890123456"
+                      style={{ width: "100%", padding: "8px 12px", border: "1px solid #c4cdd5", borderRadius: 8, fontSize: 14 }}
+                    />
+                    <p style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>Found in Meta Events Manager → Data Sources → Your Pixel → Settings</p>
+                  </div>
+                )}
+
+                <Divider />
+
+                <BlockStack gap="200">
+                  <Button variant="plain" onClick={() => setShowAdvanced(!showAdvanced)}>
+                    {showAdvanced ? "Hide advanced settings" : "Advanced: Server-side tracking (CAPI)"}
+                  </Button>
+                  {showAdvanced && (
+                    <div style={{ maxWidth: 400, paddingTop: 8 }}>
+                      <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Conversions API Token</label>
+                      <input
+                        value={capiToken}
+                        onChange={e => setCapiToken(e.target.value)}
+                        placeholder="EAABs..."
+                        type="password"
+                        style={{ width: "100%", padding: "8px 12px", border: "1px solid #c4cdd5", borderRadius: 8, fontSize: 14 }}
+                      />
+                      <p style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>Optional — enables server-side event tracking for better accuracy on iOS and ad-blocked browsers. Generate in Meta Events Manager → Settings → Conversions API.</p>
+                    </div>
+                  )}
+                </BlockStack>
+
+                <InlineStack gap="200" blockAlign="center">
+                  <Button variant="primary" onClick={savePixelSettings} loading={pixelSaving}>
+                    {pixelSaved ? "Saved ✓" : "Save pixel settings"}
+                  </Button>
+                  {pixelId && <Badge tone="success">Pixel configured</Badge>}
+                  {capiToken && <Badge tone="success">CAPI enabled</Badge>}
+                </InlineStack>
+              </BlockStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
 
         {/* Not connected info */}
         {!connected && (

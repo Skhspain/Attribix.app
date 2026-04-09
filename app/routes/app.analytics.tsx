@@ -1,7 +1,8 @@
 // app/routes/app.analytics.tsx
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import { useMemo, useState } from "react";
+import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 import {
   Badge,
   BlockStack,
@@ -22,9 +23,13 @@ import db from "../db.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
+
+  const { getShopPlan, getHistoryCutoff } = await import("~/services/plan.server");
+  const plan = await getShopPlan(shop, admin);
+  const historyCutoff = getHistoryCutoff(plan);
 
   const since30 = new Date();
   since30.setDate(since30.getDate() - 30);
@@ -66,10 +71,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
       })
       .catch(() => []),
 
-    // All-time purchases for source breakdown
+    // Purchases within plan history window for source breakdown
     anyDb.purchase
       ?.findMany?.({
-        where: { shop },
+        where: { shop, createdAt: { gte: historyCutoff } },
         select: {
           utmSource: true,
           utmMedium: true,
@@ -134,6 +139,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     metaAds30d: (metaAds as any) ?? [],
     metaLastSyncedAt: metaConn?.lastSyncedAt ?? null,
     metaConnected: !!(metaConn?.adAccountId),
+    plan,
+    historyDays: plan === "starter" ? 30 : plan === "growth" ? 90 : 365,
   });
 }
 
@@ -213,178 +220,10 @@ function detectCurrency(purchases: any[]): string {
   return entries[0]?.[0] || "USD";
 }
 
-// ─── Chart component ──────────────────────────────────────────────────────────
-
-function BarChart({ data, currency = "NOK" }: { data: Array<{ label: string; revenue: number; spend: number }>; currency?: string }) {
-  const maxVal = Math.max(1, ...data.flatMap((d) => [d.revenue, d.spend]));
-  const showEvery = Math.ceil(data.length / 10);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; revenue: number; spend: number } | null>(null);
-
-  // Trend: compare first half vs second half
-  const half = Math.floor(data.length / 2);
-  const firstHalfRev = data.slice(0, half).reduce((s, d) => s + d.revenue, 0);
-  const secondHalfRev = data.slice(half).reduce((s, d) => s + d.revenue, 0);
-  let insightText = "";
-  if (firstHalfRev > 0 && secondHalfRev > 0) {
-    const pct = Math.round(((secondHalfRev - firstHalfRev) / firstHalfRev) * 100);
-    if (Math.abs(pct) >= 5) {
-      insightText = pct > 0
-        ? `↑ Revenue up ${pct}% in the second half of this period`
-        : `↓ Revenue down ${Math.abs(pct)}% in the second half of this period`;
-    } else {
-      insightText = "→ Revenue stable across this period";
-    }
-  }
-
-  // KPI summary
-  const totalRev = data.reduce((s, d) => s + d.revenue, 0);
-  const totalSpend = data.reduce((s, d) => s + d.spend, 0);
-  const roas = totalSpend > 0 ? totalRev / totalSpend : null;
-
-  function fmt(n: number) {
-    try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(n); }
-    catch { return `${currency} ${Math.round(n)}`; }
-  }
-
-  return (
-    <div style={{ width: "100%", overflowX: "auto", position: "relative" }}>
-      {/* Compact KPI row */}
-      <div style={{ display: "flex", gap: 24, marginBottom: 16, flexWrap: "wrap" }}>
-        <div>
-          <span style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Revenue</span>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#4f46e5", lineHeight: 1.2 }}>{fmt(totalRev)}</div>
-        </div>
-        <div style={{ width: 1, background: "#e5e7eb", margin: "2px 0" }} />
-        <div>
-          <span style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>Spend</span>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#0ea5e9", lineHeight: 1.2 }}>{fmt(totalSpend)}</div>
-        </div>
-        <div style={{ width: 1, background: "#e5e7eb", margin: "2px 0" }} />
-        <div>
-          <span style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>ROAS</span>
-          <div style={{
-            fontSize: 20, fontWeight: 700, lineHeight: 1.2,
-            color: roas === null ? "#9ca3af" : roas >= 2 ? "#16a34a" : roas >= 1 ? "#d97706" : "#dc2626",
-          }}>
-            {roas !== null ? roas.toFixed(2) + "×" : "—"}
-          </div>
-        </div>
-        {insightText && (
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: insightText.startsWith("↑") ? "#16a34a" : insightText.startsWith("↓") ? "#dc2626" : "#6b7280", fontStyle: "italic" }}>
-              {insightText}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Tooltip */}
-      {tooltip && (
-        <div style={{
-          position: "fixed",
-          left: tooltip.x + 14,
-          top: tooltip.y - 16,
-          background: "#111827",
-          color: "#fff",
-          borderRadius: 8,
-          padding: "10px 14px",
-          fontSize: 12,
-          pointerEvents: "none",
-          zIndex: 9999,
-          whiteSpace: "nowrap",
-          boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
-          minWidth: 160,
-        }}>
-          <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 13 }}>{tooltip.label}</div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center" }}>
-            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />
-              Revenue
-            </span>
-            <span style={{ fontWeight: 600 }}>{fmt(tooltip.revenue)}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginTop: 4 }}>
-            <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#0ea5e9", display: "inline-block" }} />
-              Spend
-            </span>
-            <span style={{ fontWeight: 600 }}>{fmt(tooltip.spend)}</span>
-          </div>
-          {tooltip.spend > 0 && (
-            <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.12)", display: "flex", justifyContent: "space-between", gap: 16 }}>
-              <span style={{ color: "#9ca3af" }}>ROAS</span>
-              <span style={{
-                fontWeight: 700,
-                color: (tooltip.revenue / tooltip.spend) >= 2 ? "#4ade80" : (tooltip.revenue / tooltip.spend) >= 1 ? "#fbbf24" : "#f87171",
-              }}>
-                {(tooltip.revenue / tooltip.spend).toFixed(2)}×
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Bars */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
-          gap: 3,
-          alignItems: "end",
-          minHeight: 180,
-          minWidth: data.length * 24,
-        }}
-      >
-        {data.map((row, i) => {
-          const isPositive = row.spend > 0 && row.revenue > row.spend;
-          const isNegative = row.spend > 0 && row.revenue <= row.spend;
-          const hasData = row.revenue > 0 || row.spend > 0;
-          const revColor = isPositive
-            ? "linear-gradient(180deg, #4ade80 0%, #16a34a 100%)"
-            : isNegative
-            ? "linear-gradient(180deg, #f87171 0%, #dc2626 100%)"
-            : "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)";
-
-          return (
-            <div
-              key={row.label}
-              onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, ...row })}
-              onMouseLeave={() => setTooltip(null)}
-              style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end", cursor: "default" }}
-            >
-              <div style={{ width: "100%", height: 150, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
-                <div style={{
-                  width: "44%", minHeight: row.revenue > 0 ? 3 : 0,
-                  height: `${(row.revenue / maxVal) * 100}%`,
-                  borderRadius: "3px 3px 0 0",
-                  background: revColor,
-                  transition: "height 0.2s ease, background 0.2s ease",
-                }} />
-                <div style={{
-                  width: "44%",
-                  minHeight: row.spend > 0 ? 24 : 0,
-                  height: `${Math.max((row.spend / maxVal) * 100, row.spend > 0 ? 16 : 0)}%`,
-                  borderRadius: "3px 3px 0 0",
-                  background: "linear-gradient(180deg, #38bdf8 0%, #0ea5e9 100%)",
-                  transition: "height 0.2s ease",
-                }} />
-              </div>
-              <div style={{ marginTop: 5, fontSize: 10, color: "#9ca3af", textAlign: "center", whiteSpace: "nowrap" }}>
-                {i % showEvery === 0 ? row.label : ""}
-              </div>
-              {/* Positive/negative dot indicator */}
-              {hasData && (
-                <div style={{
-                  width: 4, height: 4, borderRadius: "50%", marginTop: 3,
-                  background: isPositive ? "#16a34a" : isNegative ? "#dc2626" : "#9ca3af",
-                }} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+// ─── Chart component (inline alias — actual impl in ~/components/RevenueSpendChart) ──
+// Keep this stub so the rest of the file compiles without changing every call site.
+function BarChart({ data, currency, showRoasLabels }: { data: Array<{ label: string; revenue: number; spend: number }>; currency?: string; showRoasLabels?: boolean }) {
+  return <RevenueSpendChart data={data} currency={currency} showRoasLabels={showRoasLabels} />;
 }
 
 // ─── KPI card ─────────────────────────────────────────────────────────────────
@@ -405,7 +244,8 @@ function KPI({ label, value, sub, highlight }: { label: string; value: string; s
 
 export default function AppAnalytics() {
   const data = useLoaderData<typeof loader>();
-  const [window, setWindow] = useState<"7" | "14" | "30">("30");
+  const nav = useNavigate();
+  const [window, setWindow] = useState<"7" | "14" | "30">("7");
   const locationBackfill = useFetcher<{ ok: boolean; updated: number; total: number; message?: string }>();
 
   const currency = useMemo(() => detectCurrency(data.purchases30d), [data.purchases30d]);
@@ -471,7 +311,7 @@ export default function AppAnalytics() {
     return Array.from(map.values())
       .sort((a, b) => b.spend - a.spend)
       .map((c) => {
-        const roas = c.spend > 0 ? (c.value / c.spend).toFixed(2) : "—";
+        const roas = c.spend > 0 ? Math.round((c.value / c.spend) * 100) + "%" : "—";
         const cpa = c.purchases > 0 ? fmt(c.spend / c.purchases, currency) : "—";
         return [
           c.name,
@@ -501,7 +341,7 @@ export default function AppAnalytics() {
     return Array.from(map.values())
       .sort((a, b) => b.spend - a.spend)
       .map((a) => {
-        const roas = a.spend > 0 ? (a.value / a.spend).toFixed(2) : "—";
+        const roas = a.spend > 0 ? Math.round((a.value / a.spend) * 100) + "%" : "—";
         const ctr = a.impressions > 0 ? ((a.clicks / a.impressions) * 100).toFixed(2) + "%" : "—";
         const cpc = a.clicks > 0 ? fmtDecimal(a.spend / a.clicks, currency) : "—";
         const cpa = a.purchases > 0 ? fmtDecimal(a.spend / a.purchases, currency) : "—";
@@ -609,7 +449,7 @@ export default function AppAnalytics() {
       const rev = revenueMap.get(plat) || 0;
       const spend = spendMap.get(plat) || 0;
       const orders = ordersMap.get(plat) || 0;
-      const roas = spend > 0 ? (rev / spend).toFixed(2) : "—";
+      const roas = spend > 0 ? Math.round((rev / spend) * 100) + "%" : "—";
       const cpa = orders > 0 && spend > 0 ? fmtDecimal(spend / orders, currency) : "—";
       return [
         <Badge key={plat} tone={sourceTone(plat)}>{plat}</Badge>,
@@ -785,15 +625,50 @@ export default function AppAnalytics() {
     >
       <BlockStack gap="600">
 
+        {/* ── Analytics sub-pages nav ── */}
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h2" variant="headingMd">Analytics modules</Text>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+              {[
+                { title: "Attribution", desc: "Multi-touch channel attribution", url: "/app/attribution", icon: "🎯", color: "#6366f1" },
+                { title: "Creative", desc: "Ad & campaign performance", url: "/app/creative", icon: "📊", color: "#1877f2" },
+                { title: "Products", desc: "Top products, AOV, revenue", url: "/app/products", icon: "🛍️", color: "#10b981" },
+              ].map(item => (
+                  <div key={item.url} onClick={() => nav(item.url)} style={{
+                    padding: "14px 16px", borderRadius: 10, border: "1px solid #e5e7eb",
+                    background: "#fff", cursor: "pointer", transition: "box-shadow 0.15s",
+                    display: "flex", alignItems: "flex-start", gap: 12, textDecoration: "none",
+                  }}
+                    onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)")}
+                    onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+                  >
+                    <span style={{
+                      fontSize: 22, width: 40, height: 40, borderRadius: 8, display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                      background: `${item.color}15`,
+                    }}>{item.icon}</span>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14, color: item.color }}>{item.title}</div>
+                      <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{item.desc}</div>
+                    </div>
+                  </div>
+              ))}
+            </div>
+          </BlockStack>
+        </Card>
+
         {/* ── Revenue & Spend chart ── */}
         <Card>
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
               <BlockStack gap="050">
                 <Text as="h2" variant="headingMd">
-                  Revenue vs Spend{blendedRoas ? ` — ROAS: ${blendedRoas.toFixed(2)}×` : ""} — last {window} days
+                  Revenue vs Spend{blendedRoas ? ` — ROAS: ${Math.round(blendedRoas * 100)}%` : ""} — last {window} days
                 </Text>
-                <Text as="p" variant="bodySm" tone="subdued">Attributed revenue from your store vs total ad spend</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Green/red = revenue on days with ad spend (ROAS positive/negative). Indigo = revenue with no ad spend that day (organic/direct orders). Spend bars use independent scale.
+                </Text>
               </BlockStack>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
@@ -805,12 +680,16 @@ export default function AppAnalytics() {
                   <Text as="span" variant="bodySm" tone="subdued">Revenue (loss)</Text>
                 </InlineStack>
                 <InlineStack gap="100" blockAlign="center">
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: "linear-gradient(135deg, #818cf8, #6366f1)" }} />
+                  <Text as="span" variant="bodySm" tone="subdued">Revenue (no spend)</Text>
+                </InlineStack>
+                <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 2, background: "#0ea5e9" }} />
                   <Text as="span" variant="bodySm" tone="subdued">Spend</Text>
                 </InlineStack>
               </InlineStack>
             </InlineStack>
-            <BarChart data={chartData} currency={currency} />
+            <BarChart data={chartData} currency={currency} showRoasLabels={windowDays <= 14} />
           </BlockStack>
         </Card>
 
@@ -820,7 +699,7 @@ export default function AppAnalytics() {
           {[
             { label: `Revenue (${window}d)`, value: fmtDecimal(totalRevenue, currency), sub: `${totalOrders} attributed orders` },
             { label: `Ad Spend (${window}d)`, value: fmtDecimal(totalSpend, currency), sub: hasSpend ? `Meta ${fmtDecimal(metaSpend, currency)} · Google ${fmtDecimal(googleSpend, currency)}` : "Sync spend in Integrations" },
-            { label: `Blended ROAS (${window}d)`, value: blendedRoas ? blendedRoas.toFixed(2) + "×" : "—", sub: hasSpend ? "Revenue ÷ total spend" : "No spend data", highlight: blendedRoas !== null && blendedRoas >= 2 },
+            { label: `Blended ROAS (${window}d)`, value: blendedRoas ? Math.round(blendedRoas * 100) + "%" : "—", sub: hasSpend ? "Revenue ÷ total spend" : "No spend data", highlight: blendedRoas !== null && blendedRoas >= 2 },
             { label: "Avg Order Value", value: aov > 0 ? fmtDecimal(aov, currency) : "—", sub: "Attributed purchases" },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
@@ -848,7 +727,7 @@ export default function AppAnalytics() {
                   { label: "Meta spend", value: fmtDecimal(metaAdsKpis.spend, currency) },
                   { label: "Meta purchases (reported)", value: String(metaAdsKpis.purchases), sub: "Counted by Meta pixel" },
                   { label: "Meta purchase value", value: fmtDecimal(metaAdsKpis.value, currency) },
-                  { label: "Meta ROAS", value: metaAdsKpis.roas ? metaAdsKpis.roas.toFixed(2) + "×" : "—", sub: "Meta value ÷ Meta spend" },
+                  { label: "Meta ROAS", value: metaAdsKpis.roas ? Math.round(metaAdsKpis.roas * 100) + "%" : "—", sub: "Meta value ÷ Meta spend" },
                 ].map((kpi) => (
                   <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
                     <Box background="bg-surface-secondary" padding="400" borderRadius="200">
@@ -911,7 +790,7 @@ export default function AppAnalytics() {
                         </InlineStack>
                         <Text as="p" variant="headingMd">{topCampaign.name}</Text>
                         <InlineStack gap="400">
-                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}</Text></Text>
+                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? Math.round((topCampaign.value / topCampaign.spend) * 100) + "%" : "—"}</Text></Text>
                           <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topCampaign.spend, currency)}</Text>
                           <Text as="p" variant="bodySm" tone="subdued">Value: {fmtDecimal(topCampaign.value, currency)}</Text>
                         </InlineStack>
@@ -937,7 +816,7 @@ export default function AppAnalytics() {
                         </InlineStack>
                         <Text as="p" variant="headingMd">{topAd.name}</Text>
                         <InlineStack gap="400">
-                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? (topAd.value / topAd.spend).toFixed(2) + "×" : "—"}</Text></Text>
+                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? Math.round((topAd.value / topAd.spend) * 100) + "%" : "—"}</Text></Text>
                           <Text as="p" variant="bodySm" tone="subdued">CTR: {topAd.impressions > 0 ? ((topAd.clicks / topAd.impressions) * 100).toFixed(2) + "%" : "—"}</Text>
                           <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topAd.spend, currency)}</Text>
                         </InlineStack>
@@ -1025,7 +904,7 @@ export default function AppAnalytics() {
                   <Box background="bg-surface-secondary" padding="400" borderRadius="200">
                     <BlockStack gap="100">
                       <Text as="p" variant="bodySm" tone="subdued">Google ROAS (attributed)</Text>
-                      <Text as="p" variant="headingXl">{googleSpend > 0 ? (purchases.filter((p: any) => normalizeSource(p) === "google").reduce((s: number, p: any) => s + safeNum(p.totalValue), 0) / googleSpend).toFixed(2) + "×" : "—"}</Text>
+                      <Text as="p" variant="headingXl">{googleSpend > 0 ? Math.round((purchases.filter((p: any) => normalizeSource(p) === "google").reduce((s: number, p: any) => s + safeNum(p.totalValue), 0) / googleSpend) * 100) + "%" : "—"}</Text>
                     </BlockStack>
                   </Box>
                 </Grid.Cell>
@@ -1112,7 +991,7 @@ export default function AppAnalytics() {
                 <BlockStack gap="400">
                   {sourceBreakdown.map(({ source, orders, revenue, share }) => {
                     const spend = spendMap.get(source) || 0;
-                    const roas = spend > 0 ? (revenue / spend).toFixed(2) + "×" : null;
+                    const roas = spend > 0 ? Math.round((revenue / spend) * 100) + "%" : null;
                     return (
                       <div key={source} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "0 24px", alignItems: "center" }}>
                         {/* Left: % + badge + orders */}

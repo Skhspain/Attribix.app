@@ -68,11 +68,52 @@ export async function exchangeMetaCodeForToken(args: {
  * Fetch ad accounts available for the user token.
  */
 export async function fetchUserAdAccounts(args: { accessToken: string }) {
-  const url = new URL("https://graph.facebook.com/v20.0/me/adaccounts");
-  url.searchParams.set("access_token", args.accessToken);
-  url.searchParams.set("fields", "id,name,account_id,currency,timezone_name,amount_spent,spend_cap");
+  const fields = "id,name,account_id,currency,timezone_name,amount_spent,spend_cap";
 
-  return metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
+  // 1. Personal ad accounts
+  const personalUrl = new URL("https://graph.facebook.com/v20.0/me/adaccounts");
+  personalUrl.searchParams.set("access_token", args.accessToken);
+  personalUrl.searchParams.set("fields", fields);
+  personalUrl.searchParams.set("limit", "100");
+
+  const personal = await metaFetchJson<{ data: any[]; paging?: any }>(personalUrl.toString(), { method: "GET" });
+  const allAccounts = [...(personal?.data || [])];
+  const seenIds = new Set(allAccounts.map((a: any) => String(a.id)));
+
+  // 2. Business-owned ad accounts
+  try {
+    const bizUrl = new URL("https://graph.facebook.com/v20.0/me/businesses");
+    bizUrl.searchParams.set("access_token", args.accessToken);
+    bizUrl.searchParams.set("fields", "id,name");
+    bizUrl.searchParams.set("limit", "50");
+
+    const businesses = await metaFetchJson<{ data: any[] }>(bizUrl.toString(), { method: "GET" });
+
+    for (const biz of (businesses?.data || [])) {
+      try {
+        const bizAccUrl = new URL(`https://graph.facebook.com/v20.0/${biz.id}/owned_ad_accounts`);
+        bizAccUrl.searchParams.set("access_token", args.accessToken);
+        bizAccUrl.searchParams.set("fields", fields);
+        bizAccUrl.searchParams.set("limit", "100");
+
+        const bizAccounts = await metaFetchJson<{ data: any[] }>(bizAccUrl.toString(), { method: "GET" });
+
+        for (const acc of (bizAccounts?.data || [])) {
+          if (!seenIds.has(String(acc.id))) {
+            allAccounts.push({ ...acc, name: acc.name || `${biz.name} (${acc.id})` });
+            seenIds.add(String(acc.id));
+          }
+        }
+      } catch (e) {
+        console.error(`[meta] failed to fetch accounts for business ${biz.id}:`, (e as any)?.message);
+      }
+    }
+  } catch (e) {
+    console.error("[meta] failed to fetch businesses:", (e as any)?.message);
+  }
+
+  console.log(`[meta] total ad accounts found: ${allAccounts.length} (personal + business)`);
+  return { data: allAccounts };
 }
 
 /**
@@ -143,10 +184,26 @@ export async function fetchCampaignDailyInsights(args: {
   url.searchParams.set("fields", fields.join(","));
   url.searchParams.set("time_increment", "1");
   url.searchParams.set("time_range", JSON.stringify({ since: args.since, until: args.until }));
+  url.searchParams.set("limit", "500"); // max per page to minimise round-trips
   if (args.level) url.searchParams.set("level", args.level);
 
   console.log(`[metaGraph] fetchInsights level=${args.level} id=${id} since=${args.since} until=${args.until}`);
-  const result = await metaFetchJson<{ data: any[]; paging?: any }>(url.toString(), { method: "GET" });
-  console.log(`[metaGraph] response rows=${result?.data?.length ?? 0}`);
-  return result;
+
+  // Collect all pages — Meta paginates even with limit=500 when many rows exist
+  const allRows: any[] = [];
+  let nextUrl: string | null = url.toString();
+
+  while (nextUrl) {
+    const page = await metaFetchJson<{ data: any[]; paging?: { next?: string } }>(nextUrl, { method: "GET" });
+    const rows = page?.data ?? [];
+    allRows.push(...rows);
+    // Follow cursor if there are more pages
+    nextUrl = page?.paging?.next ?? null;
+    if (nextUrl) {
+      console.log(`[metaGraph] fetching next page (${allRows.length} rows so far)…`);
+    }
+  }
+
+  console.log(`[metaGraph] total rows fetched=${allRows.length}`);
+  return { data: allRows };
 }

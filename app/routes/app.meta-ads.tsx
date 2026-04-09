@@ -17,25 +17,26 @@ import {
   Text,
 } from "@shopify/polaris";
 import db from "../db.server";
+import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
-  const since90 = new Date();
-  since90.setDate(since90.getDate() - 90);
-  since90.setHours(0, 0, 0, 0);
+  const { getShopPlan, getHistoryCutoff } = await import("~/services/plan.server");
+  const plan = await getShopPlan(shop, admin);
+  const historyCutoff = getHistoryCutoff(plan);
 
   const [campaigns, ads, metaConn] = await Promise.all([
     anyDb.metaCampaignDailyInsight?.findMany?.({
-      where: { shop, date: { gte: since90 } },
+      where: { shop, date: { gte: historyCutoff } },
       select: { campaignId: true, campaignName: true, objective: true, spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true, date: true },
       orderBy: { date: "desc" },
     }).catch(() => []),
     anyDb.metaAdDailyInsight?.findMany?.({
-      where: { shop, date: { gte: since90 } },
+      where: { shop, date: { gte: historyCutoff } },
       select: { adId: true, adName: true, adSetName: true, campaignName: true, spend: true, impressions: true, clicks: true, ctr: true, cpc: true, purchases: true, purchaseValue: true, date: true },
       orderBy: { date: "desc" },
     }).catch(() => []),
@@ -69,58 +70,10 @@ function labelShort(iso: string) {
   catch { return iso; }
 }
 
-function BarChart({ data }: { data: Array<{ label: string; revenue: number; spend: number }> }) {
-  const maxVal = Math.max(1, ...data.flatMap((d) => [d.revenue, d.spend]));
-  const showEvery = Math.ceil(data.length / 10);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; revenue: number; spend: number } | null>(null);
-
-  return (
-    <div style={{ width: "100%", overflowX: "auto", position: "relative" }}>
-      {tooltip && (
-        <div style={{
-          position: "fixed", left: tooltip.x + 12, top: tooltip.y - 10,
-          background: "#1f2937", color: "#fff", borderRadius: 8, padding: "8px 12px",
-          fontSize: 12, pointerEvents: "none", zIndex: 9999, whiteSpace: "nowrap",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.label}</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#6366f1", display: "inline-block" }} />
-            Purchase value: {tooltip.revenue.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#38bdf8", display: "inline-block" }} />
-            Spend: {tooltip.spend.toLocaleString("en-US", { maximumFractionDigits: 0 })}
-          </div>
-        </div>
-      )}
-      <div style={{
-        display: "grid", gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
-        gap: 3, alignItems: "end", minHeight: 200, minWidth: data.length * 24,
-      }}>
-        {data.map((row, i) => (
-          <div key={row.label}
-            onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, ...row })}
-            onMouseLeave={() => setTooltip(null)}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "end", cursor: "default" }}
-          >
-            <div style={{ width: "100%", height: 160, display: "flex", alignItems: "end", justifyContent: "center", gap: 2 }}>
-              <div style={{ width: "44%", minHeight: 2, height: `${(row.revenue / maxVal) * 100}%`, borderRadius: "3px 3px 0 0", background: "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)" }} />
-              <div style={{ width: "44%", minHeight: 2, height: `${(row.spend / maxVal) * 100}%`, borderRadius: "3px 3px 0 0", background: "linear-gradient(180deg, #7dd3fc 0%, #38bdf8 100%)" }} />
-            </div>
-            <div style={{ marginTop: 6, fontSize: 10, color: "#9ca3af", textAlign: "center", whiteSpace: "nowrap" }}>
-              {i % showEvery === 0 ? row.label : ""}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 export default function MetaAdsDetail() {
   const data = useLoaderData<typeof loader>();
-  const [window, setWindow] = useState<"7" | "14" | "30" | "90">("30");
+  const [window, setWindow] = useState<"7" | "14" | "30" | "90">("7");
   const [view, setView] = useState<"ads" | "campaigns">("ads");
   const [showTargets, setShowTargets] = useState(false);
   const [targetRoas, setTargetRoas] = useState<string>("3");
@@ -261,7 +214,7 @@ export default function MetaAdsDetail() {
         c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + "%" : "—",
         String(c.purchases),
         fmtDecimal(c.value, currency),
-        c.spend > 0 ? (c.value / c.spend).toFixed(2) + "×" : "—",
+        c.spend > 0 ? Math.round((c.value / c.spend) * 100) + "%" : "—",
         c.purchases > 0 && c.spend > 0 ? fmtDecimal(c.spend / c.purchases, currency) : "—",
       ]);
   }, [campaigns, currency]);
@@ -373,7 +326,7 @@ export default function MetaAdsDetail() {
               <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? kpis.roas.toFixed(2) + "×" : "—"}</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? Math.round(kpis.roas * 100) + "%" : "—"}</p>
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
@@ -406,7 +359,7 @@ export default function MetaAdsDetail() {
             { label: "Total spend", value: fmtDecimal(kpis.spend, currency) },
             { label: "Impressions", value: kpis.impressions.toLocaleString() },
             { label: "Clicks", value: kpis.clicks.toLocaleString(), sub: kpis.ctr ? `CTR ${kpis.ctr.toFixed(2)}%` : undefined },
-            { label: "ROAS (Meta reported)", value: kpis.roas ? kpis.roas.toFixed(2) + "×" : "—", sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value` },
+            { label: "ROAS (Meta reported)", value: kpis.roas ? Math.round(kpis.roas * 100) + "%" : "—", sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value` },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
               <Card>
@@ -436,7 +389,7 @@ export default function MetaAdsDetail() {
                 </InlineStack>
               </InlineStack>
             </InlineStack>
-            {chartData.length > 0 ? <BarChart data={chartData} /> : <Text as="p" tone="subdued">No data for this window.</Text>}
+            {chartData.length > 0 ? <RevenueSpendChart data={chartData} currency="NOK" showRoasLabels={windowDays <= 14} revenueLabel="Purchase value" /> : <Text as="p" tone="subdued">No data for this window.</Text>}
           </BlockStack>
         </Card>
 
@@ -463,7 +416,7 @@ export default function MetaAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#15803d" }}>
-                          {topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(2) + "×" : "—"}
+                          {topCampaign.spend > 0 ? Math.round((topCampaign.value / topCampaign.spend) * 100) + "%" : "—"}
                         </p>
                       </div>
                       <div>
@@ -516,7 +469,7 @@ export default function MetaAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#dc2626" }}>
-                          {worstCampaign.spend > 0 ? (worstCampaign.value / worstCampaign.spend).toFixed(2) + "×" : "—"}
+                          {worstCampaign.spend > 0 ? Math.round((worstCampaign.value / worstCampaign.spend) * 100) + "%" : "—"}
                         </p>
                       </div>
                       <div>
@@ -744,7 +697,7 @@ export default function MetaAdsDetail() {
                 const hitCpa = cpaTarget && cpa !== null && cpa <= cpaTarget;
                 let targetNote = "";
                 if (roasTarget && a.roas !== null) {
-                  targetNote = hitRoas ? `✅ ROAS target hit! (${a.roas.toFixed(2)}× / ${roasTarget}×)` : `${a.roas.toFixed(2)}× of ${roasTarget}× target`;
+                  targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(a.roas * 100)}% / ${Math.round(roasTarget * 100)}%)` : `${Math.round(a.roas * 100)}% of ${Math.round(roasTarget * 100)}% target`;
                 }
                 if (cpaTarget && cpa !== null) {
                   const cpaStr = `${fmtDecimal(cpa, currency)} per sale (target: ${fmtDecimal(cpaTarget, currency)})`;
@@ -886,7 +839,7 @@ export default function MetaAdsDetail() {
                           else if (roas !== null && roas < 1 && c.spend > 0) { perfLabel = "🔴 Losing money"; perfColor = "#dc2626"; }
 
                           let targetNote = "";
-                          if (roasTarget && roas !== null) targetNote = hitRoas ? `✅ ROAS target hit! (${roas.toFixed(2)}×)` : `${roas.toFixed(2)}× of ${roasTarget}× target`;
+                          if (roasTarget && roas !== null) targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(roas * 100)}%)` : `${Math.round(roas * 100)}% of ${Math.round(roasTarget * 100)}% target`;
                           if (!roasTarget && !cpaTarget) targetNote = perfLabel;
 
                           return (
