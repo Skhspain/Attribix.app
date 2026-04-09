@@ -32,26 +32,16 @@ export default function NewsletterLayout() {
   const tabs = [
     { id: "overview", content: "Overview", url: "/app/newsletter" },
     { id: "subscribers", content: `Subscribers (${subscriberCount})`, url: "/app/newsletter/subscribers" },
-    { id: "campaigns", content: "Campaigns", url: "/app/newsletter/campaigns" },
+    { id: "campaigns", content: "Newsletters", url: "/app/newsletter/campaigns" },
+    { id: "flows", content: "Flows", url: "/app/newsletter/flows" },
     { id: "analytics", content: "Analytics", url: "/app/newsletter/analytics" },
     { id: "widget", content: "Signup form", url: "/app/newsletter/widget" },
+    { id: "review-requests", content: "Review requests", url: "/app/newsletter/review-requests" },
     { id: "settings", content: "Settings", url: "/app/newsletter/settings" },
   ];
 
-  const selected = location.pathname.includes("/widget")
-    ? 4
-    : location.pathname.includes("/analytics")
-    ? 3
-    : location.pathname.includes("/subscribers")
-    ? 1
-    : location.pathname.includes("/campaigns")
-    ? 2
-    : location.pathname.includes("/settings")
-    ? 5
-    : 0;
-
   return (
-    <Page title="Newsletter" primaryAction={{ content: "New campaign", url: "/app/newsletter/campaigns/new" }}>
+    <Page title="Newsletter" primaryAction={{ content: "New newsletter", url: "/app/newsletter/campaigns/new" }}>
       {!resendConfigured && (
         <div style={{ marginBottom: 16, padding: "12px 16px", background: "#fff3cd", borderRadius: 8, border: "1px solid #ffc107" }}>
           <Text as="p" variant="bodyMd">
