@@ -82,20 +82,25 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  // After external OAuth the browser is in a top-level context — NOT inside the Shopify
-  // iframe. We cannot redirect to our own /app/* routes (authenticate.admin bounces to
-  // /auth/login). We also can't reliably construct the embedded app admin URL without the
-  // app handle. Instead, serve a lightweight success page that auto-redirects to the
-  // Shopify Admin. From there, the user navigates into the embedded app normally.
-  const adminRoot = `https://${shop}/admin`;
+  const platform = (decoded as any)?.platform || "";
+  const isWooCommerce = platform === "woocommerce" || !shop.includes(".myshopify.com");
+
+  const title = "Meta connected!";
+  const subtitle = isWooCommerce
+    ? "Your Meta account has been linked to Attribix.<br>You can close this window and refresh your WordPress admin."
+    : `Your Meta account has been linked to Attribix.<br>Redirecting you to Shopify in a moment…`;
+  const buttonText = isWooCommerce ? "Close this window" : "Return to Shopify Admin";
+  const buttonHref = isWooCommerce ? "#" : `https://${shop}/admin`;
+  const buttonOnClick = isWooCommerce ? "window.close(); return false;" : "";
+  const autoRedirect = isWooCommerce ? "" : `<meta http-equiv="refresh" content="3;url=https://${shop}/admin" />`;
 
   return new Response(
     `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Meta connected – Attribix</title>
-  <meta http-equiv="refresh" content="3;url=${adminRoot}" />
+  <title>${title} – Attribix</title>
+  ${autoRedirect}
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -114,10 +119,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
 <body>
   <div class="card">
     <div class="icon">✅</div>
-    <h1>Meta connected!</h1>
-    <p>Your Meta account has been linked to Attribix.<br>
-       Redirecting you to Shopify in a moment…</p>
-    <a href="${adminRoot}">Return to Shopify Admin</a>
+    <h1>${title}</h1>
+    <p>${subtitle}</p>
+    <a href="${buttonHref}" ${buttonOnClick ? `onclick="${buttonOnClick}"` : ""}>${buttonText}</a>
   </div>
 </body>
 </html>`,

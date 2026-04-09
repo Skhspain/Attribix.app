@@ -45,15 +45,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  const adminRoot = `https://${shop}/admin`;
-
-  return new Response(
-    `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>TikTok connected – Attribix</title>
-  <meta http-equiv="refresh" content="3;url=${adminRoot}" />
+  const platform = (decoded as any)?.platform || "";
+  const isWooCommerce = platform === "woocommerce" || !shop.includes(".myshopify.com");
+  const autoRedirect = isWooCommerce ? "" : `<meta http-equiv="refresh" content="3;url=https://${shop}/admin" />`;
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
@@ -74,8 +68,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     <div class="icon">✅</div>
     <h1>TikTok connected!</h1>
     <p>Your TikTok Ads account has been linked to Attribix.<br>
-       Redirecting you to Shopify in a moment…</p>
-    <a href="${adminRoot}">Return to Shopify Admin</a>
+       ${isWooCommerce ? "You can close this window and refresh your WordPress admin." : "Redirecting you to Shopify in a moment…"}</p>
+    <a href="${isWooCommerce ? "#" : `https://${shop}/admin`}" ${isWooCommerce ? `onclick="window.close(); return false;"` : ""}>${isWooCommerce ? "Close this window" : "Return to Shopify Admin"}</a>
   </div>
 </body>
 </html>`,
