@@ -306,16 +306,134 @@ class Settings {
 					<?php endif; ?>
 
 				<?php elseif ( $tab === 'tracking' ) : ?>
+					<?php
+					$meta_status = \Attribix_Woo\Api::get( '/api/woo/status', array( 'shop' => \Attribix_Woo\Api::shop_domain() ) );
+					$meta_is_connected = $meta_status['meta']['connected'] ?? false;
+					$current_ad_account = $meta_status['meta']['adAccountId'] ?? '';
+					$current_pixel      = $opts['fb_pixel_id'] ?? '';
+					$meta_reconnect_url = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
+
+					// Handle form save FIRST (before fetching so we get fresh data)
+					if ( isset( $_POST['meta_pixel_save'] ) && wp_verify_nonce( $_POST['_meta_nonce'] ?? '', 'attribix_meta_save' ) ) {
+						$new_account = sanitize_text_field( $_POST['ad_account_id'] ?? '' );
+						$new_pixel   = sanitize_text_field( $_POST['pixel_id'] ?? '' );
+
+						\Attribix_Woo\Api::post( '/api/woo/meta/select', array(
+							'shop'        => \Attribix_Woo\Api::shop_domain(),
+							'adAccountId' => $new_account ?: null,
+							'pixelId'     => $new_pixel ?: null,
+						) );
+
+						if ( $new_pixel ) {
+							$opts['fb_pixel_id'] = $new_pixel;
+							update_option( ATTRIBIX_WOO_OPTION, $opts );
+							$current_pixel = $new_pixel;
+						}
+						if ( $new_account ) {
+							$current_ad_account = $new_account;
+						}
+						echo '<div class="notice notice-success"><p>Meta pixel settings saved.</p></div>';
+					}
+
+					// Load ad accounts + pixels from WooCommerce-specific backend endpoints
+					$ad_accounts = array();
+					$pixels = array();
+					if ( $meta_is_connected ) {
+						$acct_response = \Attribix_Woo\Api::get( '/api/woo/meta/adaccounts', array( 'shop' => \Attribix_Woo\Api::shop_domain() ) );
+						$ad_accounts = $acct_response['accounts'] ?? array();
+
+						if ( $current_ad_account ) {
+							$pixel_response = \Attribix_Woo\Api::get( '/api/woo/meta/pixels', array( 'shop' => \Attribix_Woo\Api::shop_domain() ) );
+							$pixels = $pixel_response['pixels'] ?? array();
+						}
+					}
+					?>
+
 					<h2>Ad Platform Pixels</h2>
-					<p class="description">Enter your pixel/tag IDs to fire standard ecommerce events (PageView, ViewContent, AddToCart, Purchase) on your storefront.</p>
-					<table class="form-table">
-						<tr>
-							<th><label>Meta Pixel ID</label></th>
-							<td>
-								<input type="text" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[fb_pixel_id]" value="<?php echo esc_attr( $opts['fb_pixel_id'] ); ?>" class="regular-text" placeholder="123456789012345" />
-								<p class="description">Facebook/Meta Pixel ID. Find it in <a href="https://business.facebook.com/events_manager" target="_blank">Events Manager</a>.</p>
-							</td>
-						</tr>
+					<p class="description">Tracking pixels fire standard ecommerce events (PageView, ViewContent, AddToCart, Purchase) on your storefront.</p>
+
+					<!-- Meta Pixel Card -->
+					<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;margin:20px 0;max-width:760px;">
+						<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+							<span style="font-size:32px;">📘</span>
+							<div style="flex:1;">
+								<h3 style="margin:0;font-size:16px;">Meta Pixel</h3>
+								<p style="margin:4px 0 0;font-size:13px;color:#6b7280;">Facebook & Instagram conversion tracking</p>
+							</div>
+							<?php if ( $meta_is_connected ) : ?>
+								<span style="background:#16a34a;color:#fff;padding:4px 12px;border-radius:12px;font-size:11px;font-weight:600;">✓ Meta Connected</span>
+							<?php else : ?>
+								<span style="background:#f3f4f6;color:#6b7280;padding:4px 12px;border-radius:12px;font-size:11px;font-weight:600;">Not connected</span>
+							<?php endif; ?>
+						</div>
+
+						<?php if ( ! $meta_is_connected ) : ?>
+							<p style="font-size:13px;color:#6b7280;margin:0 0 12px;">Connect your Meta account to select from your ad accounts and pixels.</p>
+							<button type="button" class="button button-primary" onclick="window.open('<?php echo esc_js( $meta_reconnect_url ); ?>', 'meta', 'width=900,height=800')">Connect Meta →</button>
+						<?php else : ?>
+							<form method="post">
+								<?php wp_nonce_field( 'attribix_meta_save', '_meta_nonce' ); ?>
+								<input type="hidden" name="meta_pixel_save" value="1" />
+
+								<!-- Ad Account Picker -->
+								<div style="margin-bottom:16px;">
+									<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;">Ad Account</label>
+									<?php if ( empty( $ad_accounts ) ) : ?>
+										<p style="font-size:13px;color:#9ca3af;">Loading ad accounts... If this persists, try reconnecting Meta.</p>
+									<?php else : ?>
+										<select name="ad_account_id" onchange="this.form.submit()" style="width:100%;max-width:500px;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
+											<option value="">Select an ad account...</option>
+											<?php foreach ( $ad_accounts as $acct ) : ?>
+												<option value="<?php echo esc_attr( $acct['id'] ); ?>" <?php selected( $current_ad_account, $acct['id'] ); ?>>
+													<?php echo esc_html( ( $acct['name'] ?? $acct['id'] ) . ' (' . $acct['id'] . ')' . ( ! empty( $acct['currency'] ) ? ' — ' . $acct['currency'] : '' ) ); ?>
+												</option>
+											<?php endforeach; ?>
+										</select>
+										<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;"><?php echo count( $ad_accounts ); ?> ad accounts found. Don't see the one you need? <a href="https://business.facebook.com/adsmanager" target="_blank">Create one in Meta Business Manager →</a></p>
+									<?php endif; ?>
+								</div>
+
+								<!-- Pixel Picker -->
+								<?php if ( $current_ad_account ) : ?>
+									<div style="margin-bottom:16px;">
+										<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;">Meta Pixel</label>
+										<?php if ( empty( $pixels ) ) : ?>
+											<div style="padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">
+												<p style="font-size:13px;color:#92400e;margin:0 0 8px;">⚠️ No pixels found in this ad account.</p>
+												<a href="https://business.facebook.com/events_manager" target="_blank" class="button">Create Pixel in Events Manager →</a>
+											</div>
+										<?php else : ?>
+											<select name="pixel_id" style="width:100%;max-width:500px;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
+												<option value="">Select a pixel...</option>
+												<?php foreach ( $pixels as $px ) : ?>
+													<option value="<?php echo esc_attr( $px['id'] ); ?>" <?php selected( $current_pixel, $px['id'] ); ?>>
+														<?php echo esc_html( ( $px['name'] ?? 'Unnamed' ) . ' (' . $px['id'] . ')' ); ?>
+													</option>
+												<?php endforeach; ?>
+											</select>
+											<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;"><?php echo count( $pixels ); ?> pixel(s) found. Need a new one? <a href="https://business.facebook.com/events_manager" target="_blank">Create in Events Manager →</a></p>
+										<?php endif; ?>
+									</div>
+
+									<?php if ( ! empty( $pixels ) ) : ?>
+										<button type="submit" class="button button-primary">Save Pixel Selection</button>
+									<?php endif; ?>
+								<?php endif; ?>
+
+								<div style="margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6;">
+									<button type="button" class="button" onclick="window.open('<?php echo esc_js( $meta_reconnect_url ); ?>', 'meta', 'width=900,height=800')">Reconnect Meta</button>
+									<span style="font-size:11px;color:#9ca3af;margin-left:8px;">Reconnect to refresh ad accounts & pixels list</span>
+								</div>
+							</form>
+						<?php endif; ?>
+					</div>
+
+					<!-- Hidden field to preserve pixel ID on main settings save -->
+					<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[fb_pixel_id]" value="<?php echo esc_attr( $opts['fb_pixel_id'] ); ?>" />
+
+					<h3 style="margin-top:32px;">Other Tracking (manual)</h3>
+					<p class="description">For Google Analytics and TikTok, enter the IDs manually.</p>
+					<table class="form-table"><tr style="display:none;"><th></th><td></td></tr>
 						<tr>
 							<th><label>Google Analytics (GA4)</label></th>
 							<td>
