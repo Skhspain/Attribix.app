@@ -82,6 +82,38 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
+  // Auto-select first ad account for WooCommerce users (and auto-detect pixel)
+  try {
+    const { fetchUserAdAccounts } = await import("~/services/metaGraph.server");
+    const accounts = await fetchUserAdAccounts({ accessToken: token.access_token });
+    const firstAccount = accounts?.data?.[0];
+    if (firstAccount?.id) {
+      await db.metaConnection.update({
+        where: { shop },
+        data: { adAccountId: String(firstAccount.id) },
+      });
+
+      // Auto-detect and save first pixel
+      try {
+        const pixelUrl = `https://graph.facebook.com/v20.0/${firstAccount.id}/adspixels?fields=id,name&access_token=${token.access_token}`;
+        const pixelRes = await fetch(pixelUrl);
+        const pixelData = await pixelRes.json();
+        if (pixelData?.data?.[0]?.id) {
+          const anyDb = db as any;
+          await anyDb.trackingSettings?.upsert?.({
+            where: { shop },
+            create: { shop, fbPixelId: pixelData.data[0].id, fbToken: token.access_token },
+            update: { fbPixelId: pixelData.data[0].id, fbToken: token.access_token },
+          });
+        }
+      } catch (e) {
+        console.error("[meta-oauth] pixel auto-detect failed:", e);
+      }
+    }
+  } catch (e) {
+    console.error("[meta-oauth] ad account auto-select failed:", e);
+  }
+
   const platform = (decoded as any)?.platform || "";
   const isWooCommerce = platform === "woocommerce" || !shop.includes(".myshopify.com");
 

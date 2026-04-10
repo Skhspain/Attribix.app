@@ -163,7 +163,7 @@ class Settings {
 										'title'  => 'Connect Meta Ads',
 										'desc'   => $meta_connected ? 'Meta Ads is connected. Ad data is syncing.' : 'See Facebook & Instagram ad performance and ROAS.',
 										'action' => $meta_connected
-											? '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-meta-ads' ) ) . '" class="button">View Meta Ads →</a>'
+											? '<div style="display:flex;gap:6px;"><a href="' . esc_url( admin_url( 'admin.php?page=attribix-meta-ads' ) ) . '" class="button">View →</a><button type="button" class="button" onclick="window.open(\'' . esc_js( $meta_oauth ) . '\', \'meta\', \'width=900,height=800\')">Reconnect</button></div>'
 											: '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $meta_oauth ) . '\', \'meta\', \'width=900,height=800\')">Connect Meta →</button>',
 									),
 									array(
@@ -171,7 +171,7 @@ class Settings {
 										'title'  => 'Connect Google Ads',
 										'desc'   => $google_connected ? 'Google Ads is connected. Ad data is syncing.' : 'Track your Google Ads campaigns and conversions.',
 										'action' => $google_connected
-											? '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-google-ads' ) ) . '" class="button">View Google Ads →</a>'
+											? '<div style="display:flex;gap:6px;"><a href="' . esc_url( admin_url( 'admin.php?page=attribix-google-ads' ) ) . '" class="button">View →</a><button type="button" class="button" onclick="window.open(\'' . esc_js( $google_oauth ) . '\', \'google\', \'width=900,height=800\')">Reconnect</button></div>'
 											: '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $google_oauth ) . '\', \'google\', \'width=900,height=800\')">Connect Google →</button>',
 									),
 									array(
@@ -207,7 +207,7 @@ class Settings {
 												<div style="font-weight:600;font-size:14px;color:<?php echo $step['done'] ? '#065f46' : '#111827'; ?>;"><?php echo esc_html( $step['title'] ); ?></div>
 												<div style="font-size:12px;color:#6b7280;margin-top:2px;"><?php echo wp_kses_post( $step['desc'] ); ?></div>
 											</div>
-											<?php if ( ! $step['done'] && $step['action'] ) : ?>
+											<?php if ( ! empty( $step['action'] ) ) : ?>
 												<div style="flex-shrink:0;"><?php echo $step['action']; ?></div>
 											<?php endif; ?>
 										</div>
