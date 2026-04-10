@@ -27,26 +27,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const googleConnected = !!googleConn && !!googleConn.accessToken;
   const tiktokConnected = !!tiktokConn && !!tiktokConn.accessToken && tiktokConn.accessToken !== "__PENDING__";
 
-  // Auto-detect Meta Pixel if connected but not set
-  let autoPixelId = trackingSettings?.fbPixelId || null;
-  if (metaConnected && !autoPixelId && metaConn.adAccountId) {
-    try {
-      const pixelUrl = `https://graph.facebook.com/v20.0/${metaConn.adAccountId}/adspixels?fields=id,name&access_token=${metaConn.accessToken}`;
-      const pixelRes = await fetch(pixelUrl);
-      const pixelData = await pixelRes.json();
-      if (pixelData?.data?.[0]?.id) {
-        autoPixelId = pixelData.data[0].id;
-        // Save it to tracking settings
-        await anyDb.trackingSettings?.upsert?.({
-          where: { shop },
-          create: { shop, fbPixelId: autoPixelId },
-          update: { fbPixelId: autoPixelId },
-        });
-      }
-    } catch (e) {
-      console.error("[woo-status] pixel auto-detect error:", e);
-    }
-  }
+  // Read pixel from tracking settings only — don't auto-detect/overwrite
+  const autoPixelId = trackingSettings?.fbPixelId || null;
 
   return json({
     ok: true,

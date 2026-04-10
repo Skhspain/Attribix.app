@@ -82,12 +82,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
   });
 
-  // Auto-select first ad account for WooCommerce users (and auto-detect pixel)
+  // Auto-select first ad account ONLY if none is saved yet (don't overwrite user's choice)
   try {
-    const { fetchUserAdAccounts } = await import("~/services/metaGraph.server");
-    const accounts = await fetchUserAdAccounts({ accessToken: token.access_token });
-    const firstAccount = accounts?.data?.[0];
-    if (firstAccount?.id) {
+    const currentConn = await db.metaConnection.findUnique({ where: { shop } });
+    const hasSavedAccount = !!currentConn?.adAccountId;
+
+    if (hasSavedAccount) {
+      // User already picked an account — don't overwrite it on reconnect
+      console.log(`[meta-oauth] keeping existing adAccountId: ${currentConn.adAccountId}`);
+    } else {
+      const { fetchUserAdAccounts } = await import("~/services/metaGraph.server");
+      const accounts = await fetchUserAdAccounts({ accessToken: token.access_token });
+      const firstAccount = accounts?.data?.[0];
+      if (firstAccount?.id) {
       await db.metaConnection.update({
         where: { shop },
         data: { adAccountId: String(firstAccount.id) },
@@ -108,6 +115,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         }
       } catch (e) {
         console.error("[meta-oauth] pixel auto-detect failed:", e);
+      }
       }
     }
   } catch (e) {
