@@ -65,50 +65,67 @@ export async function exchangeMetaCodeForToken(args: {
 }
 
 /**
+ * Fetch all pages from a Meta Graph API endpoint that uses cursor pagination.
+ */
+async function fetchAllPages(startUrl: string, maxPages: number = 20): Promise<any[]> {
+  const all: any[] = [];
+  let next: string | null = startUrl;
+  let page = 0;
+  while (next && page < maxPages) {
+    const data: any = await metaFetchJson<{ data: any[]; paging?: any }>(next, { method: "GET" }).catch(() => null);
+    if (!data) break;
+    if (Array.isArray(data.data)) all.push(...data.data);
+    next = data?.paging?.next || null;
+    page++;
+  }
+  return all;
+}
+
+/**
  * Fetch ad accounts available for the user token.
+ * Queries personal + business-owned + client-shared, all with pagination.
  */
 export async function fetchUserAdAccounts(args: { accessToken: string }) {
   const fields = "id,name,account_id,currency,timezone_name,amount_spent,spend_cap";
 
-  // 1. Personal ad accounts
+  // 1. Personal ad accounts (all pages)
   const personalUrl = new URL("https://graph.facebook.com/v20.0/me/adaccounts");
   personalUrl.searchParams.set("access_token", args.accessToken);
   personalUrl.searchParams.set("fields", fields);
   personalUrl.searchParams.set("limit", "100");
 
-  const personal = await metaFetchJson<{ data: any[]; paging?: any }>(personalUrl.toString(), { method: "GET" });
-  const allAccounts = [...(personal?.data || [])];
+  const personalAccounts = await fetchAllPages(personalUrl.toString());
+  const allAccounts = [...personalAccounts];
   const seenIds = new Set(allAccounts.map((a: any) => String(a.id)));
 
-  // 2. Business-owned ad accounts
+  // 2. Business-owned + client ad accounts (all pages per business)
   try {
     const bizUrl = new URL("https://graph.facebook.com/v20.0/me/businesses");
     bizUrl.searchParams.set("access_token", args.accessToken);
     bizUrl.searchParams.set("fields", "id,name");
-    bizUrl.searchParams.set("limit", "50");
+    bizUrl.searchParams.set("limit", "100");
 
-    const businesses = await metaFetchJson<{ data: any[] }>(bizUrl.toString(), { method: "GET" });
+    const businesses = await fetchAllPages(bizUrl.toString());
 
-    // Fetch BOTH owned and client (shared) ad accounts for each business in parallel
     const bizResults = await Promise.allSettled(
-      (businesses?.data || []).flatMap((biz: any) => [
-        // Owned accounts
+      businesses.flatMap((biz: any) => [
+        // Owned accounts (paginated)
         (async () => {
           const u = new URL(`https://graph.facebook.com/v20.0/${biz.id}/owned_ad_accounts`);
           u.searchParams.set("access_token", args.accessToken);
           u.searchParams.set("fields", fields);
           u.searchParams.set("limit", "100");
-          const data = await metaFetchJson<{ data: any[] }>(u.toString(), { method: "GET" });
-          return { biz, accounts: data?.data || [], type: "owned" };
+          const accounts = await fetchAllPages(u.toString());
+          return { biz, accounts, type: "owned" };
         })(),
-        // Client (shared) accounts
+        // Client (shared) accounts (paginated)
         (async () => {
           const u = new URL(`https://graph.facebook.com/v20.0/${biz.id}/client_ad_accounts`);
           u.searchParams.set("access_token", args.accessToken);
           u.searchParams.set("fields", fields);
           u.searchParams.set("limit", "100");
-          const data = await metaFetchJson<{ data: any[] }>(u.toString(), { method: "GET" });
-          return { biz, accounts: data?.data || [], type: "client" };
+          const accounts = await fetchAllPages(u.toString());
+          return { biz, accounts, type: "client" };
         })(),
       ])
     );
@@ -129,8 +146,25 @@ export async function fetchUserAdAccounts(args: { accessToken: string }) {
     console.error("[meta] failed to fetch businesses:", (e as any)?.message);
   }
 
-  console.log(`[meta] total ad accounts found: ${allAccounts.length} (personal + business)`);
+  console.log(`[meta] total ad accounts found: ${allAccounts.length} (personal + business + client)`);
   return { data: allAccounts };
+}
+
+/**
+ * Create a new Meta Pixel in an ad account.
+ */
+export async function createMetaPixel(args: { accessToken: string; adAccountId: string; name: string }) {
+  const url = `https://graph.facebook.com/v20.0/${args.adAccountId}/adspixels`;
+  const body = new URLSearchParams();
+  body.set("name", args.name);
+  body.set("access_token", args.accessToken);
+
+  const res = await fetch(url, { method: "POST", body });
+  const data: any = await res.json();
+  if (data?.error) {
+    throw new Error(data.error.message || "Failed to create pixel");
+  }
+  return data;
 }
 
 /**

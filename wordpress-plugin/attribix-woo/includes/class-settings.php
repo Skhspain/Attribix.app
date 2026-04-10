@@ -335,6 +335,23 @@ class Settings {
 						echo '<div class="notice notice-success"><p>Meta pixel settings saved.</p></div>';
 					}
 
+					// Handle create pixel
+					if ( isset( $_POST['meta_pixel_create'] ) && wp_verify_nonce( $_POST['_meta_nonce'] ?? '', 'attribix_meta_save' ) ) {
+						$pixel_name = sanitize_text_field( $_POST['new_pixel_name'] ?? '' );
+						$create_result = \Attribix_Woo\Api::post( '/api/woo/meta/pixel-create', array(
+							'shop' => \Attribix_Woo\Api::shop_domain(),
+							'name' => $pixel_name ?: ( get_bloginfo( 'name' ) . ' Pixel' ),
+						) );
+						if ( ! empty( $create_result['ok'] ) && ! empty( $create_result['pixel']['id'] ) ) {
+							$opts['fb_pixel_id'] = $create_result['pixel']['id'];
+							update_option( ATTRIBIX_WOO_OPTION, $opts );
+							$current_pixel = $create_result['pixel']['id'];
+							echo '<div class="notice notice-success"><p>✓ New pixel created: ' . esc_html( $create_result['pixel']['id'] ) . '</p></div>';
+						} else {
+							echo '<div class="notice notice-error"><p>Failed to create pixel: ' . esc_html( $create_result['error'] ?? 'Unknown error' ) . '</p></div>';
+						}
+					}
+
 					// Load ad accounts + pixels from WooCommerce-specific backend endpoints
 					$ad_accounts = array();
 					$pixels = array();
@@ -375,21 +392,42 @@ class Settings {
 								<?php wp_nonce_field( 'attribix_meta_save', '_meta_nonce' ); ?>
 								<input type="hidden" name="meta_pixel_save" value="1" />
 
-								<!-- Ad Account Picker -->
+								<!-- Ad Account Picker (searchable) -->
 								<div style="margin-bottom:16px;">
 									<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;">Ad Account</label>
 									<?php if ( empty( $ad_accounts ) ) : ?>
 										<p style="font-size:13px;color:#9ca3af;">Loading ad accounts... If this persists, try reconnecting Meta.</p>
 									<?php else : ?>
-										<select name="ad_account_id" onchange="this.form.submit()" style="width:100%;max-width:500px;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
-											<option value="">Select an ad account...</option>
-											<?php foreach ( $ad_accounts as $acct ) : ?>
-												<option value="<?php echo esc_attr( $acct['id'] ); ?>" <?php selected( $current_ad_account, $acct['id'] ); ?>>
-													<?php echo esc_html( ( $acct['name'] ?? $acct['id'] ) . ' (' . $acct['id'] . ')' . ( ! empty( $acct['currency'] ) ? ' — ' . $acct['currency'] : '' ) ); ?>
+										<input type="text" id="ax-adacct-search" placeholder="🔍 Type to search <?php echo count( $ad_accounts ); ?> ad accounts..." style="width:100%;max-width:500px;padding:8px 12px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:6px;" />
+										<select name="ad_account_id" id="ax-adacct-select" onchange="this.form.submit()" size="8" style="width:100%;max-width:500px;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
+											<option value="">— Select an ad account —</option>
+											<?php foreach ( $ad_accounts as $acct ) :
+												$label = ( $acct['name'] ?? $acct['id'] ) . ' (' . $acct['id'] . ')' . ( ! empty( $acct['currency'] ) ? ' — ' . $acct['currency'] : '' );
+											?>
+												<option value="<?php echo esc_attr( $acct['id'] ); ?>" data-label="<?php echo esc_attr( strtolower( $label ) ); ?>" <?php selected( $current_ad_account, $acct['id'] ); ?>>
+													<?php echo esc_html( $label ); ?>
 												</option>
 											<?php endforeach; ?>
 										</select>
-										<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;"><?php echo count( $ad_accounts ); ?> ad accounts found. Don't see the one you need? <a href="https://business.facebook.com/adsmanager" target="_blank">Create one in Meta Business Manager →</a></p>
+										<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;"><?php echo count( $ad_accounts ); ?> ad accounts found. Don't see one? <a href="https://business.facebook.com/adsmanager" target="_blank">Create in Meta Business Manager →</a></p>
+										<script>
+										(function() {
+											var input = document.getElementById('ax-adacct-search');
+											var select = document.getElementById('ax-adacct-select');
+											if (!input || !select) return;
+											var originalOptions = Array.from(select.options);
+											input.addEventListener('input', function() {
+												var q = input.value.toLowerCase().trim();
+												select.innerHTML = '';
+												originalOptions.forEach(function(opt) {
+													var label = opt.getAttribute('data-label') || opt.textContent.toLowerCase();
+													if (!q || label.indexOf(q) > -1 || opt.value === '') {
+														select.appendChild(opt.cloneNode(true));
+													}
+												});
+											});
+										})();
+										</script>
 									<?php endif; ?>
 								</div>
 
@@ -398,26 +436,32 @@ class Settings {
 									<div style="margin-bottom:16px;">
 										<label style="display:block;font-weight:600;font-size:13px;margin-bottom:6px;">Meta Pixel</label>
 										<?php if ( empty( $pixels ) ) : ?>
-											<div style="padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;">
-												<p style="font-size:13px;color:#92400e;margin:0 0 8px;">⚠️ No pixels found in this ad account.</p>
-												<a href="https://business.facebook.com/events_manager" target="_blank" class="button">Create Pixel in Events Manager →</a>
+											<div style="padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;margin-bottom:8px;">
+												<p style="font-size:13px;color:#92400e;margin:0;">⚠️ No pixels found in this ad account. Create one below or in Events Manager.</p>
 											</div>
 										<?php else : ?>
 											<select name="pixel_id" style="width:100%;max-width:500px;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
-												<option value="">Select a pixel...</option>
+												<option value="">— Select a pixel —</option>
 												<?php foreach ( $pixels as $px ) : ?>
 													<option value="<?php echo esc_attr( $px['id'] ); ?>" <?php selected( $current_pixel, $px['id'] ); ?>>
 														<?php echo esc_html( ( $px['name'] ?? 'Unnamed' ) . ' (' . $px['id'] . ')' ); ?>
 													</option>
 												<?php endforeach; ?>
 											</select>
-											<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;"><?php echo count( $pixels ); ?> pixel(s) found. Need a new one? <a href="https://business.facebook.com/events_manager" target="_blank">Create in Events Manager →</a></p>
+											<p style="font-size:11px;color:#9ca3af;margin:4px 0 8px;"><?php echo count( $pixels ); ?> pixel(s) found.</p>
+											<button type="submit" class="button button-primary">Save Pixel Selection</button>
 										<?php endif; ?>
 									</div>
 
-									<?php if ( ! empty( $pixels ) ) : ?>
-										<button type="submit" class="button button-primary">Save Pixel Selection</button>
-									<?php endif; ?>
+									<!-- Create New Pixel -->
+									<div style="margin-top:12px;padding:12px;background:#f0f9ff;border:1px solid #bfdbfe;border-radius:6px;">
+										<p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#1e40af;">➕ Create a new pixel</p>
+										<div style="display:flex;gap:8px;align-items:center;">
+											<input type="text" name="new_pixel_name" placeholder="<?php echo esc_attr( get_bloginfo( 'name' ) . ' Pixel' ); ?>" style="flex:1;max-width:280px;padding:6px 10px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;" />
+											<button type="submit" name="meta_pixel_create" value="1" class="button">Create Pixel</button>
+										</div>
+										<p style="font-size:11px;color:#6b7280;margin:6px 0 0;">Creates a new pixel in the selected ad account and auto-activates it.</p>
+									</div>
 								<?php endif; ?>
 
 								<div style="margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6;">
