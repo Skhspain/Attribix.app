@@ -310,29 +310,70 @@ class Settings {
 					$meta_status = \Attribix_Woo\Api::get( '/api/woo/status', array( 'shop' => \Attribix_Woo\Api::shop_domain() ) );
 					$meta_is_connected = $meta_status['meta']['connected'] ?? false;
 					$current_ad_account = $meta_status['meta']['adAccountId'] ?? '';
-					$current_pixel      = $opts['fb_pixel_id'] ?? '';
+					// Prefer backend status over local options (backend is source of truth)
+					$current_pixel      = $meta_status['pixels']['fbPixelId'] ?? $opts['fb_pixel_id'] ?? '';
+					// Sync backend pixel to local options
+					if ( ! empty( $meta_status['pixels']['fbPixelId'] ) && $opts['fb_pixel_id'] !== $meta_status['pixels']['fbPixelId'] ) {
+						$opts['fb_pixel_id'] = $meta_status['pixels']['fbPixelId'];
+						update_option( ATTRIBIX_WOO_OPTION, $opts );
+					}
 					$meta_reconnect_url = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
+
+					// Handle manual ad account ID entry
+					if ( isset( $_POST['use_manual_account'] ) && wp_verify_nonce( $_POST['_meta_nonce'] ?? '', 'attribix_meta_save' ) ) {
+						$manual_id = sanitize_text_field( $_POST['manual_ad_account_id'] ?? '' );
+						if ( $manual_id ) {
+							// Ensure it starts with act_
+							if ( strpos( $manual_id, 'act_' ) !== 0 ) {
+								$manual_id = 'act_' . ltrim( $manual_id, '_' );
+							}
+							\Attribix_Woo\Api::post( '/api/woo/meta/select', array(
+								'shop'        => \Attribix_Woo\Api::shop_domain(),
+								'adAccountId' => $manual_id,
+							) );
+							$current_ad_account = $manual_id;
+							echo '<div class="notice notice-success"><p>Ad account set to: ' . esc_html( $manual_id ) . '</p></div>';
+						}
+					}
 
 					// Handle form save FIRST (before fetching so we get fresh data)
 					if ( isset( $_POST['meta_pixel_save'] ) && wp_verify_nonce( $_POST['_meta_nonce'] ?? '', 'attribix_meta_save' ) ) {
 						$new_account = sanitize_text_field( $_POST['ad_account_id'] ?? '' );
 						$new_pixel   = sanitize_text_field( $_POST['pixel_id'] ?? '' );
 
-						\Attribix_Woo\Api::post( '/api/woo/meta/select', array(
+						$save_result = \Attribix_Woo\Api::post( '/api/woo/meta/select', array(
 							'shop'        => \Attribix_Woo\Api::shop_domain(),
 							'adAccountId' => $new_account ?: null,
 							'pixelId'     => $new_pixel ?: null,
 						) );
 
-						if ( $new_pixel ) {
-							$opts['fb_pixel_id'] = $new_pixel;
-							update_option( ATTRIBIX_WOO_OPTION, $opts );
-							$current_pixel = $new_pixel;
+						if ( ! empty( $save_result['ok'] ) ) {
+							if ( $new_pixel ) {
+								$opts['fb_pixel_id'] = $new_pixel;
+								update_option( ATTRIBIX_WOO_OPTION, $opts );
+								$current_pixel = $new_pixel;
+							}
+							if ( $new_account ) {
+								$current_ad_account = $new_account;
+							}
+							// Re-fetch status to confirm save
+							$meta_status = \Attribix_Woo\Api::get( '/api/woo/status', array( 'shop' => \Attribix_Woo\Api::shop_domain() ) );
+							$current_ad_account = $meta_status['meta']['adAccountId'] ?? $current_ad_account;
+							$current_pixel      = $meta_status['pixels']['fbPixelId'] ?? $current_pixel;
+
+							// Also sync to local WP options
+							if ( ! empty( $meta_status['pixels']['fbPixelId'] ) ) {
+								$opts['fb_pixel_id'] = $meta_status['pixels']['fbPixelId'];
+								update_option( ATTRIBIX_WOO_OPTION, $opts );
+							}
+
+							$saved_parts = array();
+							if ( $new_account ) $saved_parts[] = 'ad account <code>' . esc_html( $new_account ) . '</code>';
+							if ( $new_pixel ) $saved_parts[] = 'pixel <code>' . esc_html( $new_pixel ) . '</code>';
+							echo '<div class="notice notice-success"><p>✓ Saved: ' . implode( ', ', $saved_parts ) . '</p></div>';
+						} else {
+							echo '<div class="notice notice-error"><p>Save failed: ' . esc_html( $save_result['error'] ?? 'Unknown error' ) . '</p></div>';
 						}
-						if ( $new_account ) {
-							$current_ad_account = $new_account;
-						}
-						echo '<div class="notice notice-success"><p>Meta pixel settings saved.</p></div>';
 					}
 
 					// Handle create pixel
@@ -399,7 +440,7 @@ class Settings {
 										<p style="font-size:13px;color:#9ca3af;">Loading ad accounts... If this persists, try reconnecting Meta.</p>
 									<?php else : ?>
 										<input type="text" id="ax-adacct-search" placeholder="🔍 Type to search <?php echo count( $ad_accounts ); ?> ad accounts..." style="width:100%;max-width:500px;padding:8px 12px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;margin-bottom:6px;" />
-										<select name="ad_account_id" id="ax-adacct-select" onchange="this.form.submit()" size="8" style="width:100%;max-width:500px;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
+										<select name="ad_account_id" id="ax-adacct-select" onchange="this.form.submit()" style="width:100%;max-width:500px;padding:8px;font-size:13px;border:1px solid #d1d5db;border-radius:6px;">
 											<option value="">— Select an ad account —</option>
 											<?php foreach ( $ad_accounts as $acct ) :
 												$label = ( $acct['name'] ?? $acct['id'] ) . ' (' . $acct['id'] . ')' . ( ! empty( $acct['currency'] ) ? ' — ' . $acct['currency'] : '' );
@@ -409,7 +450,27 @@ class Settings {
 												</option>
 											<?php endforeach; ?>
 										</select>
-										<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;"><?php echo count( $ad_accounts ); ?> ad accounts found. Don't see one? <a href="https://business.facebook.com/adsmanager" target="_blank">Create in Meta Business Manager →</a></p>
+										<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;"><?php echo count( $ad_accounts ); ?> ad accounts found.</p>
+
+										<!-- Missing accounts help -->
+										<details style="margin-top:10px;font-size:12px;">
+											<summary style="cursor:pointer;color:#2563eb;font-weight:500;">❓ Don't see the account you need?</summary>
+											<div style="padding:14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;margin-top:8px;">
+												<p style="margin:0 0 8px;color:#374151;">Meta only shows accounts your Facebook user has <strong>explicit access</strong> to. If an account is missing:</p>
+												<ol style="margin:0 0 12px 18px;padding:0;color:#374151;">
+													<li style="margin-bottom:4px;">Go to <a href="https://business.facebook.com/settings/ad-accounts" target="_blank">Meta Business Settings → Ad Accounts</a></li>
+													<li style="margin-bottom:4px;">Assign your user to the ad account with admin permissions</li>
+													<li style="margin-bottom:4px;">Click <strong>Reconnect Meta</strong> below to refresh the list</li>
+												</ol>
+
+												<p style="margin:12px 0 6px;font-weight:600;color:#111827;">Or enter the ad account ID manually:</p>
+												<div style="display:flex;gap:6px;">
+													<input type="text" name="manual_ad_account_id" placeholder="act_123456789012345" style="flex:1;padding:6px 10px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;" />
+													<button type="submit" name="use_manual_account" value="1" class="button button-small">Use this ID</button>
+												</div>
+												<p style="font-size:11px;color:#9ca3af;margin:4px 0 0;">Find the ID in Meta Ads Manager → top-left account picker. It starts with <code>act_</code></p>
+											</div>
+										</details>
 										<script>
 										(function() {
 											var input = document.getElementById('ax-adacct-search');
@@ -430,6 +491,22 @@ class Settings {
 										</script>
 									<?php endif; ?>
 								</div>
+
+								<!-- Active account indicator -->
+								<?php if ( $current_ad_account ) :
+									$active_name = '';
+									foreach ( $ad_accounts as $a ) {
+										if ( $a['id'] === $current_ad_account ) {
+											$active_name = $a['name'] ?? $a['id'];
+											break;
+										}
+									}
+								?>
+									<div style="padding:10px 14px;background:#ecfdf5;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:14px;font-size:12px;">
+										<strong>✓ Active ad account:</strong> <?php echo esc_html( $active_name ?: $current_ad_account ); ?> <code style="background:#fff;padding:1px 6px;border-radius:3px;"><?php echo esc_html( $current_ad_account ); ?></code>
+										<br><span style="color:#6b7280;">Pixels shown below are those accessible to this ad account. In Meta, pixels can be shared across ad accounts.</span>
+									</div>
+								<?php endif; ?>
 
 								<!-- Pixel Picker -->
 								<?php if ( $current_ad_account ) : ?>

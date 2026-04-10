@@ -30,10 +30,22 @@ export async function action({ request }: ActionFunctionArgs) {
 
   // Save ad account selection
   if (adAccountId) {
+    const existingConn = await db.metaConnection.findUnique({ where: { shop } });
+    const accountChanged = existingConn?.adAccountId && existingConn.adAccountId !== adAccountId;
+
     await db.metaConnection.update({
       where: { shop },
       data: { adAccountId },
     });
+
+    // If ad account changed, clear the old pixel (it belongs to a different account)
+    if (accountChanged && !pixelId) {
+      await anyDb.trackingSettings?.upsert?.({
+        where: { shop },
+        create: { shop, fbPixelId: null },
+        update: { fbPixelId: null },
+      });
+    }
   }
 
   // Save pixel selection
