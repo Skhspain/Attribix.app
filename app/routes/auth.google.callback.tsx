@@ -58,7 +58,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     });
 
-    const isWooCommerce = decoded?.platform === "woocommerce" || !shop.includes(".myshopify.com");
+    const isWooCommerce = state?.platform === "woocommerce" || !shop.includes(".myshopify.com");
 
     const successHtml = `<!DOCTYPE html>
 <html>

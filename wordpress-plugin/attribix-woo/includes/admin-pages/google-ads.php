@@ -29,7 +29,7 @@ $base      = admin_url( 'admin.php?page=attribix-google-ads' );
 
 	<?php
 	// Route through attribix.app (Vercel proxy) to avoid Chrome lookalike warnings
-	$google_oauth_url = 'https://attribix.app/api/google/oauth/start?shop=' . urlencode( Api::shop_domain() ) . '&platform=woocommerce';
+	$google_oauth_url = 'https://attribix-app.fly.dev/api/google/oauth/start?shop=' . urlencode( Api::shop_domain() ) . '&platform=woocommerce';
 
 	// Handle sync
 	if ( isset( $_POST['google_action'] ) && wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'attribix_google_action' ) ) {
@@ -53,7 +53,7 @@ $base      = admin_url( 'admin.php?page=attribix-google-ads' );
 					<p style="margin:4px 0 0;color:#6b7280;font-size:13px;">Link your Google Ads account to see campaign performance and spend data.</p>
 				</div>
 			</div>
-			<button type="button" class="ax-btn ax-btn-primary" onclick="window.open('<?php echo esc_js( $google_oauth_url ); ?>', 'google_oauth', 'width=600,height=700')">
+			<button type="button" class="ax-btn ax-btn-primary" onclick="window.open('<?php echo esc_js( $google_oauth_url ); ?>', 'google_oauth', 'width=900,height=800')">
 				Connect Google Ads
 			</button>
 			<p style="margin-top:8px;font-size:12px;color:#9ca3af;">A popup will open for Google authorization. After connecting, refresh this page.</p>
@@ -61,7 +61,7 @@ $base      = admin_url( 'admin.php?page=attribix-google-ads' );
 	<?php else : ?>
 		<div style="display:flex;gap:12px;margin:16px 0;align-items:center;">
 			<span class="ax-badge ax-badge-green" style="font-size:13px;padding:4px 12px;">Connected</span>
-			<button type="button" class="ax-btn" onclick="window.open('<?php echo esc_js( $google_oauth_url ); ?>', 'google_oauth', 'width=600,height=700')">
+			<button type="button" class="ax-btn" onclick="window.open('<?php echo esc_js( $google_oauth_url ); ?>', 'google_oauth', 'width=900,height=800')">
 				Reconnect
 			</button>
 			<form method="post" style="display:inline;">

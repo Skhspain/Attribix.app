@@ -68,7 +68,7 @@ $base      = admin_url( 'admin.php?page=attribix-meta-ads' );
 					<p style="margin:4px 0 0;color:#6b7280;font-size:13px;">Link your Facebook/Instagram ad account to see campaign performance.</p>
 				</div>
 			</div>
-			<button type="button" class="ax-btn ax-btn-primary" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=600,height=700')">
+			<button type="button" class="ax-btn ax-btn-primary" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=900,height=800')">
 				Connect Meta Account
 			</button>
 			<p style="margin-top:8px;font-size:12px;color:#9ca3af;">A popup will open for Facebook authorization. After connecting, refresh this page.</p>
@@ -85,7 +85,7 @@ $base      = admin_url( 'admin.php?page=attribix-meta-ads' );
 		<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:20px;margin:16px 0;">
 			<div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;">
 				<span class="ax-badge ax-badge-green" style="font-size:13px;padding:4px 12px;">Connected</span>
-				<button type="button" class="ax-btn" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=600,height=700')">Reconnect</button>
+				<button type="button" class="ax-btn" onclick="window.open('<?php echo esc_js( $meta_oauth_url ); ?>', 'meta_oauth', 'width=900,height=800')">Reconnect</button>
 				<div class="ax-spacer"></div>
 				<form method="post" style="display:inline;">
 					<?php wp_nonce_field( 'attribix_meta_action' ); ?>

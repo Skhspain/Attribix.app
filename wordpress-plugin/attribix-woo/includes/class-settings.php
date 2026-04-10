@@ -110,13 +110,88 @@ class Settings {
 					<!-- Connection Status -->
 					<div style="background:<?php echo $is_connected ? '#ecfdf5' : '#eff6ff'; ?>;border:1px solid <?php echo $is_connected ? '#bbf7d0' : '#bfdbfe'; ?>;border-radius:10px;padding:24px;margin-bottom:24px;">
 						<?php if ( $is_connected ) : ?>
-							<div style="display:flex;align-items:center;gap:12px;">
+							<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
 								<span style="font-size:36px;">✅</span>
 								<div>
 									<h3 style="margin:0;color:#065f46;">Store Connected</h3>
 									<p style="margin:4px 0 0;color:#6b7280;font-size:13px;">
-										Your store <strong><?php echo esc_html( \Attribix_Woo\Api::shop_domain() ); ?></strong> is connected to Attribix. Analytics are being tracked.
+										Your store <strong><?php echo esc_html( \Attribix_Woo\Api::shop_domain() ); ?></strong> is collecting analytics data.
 									</p>
+								</div>
+							</div>
+
+							<!-- Next Steps Checklist -->
+							<div style="background:#fff;border:1px solid #d1d5db;border-radius:10px;padding:20px;margin-top:16px;">
+								<h4 style="margin:0 0 4px;font-size:15px;">🎯 Next Steps</h4>
+								<p style="margin:0 0 16px;font-size:13px;color:#6b7280;">Complete these to get the most out of Attribix:</p>
+
+								<?php
+								// Check what's connected
+								$has_fb_pixel  = ! empty( $opts['fb_pixel_id'] );
+								$has_ga4       = ! empty( $opts['ga4_id'] );
+								$has_reviews   = ! empty( $opts['reviews_enabled'] );
+								$meta_oauth    = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
+								$google_oauth  = 'https://attribix-app.fly.dev/api/google/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
+
+								$steps = array(
+									array(
+										'done'   => true,
+										'title'  => 'Event tracking installed',
+										'desc'   => 'Page views, product views, and orders are being tracked.',
+										'action' => '',
+									),
+									array(
+										'done'   => false,
+										'title'  => 'Connect Meta Ads',
+										'desc'   => 'See Facebook & Instagram ad performance and ROAS.',
+										'action' => '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $meta_oauth ) . '\', \'meta\', \'width=900,height=800\')">Connect Meta →</button>',
+									),
+									array(
+										'done'   => false,
+										'title'  => 'Connect Google Ads',
+										'desc'   => 'Track your Google Ads campaigns and conversions.',
+										'action' => '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $google_oauth ) . '\', \'google\', \'width=900,height=800\')">Connect Google →</button>',
+									),
+									array(
+										'done'   => $has_fb_pixel || $has_ga4,
+										'title'  => 'Add tracking pixels',
+										'desc'   => 'Enable Meta Pixel, GA4, or TikTok Pixel to fire ecommerce events.',
+										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=tracking' ) ) . '" class="button">Set up pixels →</a>',
+									),
+									array(
+										'done'   => $has_reviews,
+										'title'  => 'Enable product reviews',
+										'desc'   => 'Show star ratings and reviews on your product pages.',
+										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=reviews' ) ) . '" class="button">Enable reviews →</a>',
+									),
+									array(
+										'done'   => false,
+										'title'  => 'Add newsletter signup',
+										'desc'   => 'Place a signup form on your site using <code>[attribix_newsletter]</code>.',
+										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=newsletter' ) ) . '" class="button">Get shortcode →</a>',
+									),
+								);
+								?>
+
+								<div style="display:flex;flex-direction:column;gap:12px;">
+									<?php foreach ( $steps as $step ) : ?>
+										<div style="display:flex;align-items:center;gap:14px;padding:12px;border:1px solid <?php echo $step['done'] ? '#bbf7d0' : '#e5e7eb'; ?>;border-radius:8px;background:<?php echo $step['done'] ? '#f0fdf4' : '#fff'; ?>;">
+											<div style="width:28px;height:28px;border-radius:50%;background:<?php echo $step['done'] ? '#16a34a' : '#e5e7eb'; ?>;color:<?php echo $step['done'] ? '#fff' : '#9ca3af'; ?>;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">
+												<?php echo $step['done'] ? '✓' : '○'; ?>
+											</div>
+											<div style="flex:1;">
+												<div style="font-weight:600;font-size:14px;color:<?php echo $step['done'] ? '#065f46' : '#111827'; ?>;"><?php echo esc_html( $step['title'] ); ?></div>
+												<div style="font-size:12px;color:#6b7280;margin-top:2px;"><?php echo wp_kses_post( $step['desc'] ); ?></div>
+											</div>
+											<?php if ( ! $step['done'] && $step['action'] ) : ?>
+												<div style="flex-shrink:0;"><?php echo $step['action']; ?></div>
+											<?php endif; ?>
+										</div>
+									<?php endforeach; ?>
+								</div>
+
+								<div style="margin-top:20px;padding-top:16px;border-top:1px solid #e5e7eb;text-align:center;">
+									<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-woo' ) ); ?>" class="button button-primary">Go to Dashboard →</a>
 								</div>
 							</div>
 						<?php else : ?>
@@ -275,7 +350,7 @@ class Settings {
 					$shop_domain = \Attribix_Woo\Api::shop_domain();
 					// Route OAuth through attribix.app (Vercel proxy) to avoid Chrome lookalike warnings
 					$meta_oauth   = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
-					$google_oauth = 'https://attribix.app/api/google/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
+					$google_oauth = 'https://attribix-app.fly.dev/api/google/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
 					$tiktok_oauth = 'https://attribix.app/api/tiktok/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
 					?>
 					<h2>Ad Platform Integrations</h2>
@@ -285,17 +360,17 @@ class Settings {
 						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
 							<div style="font-size:20px;margin-bottom:4px;">📘 <strong>Meta Ads</strong></div>
 							<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;">Facebook & Instagram Ads</p>
-							<button type="button" class="button button-primary" onclick="window.open('<?php echo esc_js( $meta_oauth ); ?>', 'meta_oauth', 'width=600,height=700')">Connect Meta →</button>
+							<button type="button" class="button button-primary" onclick="window.open('<?php echo esc_js( $meta_oauth ); ?>', 'meta_oauth', 'width=900,height=800')">Connect Meta →</button>
 						</div>
 						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
 							<div style="font-size:20px;margin-bottom:4px;">📈 <strong>Google Ads</strong></div>
 							<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;">Google Ads campaigns</p>
-							<button type="button" class="button button-primary" onclick="window.open('<?php echo esc_js( $google_oauth ); ?>', 'google_oauth', 'width=600,height=700')">Connect Google →</button>
+							<button type="button" class="button button-primary" onclick="window.open('<?php echo esc_js( $google_oauth ); ?>', 'google_oauth', 'width=900,height=800')">Connect Google →</button>
 						</div>
 						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
 							<div style="font-size:20px;margin-bottom:4px;">🎵 <strong>TikTok Ads</strong></div>
 							<p style="color:#6b7280;font-size:13px;margin:4px 0 12px;">TikTok Ads Manager</p>
-							<button type="button" class="button" onclick="window.open('<?php echo esc_js( $tiktok_oauth ); ?>', 'tiktok_oauth', 'width=600,height=700')">Connect TikTok →</button>
+							<button type="button" class="button" onclick="window.open('<?php echo esc_js( $tiktok_oauth ); ?>', 'tiktok_oauth', 'width=900,height=800')">Connect TikTok →</button>
 							<p style="font-size:11px;color:#9ca3af;margin-top:4px;">Pending developer app approval</p>
 						</div>
 						<div style="border:1px solid #d1d5db;border-radius:8px;padding:16px;background:#fff;">
