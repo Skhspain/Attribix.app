@@ -89,16 +89,28 @@ export async function fetchUserAdAccounts(args: { accessToken: string }) {
 
     const businesses = await metaFetchJson<{ data: any[] }>(bizUrl.toString(), { method: "GET" });
 
-    // Fetch all business ad accounts in parallel for speed
+    // Fetch BOTH owned and client (shared) ad accounts for each business in parallel
     const bizResults = await Promise.allSettled(
-      (businesses?.data || []).map(async (biz: any) => {
-        const bizAccUrl = new URL(`https://graph.facebook.com/v20.0/${biz.id}/owned_ad_accounts`);
-        bizAccUrl.searchParams.set("access_token", args.accessToken);
-        bizAccUrl.searchParams.set("fields", fields);
-        bizAccUrl.searchParams.set("limit", "100");
-        const bizAccounts = await metaFetchJson<{ data: any[] }>(bizAccUrl.toString(), { method: "GET" });
-        return { biz, accounts: bizAccounts?.data || [] };
-      })
+      (businesses?.data || []).flatMap((biz: any) => [
+        // Owned accounts
+        (async () => {
+          const u = new URL(`https://graph.facebook.com/v20.0/${biz.id}/owned_ad_accounts`);
+          u.searchParams.set("access_token", args.accessToken);
+          u.searchParams.set("fields", fields);
+          u.searchParams.set("limit", "100");
+          const data = await metaFetchJson<{ data: any[] }>(u.toString(), { method: "GET" });
+          return { biz, accounts: data?.data || [], type: "owned" };
+        })(),
+        // Client (shared) accounts
+        (async () => {
+          const u = new URL(`https://graph.facebook.com/v20.0/${biz.id}/client_ad_accounts`);
+          u.searchParams.set("access_token", args.accessToken);
+          u.searchParams.set("fields", fields);
+          u.searchParams.set("limit", "100");
+          const data = await metaFetchJson<{ data: any[] }>(u.toString(), { method: "GET" });
+          return { biz, accounts: data?.data || [], type: "client" };
+        })(),
+      ])
     );
 
     for (const result of bizResults) {
