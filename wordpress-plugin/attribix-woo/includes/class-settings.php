@@ -126,12 +126,30 @@ class Settings {
 								<p style="margin:0 0 16px;font-size:13px;color:#6b7280;">Complete these to get the most out of Attribix:</p>
 
 								<?php
-								// Check what's connected
-								$has_fb_pixel  = ! empty( $opts['fb_pixel_id'] );
+								// Fetch live integration status from the API
+								$status = \Attribix_Woo\Api::get( '/api/woo/status', array( 'shop' => \Attribix_Woo\Api::shop_domain() ) );
+
+								$meta_connected   = $status['meta']['connected'] ?? false;
+								$google_connected = $status['google']['connected'] ?? false;
+								$auto_fb_pixel    = $status['pixels']['fbPixelId'] ?? '';
+
+								// Sync auto-detected pixel into local settings
+								if ( $auto_fb_pixel && empty( $opts['fb_pixel_id'] ) ) {
+									$opts['fb_pixel_id'] = $auto_fb_pixel;
+									update_option( ATTRIBIX_WOO_OPTION, $opts );
+								}
+
+								$has_fb_pixel  = ! empty( $opts['fb_pixel_id'] ) || ! empty( $auto_fb_pixel );
 								$has_ga4       = ! empty( $opts['ga4_id'] );
 								$has_reviews   = ! empty( $opts['reviews_enabled'] );
 								$meta_oauth    = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
 								$google_oauth  = 'https://attribix-app.fly.dev/api/google/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
+
+								// Check if newsletter shortcode exists on any published page/post
+								global $wpdb;
+								$has_newsletter_widget = (bool) $wpdb->get_var(
+									"SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_status='publish' AND post_content LIKE '%[attribix_newsletter%'"
+								);
 
 								$steps = array(
 									array(
@@ -141,34 +159,40 @@ class Settings {
 										'action' => '',
 									),
 									array(
-										'done'   => false,
+										'done'   => $meta_connected,
 										'title'  => 'Connect Meta Ads',
-										'desc'   => 'See Facebook & Instagram ad performance and ROAS.',
-										'action' => '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $meta_oauth ) . '\', \'meta\', \'width=900,height=800\')">Connect Meta →</button>',
+										'desc'   => $meta_connected ? 'Meta Ads is connected. Ad data is syncing.' : 'See Facebook & Instagram ad performance and ROAS.',
+										'action' => $meta_connected
+											? '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-meta-ads' ) ) . '" class="button">View Meta Ads →</a>'
+											: '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $meta_oauth ) . '\', \'meta\', \'width=900,height=800\')">Connect Meta →</button>',
 									),
 									array(
-										'done'   => false,
+										'done'   => $google_connected,
 										'title'  => 'Connect Google Ads',
-										'desc'   => 'Track your Google Ads campaigns and conversions.',
-										'action' => '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $google_oauth ) . '\', \'google\', \'width=900,height=800\')">Connect Google →</button>',
+										'desc'   => $google_connected ? 'Google Ads is connected. Ad data is syncing.' : 'Track your Google Ads campaigns and conversions.',
+										'action' => $google_connected
+											? '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-google-ads' ) ) . '" class="button">View Google Ads →</a>'
+											: '<button type="button" class="button button-primary" onclick="window.open(\'' . esc_js( $google_oauth ) . '\', \'google\', \'width=900,height=800\')">Connect Google →</button>',
 									),
 									array(
 										'done'   => $has_fb_pixel || $has_ga4,
 										'title'  => 'Add tracking pixels',
-										'desc'   => 'Enable Meta Pixel, GA4, or TikTok Pixel to fire ecommerce events.',
-										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=tracking' ) ) . '" class="button">Set up pixels →</a>',
+										'desc'   => $auto_fb_pixel
+											? 'Meta Pixel auto-detected: ' . esc_html( $auto_fb_pixel )
+											: 'Enable Meta Pixel, GA4, or TikTok Pixel to fire ecommerce events.',
+										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=tracking' ) ) . '" class="button">' . ( ( $has_fb_pixel || $has_ga4 ) ? 'Manage pixels →' : 'Set up pixels →' ) . '</a>',
 									),
 									array(
 										'done'   => $has_reviews,
 										'title'  => 'Enable product reviews',
-										'desc'   => 'Show star ratings and reviews on your product pages.',
-										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=reviews' ) ) . '" class="button">Enable reviews →</a>',
+										'desc'   => $has_reviews ? 'Product reviews widget is active on your product pages.' : 'Show star ratings and reviews on your product pages.',
+										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=reviews' ) ) . '" class="button">' . ( $has_reviews ? 'Manage reviews →' : 'Enable reviews →' ) . '</a>',
 									),
 									array(
-										'done'   => false,
+										'done'   => $has_newsletter_widget,
 										'title'  => 'Add newsletter signup',
-										'desc'   => 'Place a signup form on your site using <code>[attribix_newsletter]</code>.',
-										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=newsletter' ) ) . '" class="button">Get shortcode →</a>',
+										'desc'   => $has_newsletter_widget ? 'Newsletter signup form is live on your site.' : 'Place a signup form on your site using <code>[attribix_newsletter]</code>.',
+										'action' => '<a href="' . esc_url( admin_url( 'admin.php?page=attribix-woo-settings&tab=newsletter' ) ) . '" class="button">' . ( $has_newsletter_widget ? 'Manage →' : 'Get shortcode →' ) . '</a>',
 									),
 								);
 								?>
