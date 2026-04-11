@@ -542,7 +542,8 @@ function MetaIntegrationsInner({ data }) {
           </Layout.Section>
         )}
 
-        {/* Meta Pixel & CAPI */}
+        {/* Meta Pixel & CAPI — hidden when Business Login is active */}
+        {!data.businessLoginActive && (
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
@@ -631,6 +632,7 @@ function MetaIntegrationsInner({ data }) {
             </BlockStack>
           </Card>
         </Layout.Section>
+        )}
 
         {/* Not connected info */}
         {!connected && (
