@@ -70,7 +70,7 @@ export async function loader({ request }) {
 }
 
 export default function IntegrationsHub() {
-  const { meta, google, tiktok, stripe } = useLoaderData();
+  const { meta, google, stripe } = useLoaderData();
 
   return (
     <Page
@@ -182,38 +182,6 @@ export default function IntegrationsHub() {
               <InlineStack gap="200">
                 <Button url="/app/integrations/google" variant="primary">
                   {google.connected ? "Manage Google Ads" : "Connect Google Ads"}
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        {/* TikTok */}
-        <Layout.Section variant="oneHalf">
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">TikTok Ads</Text>
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    Campaign performance · Pixel tracking
-                  </Text>
-                </BlockStack>
-                {tiktok.connected ? (
-                  <Badge tone="success">Connected</Badge>
-                ) : (
-                  <Badge tone="info">Pending review</Badge>
-                )}
-              </InlineStack>
-
-              <Text as="p" tone="subdued" variant="bodySm">
-                Connect your TikTok Ads Manager to sync campaign performance and conversion data.
-                {!tiktok.connected && " Our TikTok developer app is currently under review."}
-              </Text>
-
-              <InlineStack gap="200">
-                <Button url="/app/integrations/tiktok" variant="primary">
-                  {tiktok.connected ? "Manage TikTok" : "Connect TikTok"}
                 </Button>
               </InlineStack>
             </BlockStack>
