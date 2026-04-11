@@ -4,6 +4,7 @@ import { json } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { listAccessibleCustomers } from "~/services/googleAds.server";
+import { getValidGoogleToken } from "~/services/tokenRefresh.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const result = await authenticate.admin(request);
@@ -20,9 +21,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
     );
   }
 
+  // Get a valid (auto-refreshed) access token
+  const tokenResult = await getValidGoogleToken(shop);
+  if (!tokenResult.ok) {
+    return json(
+      { ok: false, error: tokenResult.reason, customers: [] },
+      { status: 401 }
+    );
+  }
+
   try {
     const customers = await listAccessibleCustomers({
-      accessToken: conn.accessToken,
+      accessToken: tokenResult.accessToken,
     });
 
     return json({
