@@ -59,12 +59,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
     "utf8"
   ).toString("base64url");
 
+  // If a Business Login config ID is set, use the modern Business Login flow
+  // (unified picker for ad accounts, pixels, pages, etc. with "Create new" option)
+  const BUSINESS_LOGIN_CONFIG_ID = process.env.META_BUSINESS_LOGIN_CONFIG_ID;
+
+  if (BUSINESS_LOGIN_CONFIG_ID) {
+    const authUrl = new URL("https://www.facebook.com/v20.0/dialog/oauth");
+    authUrl.searchParams.set("client_id", META_APP_ID);
+    authUrl.searchParams.set("redirect_uri", META_REDIRECT_URI);
+    authUrl.searchParams.set("state", state);
+    authUrl.searchParams.set("config_id", BUSINESS_LOGIN_CONFIG_ID);
+    authUrl.searchParams.set("response_type", "code");
+    return redirect(authUrl.toString());
+  }
+
+  // Fallback: legacy OAuth flow with manual scopes
   const authUrl = new URL("https://www.facebook.com/v19.0/dialog/oauth");
   authUrl.searchParams.set("client_id", META_APP_ID);
   authUrl.searchParams.set("redirect_uri", META_REDIRECT_URI);
   authUrl.searchParams.set("state", state);
 
-  // Adjust scopes to what you actually use
   authUrl.searchParams.set(
     "scope",
     [

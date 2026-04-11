@@ -410,6 +410,9 @@ class Settings {
 					<h2>Ad Platform Pixels</h2>
 					<p class="description">Tracking pixels fire standard ecommerce events (PageView, ViewContent, AddToCart, Purchase) on your storefront.</p>
 
+					<?php // Close the outer WP settings form so the Meta picker can have its own independent form (HTML doesn't allow nested forms) ?>
+					</form>
+
 					<!-- Meta Pixel Card -->
 					<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;margin:20px 0;max-width:760px;">
 						<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
@@ -549,7 +552,15 @@ class Settings {
 						<?php endif; ?>
 					</div>
 
-					<!-- Hidden field to preserve pixel ID on main settings save -->
+					<?php // Reopen the outer WP settings form for GA4/TikTok manual fields and the Save Changes button ?>
+					<form method="post" action="options.php" style="max-width:700px;">
+						<?php settings_fields( self::SLUG ); ?>
+
+					<!-- Hidden fields to preserve other settings on main save -->
+					<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[account_id]" value="<?php echo esc_attr( $opts['account_id'] ); ?>" />
+					<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[api_key]" value="<?php echo esc_attr( $opts['api_key'] ); ?>" />
+					<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[endpoint]" value="<?php echo esc_attr( $opts['endpoint'] ); ?>" />
+					<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[enabled]" value="<?php echo esc_attr( $opts['enabled'] ); ?>" />
 					<input type="hidden" name="<?php echo esc_attr( ATTRIBIX_WOO_OPTION ); ?>[fb_pixel_id]" value="<?php echo esc_attr( $opts['fb_pixel_id'] ); ?>" />
 
 					<h3 style="margin-top:32px;">Other Tracking (manual)</h3>
