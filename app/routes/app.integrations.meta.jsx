@@ -484,64 +484,15 @@ function MetaIntegrationsInner({ data }) {
           </Layout.Section>
         )}
 
-        {/* Spend sync */}
+        {/* Sync info — actual sync button lives on Meta Ads analytics page */}
         {connected && (
           <Layout.Section>
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">Sync ad spend</Text>
-                <Text as="p" tone="subdued" variant="bodySm">
-                  ✓ Auto-syncs every 24 hours. Use this to manually sync now if you need fresh data immediately.
-                </Text>
-                <Text as="p" tone="subdued" variant="bodySm">
-                  Pull campaign-level spend, purchases, and purchase value from Meta Ads Manager
-                  into your database. Run this manually or it will sync automatically each day.
-                </Text>
-
-                <Divider />
-
-                <InlineStack gap="200" blockAlign="end">
-                  <div style={{ minWidth: 180 }}>
-                    <Select
-                      label="Date range"
-                      options={[
-                        { label: "Last 7 days", value: "7" },
-                        { label: "Last 14 days", value: "14" },
-                        { label: "Last 30 days", value: "30" },
-                        { label: "Last 90 days", value: "90" },
-                      ]}
-                      value={syncDays}
-                      onChange={setSyncDays}
-                    />
-                  </div>
-                  <Button
-                    variant="primary"
-                    onClick={syncSpend}
-                    loading={syncLoading}
-                    disabled={!data.adAccountId}
-                  >
-                    Sync now
-                  </Button>
-                </InlineStack>
-
-                {syncOk && (
-                  <Banner tone="success" title="Sync complete">
-                    <Text as="p">
-                      {syncOk.campaignRows > 0
-                        ? `Synced ${syncOk.campaignRows} campaign rows and ${syncOk.adRows} ad rows for the last ${syncOk.days} days.`
-                        : `Sync ran but found 0 campaign rows for the last ${syncOk.days} days. Check that your ad account has active campaigns with spend in this period.`
-                      }
-                    </Text>
-                  </Banner>
-                )}
-
-                {syncError && (
-                  <Banner tone="critical" title="Sync failed">
-                    <Text as="p">{syncError}</Text>
-                  </Banner>
-                )}
-              </BlockStack>
-            </Card>
+            <Banner tone="info">
+              <Text as="p">
+                ✓ Ad data syncs automatically every 24 hours. To sync manually or view campaign performance, go to{" "}
+                <a href="/app/meta-ads">Meta Ads →</a>
+              </Text>
+            </Banner>
           </Layout.Section>
         )}
 

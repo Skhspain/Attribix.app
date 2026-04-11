@@ -1,7 +1,8 @@
 // app/routes/app.google-ads.tsx
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { useLoaderData, useRevalidator } from "@remix-run/react";
 import { useMemo, useState } from "react";
+import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import {
   Badge,
   Banner,
@@ -91,8 +92,35 @@ function labelShort(iso: string) {
 
 export default function GoogleAdsDetail() {
   const data = useLoaderData<typeof loader>();
+  const revalidator = useRevalidator();
+  const authFetch = useAuthenticatedFetch();
   const [window, setWindow] = useState<"7" | "14" | "30" | "90">("7");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const windowDays = Number(window);
+
+  async function handleSync() {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await authFetch("/api/google/sync-spend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ days: windowDays }),
+      });
+      const result = await res.json();
+      if (result.ok) {
+        setSyncMessage(`✓ Synced ${result.campaigns || 0} campaigns`);
+        revalidator.revalidate();
+      } else {
+        setSyncMessage(`✗ ${result.error || "Sync failed"}`);
+      }
+    } catch (e: any) {
+      setSyncMessage(`✗ ${e.message || "Sync failed"}`);
+    }
+    setSyncing(false);
+    setTimeout(() => setSyncMessage(null), 5000);
+  }
 
   const windowCutoff = useMemo(() => {
     const d = new Date(data.nowMs);
@@ -218,6 +246,14 @@ export default function GoogleAdsDetail() {
       title="Google Ads — Campaign Performance"
       subtitle={`Last ${window} days · Shop: ${data.shop}`}
       backAction={{ url: "/app/analytics", content: "Analytics" }}
+      secondaryActions={[
+        {
+          content: syncing ? "Syncing…" : "Sync now",
+          onAction: handleSync,
+          loading: syncing,
+          disabled: syncing,
+        },
+      ]}
       primaryAction={
         <Select
           label=""
@@ -234,6 +270,21 @@ export default function GoogleAdsDetail() {
       }
     >
       <BlockStack gap="600">
+
+        {/* Sync status */}
+        {syncMessage && (
+          <div style={{
+            padding: "12px 16px",
+            borderRadius: 8,
+            background: syncMessage.startsWith("✓") ? "#ecfdf5" : "#fef2f2",
+            border: `1px solid ${syncMessage.startsWith("✓") ? "#bbf7d0" : "#fecaca"}`,
+            color: syncMessage.startsWith("✓") ? "#065f46" : "#991b1b",
+            fontSize: 13,
+            fontWeight: 500,
+          }}>
+            {syncMessage}
+          </div>
+        )}
 
         {/* No connection banner */}
         {!data.hasConnection && (

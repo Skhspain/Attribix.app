@@ -347,14 +347,14 @@ function GoogleIntegrationsInner({ data }) {
                     Save
                   </Button>
 
-                  <Button
-                    onClick={syncSpendLast30Days}
-                    disabled={!selectedCustomerId || syncLoading}
-                    loading={syncLoading}
-                  >
-                    Sync spend (last 30 days)
-                  </Button>
                 </InlineStack>
+
+                <Banner tone="info">
+                  <Text as="p">
+                    ✓ Ad data syncs automatically every 24 hours. To sync manually or view campaign performance, go to{" "}
+                    <a href="/app/google-ads">Google Ads →</a>
+                  </Text>
+                </Banner>
 
                 {customersError && (
                   <Banner tone="critical" title="Failed to load ad accounts">
