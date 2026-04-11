@@ -64,10 +64,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
     redirectUri,
   });
 
-  const expiresAt =
-    typeof token.expires_in === "number"
-      ? new Date(Date.now() + token.expires_in * 1000)
-      : null;
+  // Business Login with "Never" expiration returns system user tokens that don't expire.
+  // If META_BUSINESS_LOGIN_CONFIG_ID is set, we assume the config is "Never" and don't store an expiry.
+  const isBusinessLogin = !!process.env.META_BUSINESS_LOGIN_CONFIG_ID;
+  const expiresAt = isBusinessLogin
+    ? null
+    : (typeof token.expires_in === "number"
+        ? new Date(Date.now() + token.expires_in * 1000)
+        : null);
 
   await db.metaConnection.upsert({
     where: { shop },
@@ -78,7 +82,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     },
     update: {
       accessToken: token.access_token,
-      expiresAt: expiresAt ?? undefined,
+      expiresAt: expiresAt,
     },
   });
 

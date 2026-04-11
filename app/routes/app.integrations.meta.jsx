@@ -74,7 +74,30 @@ export async function loader({ request }) {
 
   const connected = !!(conn && conn.accessToken && conn.accessToken !== "__PENDING__");
   const adAccountId = conn?.adAccountId || "";
-  const expiresAt = conn?.expiresAt ? new Date(conn.expiresAt).toISOString() : null;
+  const businessLoginActive = !!process.env.META_BUSINESS_LOGIN_CONFIG_ID;
+  const expiresAt = businessLoginActive ? null : (conn?.expiresAt ? new Date(conn.expiresAt).toISOString() : null);
+
+  // If Business Login is active and connected, fetch connected assets summary
+  let connectedAssets = null;
+  if (connected && businessLoginActive && conn?.accessToken) {
+    try {
+      const token = conn.accessToken;
+      const [adAcct, pixel] = await Promise.all([
+        adAccountId
+          ? fetch(`https://graph.facebook.com/v20.0/${adAccountId}?fields=id,name,currency&access_token=${token}`).then(r => r.json()).catch(() => null)
+          : null,
+        trackingSettings?.fbPixelId
+          ? fetch(`https://graph.facebook.com/v20.0/${trackingSettings.fbPixelId}?fields=id,name,last_fired_time&access_token=${token}`).then(r => r.json()).catch(() => null)
+          : null,
+      ]);
+      connectedAssets = {
+        adAccount: adAcct && !adAcct.error ? { id: adAcct.id, name: adAcct.name, currency: adAcct.currency } : null,
+        pixel: pixel && !pixel.error ? { id: pixel.id, name: pixel.name, lastFired: pixel.last_fired_time } : null,
+      };
+    } catch (e) {
+      console.error("[meta] failed to fetch connected assets:", e);
+    }
+  }
 
   return json({
     shop,
@@ -84,6 +107,8 @@ export async function loader({ request }) {
     connected,
     adAccountId,
     expiresAt,
+    businessLoginActive,
+    connectedAssets,
     fbPixelId: trackingSettings?.fbPixelId || "",
     fbToken: trackingSettings?.fbToken || "",
   });
@@ -318,9 +343,15 @@ function MetaIntegrationsInner({ data }) {
                 </Text>
               )}
 
-              {connected && data.expiresAt && (
+              {connected && data.expiresAt && !data.businessLoginActive && (
                 <Text as="p" tone="subdued" variant="bodySm">
                   Token expires: {new Date(data.expiresAt).toLocaleDateString()}
+                </Text>
+              )}
+
+              {connected && data.businessLoginActive && (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Connected via Meta Business Login — token never expires.
                 </Text>
               )}
 
@@ -333,8 +364,61 @@ function MetaIntegrationsInner({ data }) {
           </Card>
         </Layout.Section>
 
-        {/* Ad account selection */}
-        {connected && (
+        {/* Connected Assets (Business Login mode) */}
+        {connected && data.businessLoginActive && data.connectedAssets && (
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Connected assets</Text>
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Managed via Meta Business Login. To change these, click Reconnect Meta above.
+                </Text>
+
+                <div style={{ display: "grid", gap: 12 }}>
+                  {/* Ad Account */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8 }}>
+                    <span style={{ fontSize: 24 }}>💼</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>Ad Account</div>
+                      {data.connectedAssets.adAccount ? (
+                        <div style={{ fontSize: 13, color: "#374151" }}>
+                          {data.connectedAssets.adAccount.name} <code style={{ background: "#fff", padding: "1px 6px", borderRadius: 3, fontSize: 11 }}>{data.connectedAssets.adAccount.id}</code> — {data.connectedAssets.adAccount.currency}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 13, color: "#9ca3af" }}>Not selected</div>
+                      )}
+                    </div>
+                    <Badge tone="success">Active</Badge>
+                  </div>
+
+                  {/* Pixel */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8 }}>
+                    <span style={{ fontSize: 24 }}>📊</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>Meta Pixel</div>
+                      {data.connectedAssets.pixel ? (
+                        <>
+                          <div style={{ fontSize: 13, color: "#374151" }}>
+                            {data.connectedAssets.pixel.name} <code style={{ background: "#fff", padding: "1px 6px", borderRadius: 3, fontSize: 11 }}>{data.connectedAssets.pixel.id}</code>
+                          </div>
+                          {data.connectedAssets.pixel.lastFired && (
+                            <div style={{ fontSize: 11, color: "#6b7280" }}>Last fired: {new Date(data.connectedAssets.pixel.lastFired).toLocaleString()}</div>
+                          )}
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 13, color: "#9ca3af" }}>Not selected</div>
+                      )}
+                    </div>
+                    <Badge tone="success">Active</Badge>
+                  </div>
+                </div>
+              </BlockStack>
+            </Card>
+          </Layout.Section>
+        )}
+
+        {/* Manual ad account / pixel selection (legacy, hidden when Business Login is active) */}
+        {connected && !data.businessLoginActive && (
           <Layout.Section>
             <Card>
               <BlockStack gap="400">
