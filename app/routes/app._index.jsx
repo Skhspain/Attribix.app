@@ -30,6 +30,11 @@ export async function loader({ request }) {
   since7.setDate(since7.getDate() - 7);
   since7.setHours(0, 0, 0, 0);
 
+  // Previous 7-day window (days 8–14 ago) for week-over-week delta
+  const since14 = new Date();
+  since14.setDate(since14.getDate() - 14);
+  since14.setHours(0, 0, 0, 0);
+
   const [
     settings,
     metaConn,
@@ -56,16 +61,16 @@ export async function loader({ request }) {
       },
     }).catch(() => []),
 
-    // Ad spend per platform
+    // Ad spend per platform (30d AND includes date for week-over-week)
     db.adSpendDaily.findMany({
-      where: { shop, date: { gte: since30 } },
-      select: { platform: true, spend: true },
+      where: { shop, date: { gte: since14 } },
+      select: { platform: true, spend: true, date: true },
     }).catch(() => []),
 
-    // Meta campaign insights
+    // Meta campaign insights (include date for week-over-week)
     anyDb.metaCampaignDailyInsight?.findMany?.({
       where: { shop, date: { gte: since30 } },
-      select: { spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true },
+      select: { spend: true, impressions: true, clicks: true, purchases: true, purchaseValue: true, date: true },
     }).catch(() => []) ?? [],
 
     // Meta ad-level insights
@@ -95,9 +100,36 @@ export async function loader({ request }) {
   const rev7 = purchases30.filter(p => new Date(p.createdAt) >= since7).reduce((s, p) => s + Number(p.totalValue || 0), 0);
   const orders7 = purchases30.filter(p => new Date(p.createdAt) >= since7).length;
 
-  const totalSpend = adSpend30.reduce((s, r) => s + Number(r.spend || 0), 0);
-  const metaSpend = adSpend30.filter(r => String(r.platform).toLowerCase().includes("meta")).reduce((s, r) => s + Number(r.spend || 0), 0);
-  const googleSpend = adSpend30.filter(r => String(r.platform).toLowerCase().includes("google")).reduce((s, r) => s + Number(r.spend || 0), 0);
+  // adSpend30 is actually the last 14 days now (since14). Split into current and previous 7d windows.
+  const isMeta = (r) => String(r.platform).toLowerCase().includes("meta") || String(r.platform).toLowerCase().includes("facebook");
+  const isGoogle = (r) => String(r.platform).toLowerCase().includes("google");
+  const isCurrent7 = (r) => new Date(r.date) >= since7;
+  const isPrev7 = (r) => new Date(r.date) >= since14 && new Date(r.date) < since7;
+
+  const totalSpend = adSpend30.filter(isCurrent7).reduce((s, r) => s + Number(r.spend || 0), 0);
+  const metaSpend = adSpend30.filter(r => isMeta(r) && isCurrent7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
+  const metaSpendPrev = adSpend30.filter(r => isMeta(r) && isPrev7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
+  const googleSpend = adSpend30.filter(r => isGoogle(r) && isCurrent7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
+  const googleSpendPrev = adSpend30.filter(r => isGoogle(r) && isPrev7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
+
+  // Week-over-week delta (%)
+  const pctDelta = (curr, prev) => {
+    if (prev === 0) return curr > 0 ? 100 : 0;
+    return Math.round(((curr - prev) / prev) * 100);
+  };
+  const metaSpendDelta = pctDelta(metaSpend, metaSpendPrev);
+  const googleSpendDelta = pctDelta(googleSpend, googleSpendPrev);
+
+  // Revenue attributed to Meta (7-day window) — from campaign insights if available
+  const metaRev7 = metaCampaigns30
+    .filter(r => r.date && new Date(r.date) >= since7)
+    .reduce((s, r) => s + Number(r.purchaseValue || 0), 0);
+
+  // Revenue attributed to Google (7-day window) — from purchases with gclid or google source
+  const isGooglePurchase = (p) => !!p.gclid || (p.utmSource && String(p.utmSource).toLowerCase().includes("google"));
+  const googleRev7 = purchases30
+    .filter(p => isGooglePurchase(p) && new Date(p.createdAt) >= since7)
+    .reduce((s, p) => s + Number(p.totalValue || 0), 0);
 
   const metaKpis = metaCampaigns30.reduce((acc, r) => ({
     spend: acc.spend + Number(r.spend || 0),
@@ -172,19 +204,32 @@ export async function loader({ request }) {
       visitors: visitorMap.get(src)?.size ?? 0,
     }));
 
-  // Feature hub stats
-  const [subscriberCount, pendingReviews, avgReviewRating, leadCount, campaignCount] = await Promise.all([
+  // Feature hub stats + notification counts (items needing attention)
+  const [
+    subscriberCount,
+    pendingReviews,
+    avgReviewRating,
+    leadCount,
+    campaignCount,
+    newLeads7d,
+    newSubscribers7d,
+  ] = await Promise.all([
     db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } }).catch(() => 0),
     db.review.count({ where: { shop, status: "pending" } }).catch(() => 0),
     db.review.aggregate({ where: { shop, status: "approved" }, _avg: { rating: true }, _count: true }).catch(() => ({ _avg: { rating: null }, _count: 0 })),
     db.lead.count({ where: { shop } }).catch(() => 0),
     db.newsletterCampaign.count({ where: { shop, status: "sent" } }).catch(() => 0),
+    db.lead.count({ where: { shop, status: "new", createdAt: { gte: since7 } } }).catch(() => 0),
+    db.newsletterSubscriber.count({ where: { shop, status: "subscribed", createdAt: { gte: since7 } } }).catch(() => 0),
   ]);
 
   return json({
     shop,
     rev30, rev7, orders30, orders7,
     totalSpend, metaSpend, googleSpend,
+    metaSpendPrev, googleSpendPrev,
+    metaSpendDelta, googleSpendDelta,
+    metaRev7, googleRev7,
     metaKpis,
     bestAd,
     sourceSummary,
@@ -202,6 +247,8 @@ export async function loader({ request }) {
       totalReviews: avgReviewRating?._count ?? 0,
       leadCount,
       campaignCount,
+      newLeads7d,
+      newSubscribers7d,
     },
   });
 }
@@ -385,34 +432,133 @@ export default function AppIndex() {
           <BlockStack gap="400">
             <Text as="h2" variant="headingMd">Your Attribix Tools</Text>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-              {[
-                { icon: "📊", title: "Analytics", desc: "Revenue & attribution", url: "/app/analytics" },
-                { icon: "🎯", title: "Meta Ads", desc: `${fmt(data.metaSpend)} spend`, url: "/app/meta-ads" },
-                { icon: "📈", title: "Google Ads", desc: `${fmt(data.googleSpend)} spend`, url: "/app/google-ads" },
-                // { icon: "🎵", title: "TikTok Ads", desc: "Campaign performance", url: "/app/tiktok-ads" }, — hidden until TikTok dev app approved
-                { icon: "📦", title: "Orders", desc: `${data.orders30} in 30 days`, url: "/app/orders" },
-                { icon: "📧", title: "Newsletter", desc: `${data.featureHub?.subscriberCount || 0} subs · ${data.featureHub?.campaignCount || 0} sent`, url: "/app/newsletter" },
-                { icon: "⭐", title: "Reviews", desc: `${data.featureHub?.totalReviews || 0} reviews${data.featureHub?.pendingReviews > 0 ? ` · ${data.featureHub.pendingReviews} pending` : ""}`, url: "/app/reviews" },
-                { icon: "👥", title: "Lead Center", desc: `${data.featureHub?.leadCount || 0} leads`, url: "/app/leads" },
-                { icon: "🔍", title: "SEO Audit", desc: "Score products", url: "/app/seo" },
-                { icon: "🔗", title: "Product Feeds", desc: "Google & Meta", url: "/app/feeds" },
-                { icon: "🔌", title: "Integrations", desc: "Meta, Google, Stripe", url: "/app/ads" },
-                { icon: "🏷️", title: "UTM Builder", desc: "Create tracked links", url: "/app/settings" },
-                { icon: "🛒", title: "Buy Now Button", desc: data.pixelStatus === "healthy" ? "Active" : "Inactive", url: "/app/buy-now" },
-                { icon: "💳", title: "Billing", desc: "Plans & subscription", url: "/app/billing" },
-              ].map(item => (
-                <div key={item.title} onClick={() => navigate(item.url)} style={{
-                  border: "1px solid #e1e3e5", borderRadius: 10, padding: "14px 16px",
-                  background: "#fff", cursor: "pointer", transition: "box-shadow 0.15s",
-                }}
-                  onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)")}
-                  onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-                >
-                  <div style={{ fontSize: 22, marginBottom: 6 }}>{item.icon}</div>
-                  <Text as="h3" variant="headingSm">{item.title}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">{item.desc}</Text>
-                </div>
-              ))}
+              {(() => {
+                const metaSalesText = `Sales: ${fmt(data.metaRev7 || 0)}`;
+                const googleSalesText = `Sales: ${fmt(data.googleRev7 || 0)}`;
+                const items = [
+                  // --- Ads platforms first (most important) ---
+                  {
+                    icon: "📘",
+                    title: "Meta Ads",
+                    lines: [
+                      { text: `${fmt(data.metaSpend)} spend`, strong: true },
+                      { text: metaSalesText, muted: true },
+                    ],
+                    delta: data.metaSpendDelta,
+                    deltaPrevZero: (data.metaSpendPrev || 0) === 0,
+                    url: "/app/meta-ads",
+                  },
+                  {
+                    icon: "📈",
+                    title: "Google Ads",
+                    lines: [
+                      { text: `${fmt(data.googleSpend)} spend`, strong: true },
+                      { text: googleSalesText, muted: true },
+                    ],
+                    delta: data.googleSpendDelta,
+                    deltaPrevZero: (data.googleSpendPrev || 0) === 0,
+                    url: "/app/google-ads",
+                  },
+                  // { icon: "🎵", title: "TikTok Ads" ... hidden until approved
+                  { icon: "📊", title: "Analytics", lines: [{ text: "Revenue & attribution", muted: true }], url: "/app/analytics" },
+                  { icon: "📦", title: "Orders", lines: [{ text: `${data.orders30} in 30 days`, muted: true }], url: "/app/orders" },
+                  {
+                    icon: "📧",
+                    title: "Newsletter",
+                    lines: [{ text: `${data.featureHub?.subscriberCount || 0} subs · ${data.featureHub?.campaignCount || 0} sent`, muted: true }],
+                    badge: data.featureHub?.newSubscribers7d || 0,
+                    url: "/app/newsletter",
+                  },
+                  {
+                    icon: "⭐",
+                    title: "Reviews",
+                    lines: [{ text: `${data.featureHub?.totalReviews || 0} reviews${data.featureHub?.pendingReviews > 0 ? ` · ${data.featureHub.pendingReviews} pending` : ""}`, muted: true }],
+                    badge: data.featureHub?.pendingReviews || 0,
+                    url: "/app/reviews",
+                  },
+                  {
+                    icon: "👥",
+                    title: "Lead Center",
+                    lines: [{ text: `${data.featureHub?.leadCount || 0} leads`, muted: true }],
+                    badge: data.featureHub?.newLeads7d || 0,
+                    url: "/app/leads",
+                  },
+                  { icon: "🔍", title: "SEO Audit", lines: [{ text: "Score products", muted: true }], url: "/app/seo" },
+                  { icon: "🔗", title: "Product Feeds", lines: [{ text: "Google & Meta", muted: true }], url: "/app/feeds" },
+                  { icon: "🔌", title: "Integrations", lines: [{ text: "Meta, Google, Stripe", muted: true }], url: "/app/ads" },
+                  { icon: "🏷️", title: "UTM Builder", lines: [{ text: "Create tracked links", muted: true }], url: "/app/settings" },
+                  { icon: "🛒", title: "Buy Now Button", lines: [{ text: data.pixelStatus === "healthy" ? "Active" : "Inactive", muted: true }], url: "/app/buy-now" },
+                  { icon: "💳", title: "Billing", lines: [{ text: "Plans & subscription", muted: true }], url: "/app/billing" },
+                ];
+
+                return items.map(item => {
+                  const hasDelta = typeof item.delta === "number";
+                  const deltaPositive = hasDelta && item.delta > 0;
+                  const deltaNegative = hasDelta && item.delta < 0;
+                  const deltaColor = deltaPositive ? "#16a34a" : deltaNegative ? "#dc2626" : "#6b7280";
+                  const deltaArrow = deltaPositive ? "▲" : deltaNegative ? "▼" : "—";
+                  const deltaLabel = item.deltaPrevZero && (item.delta ?? 0) === 0
+                    ? "No data last week"
+                    : `${deltaArrow} ${Math.abs(item.delta ?? 0)}% vs last week`;
+
+                  return (
+                    <div
+                      key={item.title}
+                      onClick={() => navigate(item.url)}
+                      style={{
+                        position: "relative",
+                        border: "1px solid #e1e3e5",
+                        borderRadius: 10,
+                        padding: "14px 16px",
+                        background: "#fff",
+                        cursor: "pointer",
+                        transition: "box-shadow 0.15s",
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)")}
+                      onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
+                    >
+                      {/* Notification badge */}
+                      {item.badge > 0 && (
+                        <div style={{
+                          position: "absolute",
+                          top: -6,
+                          right: -6,
+                          background: "#dc2626",
+                          color: "#fff",
+                          borderRadius: 999,
+                          minWidth: 22,
+                          height: 22,
+                          padding: "0 7px",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+                          border: "2px solid #fff",
+                        }}>
+                          +{item.badge}
+                        </div>
+                      )}
+
+                      <div style={{ fontSize: 22, marginBottom: 6 }}>{item.icon}</div>
+                      <Text as="h3" variant="headingSm">{item.title}</Text>
+                      {item.lines.map((line, i) => (
+                        <div key={i} style={{ marginTop: i === 0 ? 4 : 2 }}>
+                          <Text as="p" variant="bodySm" tone={line.muted ? "subdued" : undefined} fontWeight={line.strong ? "semibold" : undefined}>
+                            {line.text}
+                          </Text>
+                        </div>
+                      ))}
+                      {hasDelta && (
+                        <div style={{ marginTop: 4, fontSize: 11, fontWeight: 600, color: deltaColor }}>
+                          {deltaLabel}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </BlockStack>
         </Card>
