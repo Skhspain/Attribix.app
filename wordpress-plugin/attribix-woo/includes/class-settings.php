@@ -309,6 +309,8 @@ class Settings {
 					<?php
 					$meta_status = \Attribix_Woo\Api::get( '/api/woo/status', array( 'shop' => \Attribix_Woo\Api::shop_domain() ) );
 					$meta_is_connected = $meta_status['meta']['connected'] ?? false;
+					$business_login_active = $meta_status['businessLoginActive'] ?? false;
+					$connected_assets = $meta_status['connectedAssets'] ?? null;
 					$current_ad_account = $meta_status['meta']['adAccountId'] ?? '';
 					// Prefer backend status over local options (backend is source of truth)
 					$current_pixel      = $meta_status['pixels']['fbPixelId'] ?? $opts['fb_pixel_id'] ?? '';
@@ -413,7 +415,66 @@ class Settings {
 					<?php // Close the outer WP settings form so the Meta picker can have its own independent form (HTML doesn't allow nested forms) ?>
 					</form>
 
-					<!-- Meta Pixel Card -->
+					<?php if ( $meta_is_connected && $business_login_active && $connected_assets ) : ?>
+						<!-- Connected Assets (Business Login mode) -->
+						<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;margin:20px 0;max-width:760px;">
+							<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+								<span style="font-size:32px;">📘</span>
+								<div style="flex:1;">
+									<h3 style="margin:0;font-size:16px;">Meta Connected Assets</h3>
+									<p style="margin:4px 0 0;font-size:13px;color:#6b7280;">Managed via Meta Business Login. Click Reconnect to change.</p>
+								</div>
+								<span style="background:#16a34a;color:#fff;padding:4px 12px;border-radius:12px;font-size:11px;font-weight:600;">✓ Never Expires</span>
+							</div>
+
+							<!-- Ad Account -->
+							<div style="display:flex;align-items:center;gap:12px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:10px;">
+								<span style="font-size:24px;">💼</span>
+								<div style="flex:1;">
+									<div style="font-weight:600;font-size:14px;">Ad Account</div>
+									<?php if ( ! empty( $connected_assets['adAccount'] ) ) : ?>
+										<div style="font-size:13px;color:#374151;">
+											<?php echo esc_html( $connected_assets['adAccount']['name'] ?? '' ); ?>
+											<code style="background:#fff;padding:1px 6px;border-radius:3px;font-size:11px;"><?php echo esc_html( $connected_assets['adAccount']['id'] ?? '' ); ?></code>
+											<?php if ( ! empty( $connected_assets['adAccount']['currency'] ) ) : ?>
+												— <?php echo esc_html( $connected_assets['adAccount']['currency'] ); ?>
+											<?php endif; ?>
+										</div>
+									<?php else : ?>
+										<div style="font-size:13px;color:#9ca3af;">Not selected</div>
+									<?php endif; ?>
+								</div>
+								<span style="background:#16a34a;color:#fff;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;">Active</span>
+							</div>
+
+							<!-- Pixel -->
+							<div style="display:flex;align-items:center;gap:12px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+								<span style="font-size:24px;">📊</span>
+								<div style="flex:1;">
+									<div style="font-weight:600;font-size:14px;">Meta Pixel</div>
+									<?php if ( ! empty( $connected_assets['pixel'] ) ) : ?>
+										<div style="font-size:13px;color:#374151;">
+											<?php echo esc_html( $connected_assets['pixel']['name'] ?? '' ); ?>
+											<code style="background:#fff;padding:1px 6px;border-radius:3px;font-size:11px;"><?php echo esc_html( $connected_assets['pixel']['id'] ?? '' ); ?></code>
+										</div>
+										<?php if ( ! empty( $connected_assets['pixel']['lastFired'] ) ) : ?>
+											<div style="font-size:11px;color:#6b7280;margin-top:2px;">Last fired: <?php echo esc_html( date( 'M j, Y g:i A', strtotime( $connected_assets['pixel']['lastFired'] ) ) ); ?></div>
+										<?php endif; ?>
+									<?php else : ?>
+										<div style="font-size:13px;color:#9ca3af;">Not selected</div>
+									<?php endif; ?>
+								</div>
+								<span style="background:#16a34a;color:#fff;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;">Active</span>
+							</div>
+
+							<div style="margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6;">
+								<button type="button" class="button" onclick="window.open('<?php echo esc_js( $meta_reconnect_url ); ?>', 'meta', 'width=900,height=800')">Reconnect Meta</button>
+								<span style="font-size:12px;color:#9ca3af;margin-left:8px;">Click to change Ad Account, Pixel, or other connected assets</span>
+							</div>
+						</div>
+					<?php else : ?>
+
+					<!-- Meta Pixel Card (legacy manual picker) -->
 					<div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px;margin:20px 0;max-width:760px;">
 						<div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
 							<span style="font-size:32px;">📘</span>
@@ -551,6 +612,8 @@ class Settings {
 							</form>
 						<?php endif; ?>
 					</div>
+
+					<?php endif; // end Business Login vs legacy picker ?>
 
 					<?php // Reopen the outer WP settings form for GA4/TikTok manual fields and the Save Changes button ?>
 					<form method="post" action="options.php" style="max-width:700px;">

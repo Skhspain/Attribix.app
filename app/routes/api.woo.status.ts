@@ -30,9 +30,35 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Read pixel from tracking settings only — don't auto-detect/overwrite
   const autoPixelId = trackingSettings?.fbPixelId || null;
 
+  const businessLoginActive = !!process.env.META_BUSINESS_LOGIN_CONFIG_ID;
+
+  // Fetch connected asset details if Business Login is active
+  let connectedAssets: any = null;
+  if (metaConnected && businessLoginActive && metaConn?.accessToken) {
+    try {
+      const token = metaConn.accessToken;
+      const [adAcct, pixel] = await Promise.all([
+        metaConn.adAccountId
+          ? fetch(`https://graph.facebook.com/v20.0/${metaConn.adAccountId}?fields=id,name,currency&access_token=${token}`).then(r => r.json()).catch(() => null)
+          : null,
+        trackingSettings?.fbPixelId
+          ? fetch(`https://graph.facebook.com/v20.0/${trackingSettings.fbPixelId}?fields=id,name,last_fired_time&access_token=${token}`).then(r => r.json()).catch(() => null)
+          : null,
+      ]);
+      connectedAssets = {
+        adAccount: adAcct && !adAcct.error ? { id: adAcct.id, name: adAcct.name, currency: adAcct.currency } : null,
+        pixel: pixel && !pixel.error ? { id: pixel.id, name: pixel.name, lastFired: pixel.last_fired_time } : null,
+      };
+    } catch (e) {
+      console.error("[woo-status] assets fetch error:", e);
+    }
+  }
+
   return json({
     ok: true,
     shop,
+    businessLoginActive,
+    connectedAssets,
     meta: {
       connected: metaConnected,
       adAccountId: metaConn?.adAccountId || null,
