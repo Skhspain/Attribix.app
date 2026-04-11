@@ -396,7 +396,7 @@ export default function AppIndex() {
                 { icon: "👥", title: "Lead Center", desc: `${data.featureHub?.leadCount || 0} leads`, url: "/app/leads" },
                 { icon: "🔍", title: "SEO Audit", desc: "Score products", url: "/app/seo" },
                 { icon: "🔗", title: "Product Feeds", desc: "Google & Meta", url: "/app/feeds" },
-                { icon: "🔌", title: "Integrations", desc: "Meta, Google, Stripe", url: "/app/integrations/meta" },
+                { icon: "🔌", title: "Integrations", desc: "Meta, Google, Stripe", url: "/app/ads" },
                 { icon: "🏷️", title: "UTM Builder", desc: "Create tracked links", url: "/app/settings" },
                 { icon: "🛒", title: "Buy Now Button", desc: data.pixelStatus === "healthy" ? "Active" : "Inactive", url: "/app/buy-now" },
                 { icon: "💳", title: "Billing", desc: "Plans & subscription", url: "/app/billing" },

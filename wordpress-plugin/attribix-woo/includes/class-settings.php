@@ -143,7 +143,7 @@ class Settings {
 								$has_ga4       = ! empty( $opts['ga4_id'] );
 								$has_reviews   = ! empty( $opts['reviews_enabled'] );
 								$meta_oauth    = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
-								$google_oauth  = 'https://attribix-app.fly.dev/api/google/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
+								$google_oauth  = 'https://www.attribix.app/api/google/oauth/start?shop=' . urlencode( \Attribix_Woo\Api::shop_domain() ) . '&platform=woocommerce';
 
 								// Check if newsletter shortcode exists on any published page/post
 								global $wpdb;
@@ -687,7 +687,7 @@ class Settings {
 					$shop_domain = \Attribix_Woo\Api::shop_domain();
 					// Route OAuth through attribix.app (Vercel proxy) to avoid Chrome lookalike warnings
 					$meta_oauth   = 'https://attribix.app/api/meta/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
-					$google_oauth = 'https://attribix-app.fly.dev/api/google/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
+					$google_oauth = 'https://www.attribix.app/api/google/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
 					$tiktok_oauth = 'https://attribix.app/api/tiktok/oauth/start?shop=' . urlencode( $shop_domain ) . '&platform=woocommerce';
 					?>
 					<h2>Ad Platform Integrations</h2>

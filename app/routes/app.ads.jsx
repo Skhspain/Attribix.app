@@ -23,9 +23,12 @@ export async function loader({ request }) {
   const { session } = result;
   const shop = session.shop;
 
-  const [metaConn, googleConn] = await Promise.all([
+  const anyDb = db;
+  const [metaConn, googleConn, tiktokConn, stripeConn] = await Promise.all([
     db.metaConnection.findUnique({ where: { shop } }).catch(() => null),
     db.googleConnection.findUnique({ where: { shop } }).catch(() => null),
+    anyDb.tikTokConnection?.findUnique?.({ where: { shop } }).catch(() => null),
+    anyDb.stripeConnection?.findUnique?.({ where: { shop } }).catch(() => null),
   ]);
 
   const metaConnected = !!(
@@ -38,6 +41,12 @@ export async function loader({ request }) {
     googleConn.accessToken &&
     googleConn.accessToken !== "__PENDING__"
   );
+  const tiktokConnected = !!(
+    tiktokConn &&
+    tiktokConn.accessToken &&
+    tiktokConn.accessToken !== "__PENDING__"
+  );
+  const stripeConnected = !!stripeConn;
 
   return json({
     meta: {
@@ -49,11 +58,19 @@ export async function loader({ request }) {
       adCustomerId: googleConn?.adCustomerId || null,
       developerTokenConfigured: !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
     },
+    tiktok: {
+      connected: tiktokConnected,
+      advertiserId: tiktokConn?.advertiserId || null,
+    },
+    stripe: {
+      connected: stripeConnected,
+      accountName: stripeConn?.accountName || null,
+    },
   });
 }
 
 export default function IntegrationsHub() {
-  const { meta, google } = useLoaderData();
+  const { meta, google, tiktok, stripe } = useLoaderData();
 
   return (
     <Page
@@ -165,6 +182,75 @@ export default function IntegrationsHub() {
               <InlineStack gap="200">
                 <Button url="/app/integrations/google" variant="primary">
                   {google.connected ? "Manage Google Ads" : "Connect Google Ads"}
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* TikTok */}
+        <Layout.Section variant="oneHalf">
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">TikTok Ads</Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Campaign performance · Pixel tracking
+                  </Text>
+                </BlockStack>
+                {tiktok.connected ? (
+                  <Badge tone="success">Connected</Badge>
+                ) : (
+                  <Badge tone="info">Pending review</Badge>
+                )}
+              </InlineStack>
+
+              <Text as="p" tone="subdued" variant="bodySm">
+                Connect your TikTok Ads Manager to sync campaign performance and conversion data.
+                {!tiktok.connected && " Our TikTok developer app is currently under review."}
+              </Text>
+
+              <InlineStack gap="200">
+                <Button url="/app/integrations/tiktok" variant="primary">
+                  {tiktok.connected ? "Manage TikTok" : "Connect TikTok"}
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        {/* Stripe */}
+        <Layout.Section variant="oneHalf">
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">Stripe</Text>
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    Payments · Revenue sync
+                  </Text>
+                </BlockStack>
+                {stripe.connected ? (
+                  <Badge tone="success">Connected</Badge>
+                ) : (
+                  <Badge tone="warning">Not connected</Badge>
+                )}
+              </InlineStack>
+
+              {stripe.connected ? (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Account: <Text as="span" fontWeight="semibold">{stripe.accountName || "Connected"}</Text>
+                </Text>
+              ) : (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Connect Stripe to sync payments and attribute revenue alongside Shopify orders.
+                </Text>
+              )}
+
+              <InlineStack gap="200">
+                <Button url="/app/stripe" variant="primary">
+                  {stripe.connected ? "Manage Stripe" : "Connect Stripe"}
                 </Button>
               </InlineStack>
             </BlockStack>

@@ -10,6 +10,7 @@ import {
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import {
   Page,
   Card,
@@ -207,6 +208,7 @@ export default function BuyNowDashboard() {
   } = useLoaderData<typeof loader>();
 
   const fetcher = useFetcher<any>();
+  const authFetch = useAuthenticatedFetch();
   const [s, setS] = useState(settings);
   const [saved, setSaved] = useState(false);
 
@@ -228,8 +230,14 @@ export default function BuyNowDashboard() {
     setScanError(null);
     setSuggestion(null);
     try {
-      const res = await fetch("/api/buy-now/scan-style");
-      const data = await res.json();
+      const res = await authFetch("/api/buy-now/scan-style");
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Scan endpoint returned non-JSON (status ${res.status}). Check server logs.`);
+      }
       if (data.ok) {
         setSuggestion(data);
       } else {
@@ -240,7 +248,7 @@ export default function BuyNowDashboard() {
     } finally {
       setScanning(false);
     }
-  }, []);
+  }, [authFetch]);
 
   const handleSave = useCallback(() => {
     fetcher.submit(s, {

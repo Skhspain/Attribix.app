@@ -29,7 +29,7 @@ $base      = admin_url( 'admin.php?page=attribix-google-ads' );
 
 	<?php
 	// Route through attribix.app (Vercel proxy) to avoid Chrome lookalike warnings
-	$google_oauth_url = 'https://attribix-app.fly.dev/api/google/oauth/start?shop=' . urlencode( Api::shop_domain() ) . '&platform=woocommerce';
+	$google_oauth_url = 'https://www.attribix.app/api/google/oauth/start?shop=' . urlencode( Api::shop_domain() ) . '&platform=woocommerce';
 
 	// Handle sync
 	if ( isset( $_POST['google_action'] ) && wp_verify_nonce( $_POST['_wpnonce'] ?? '', 'attribix_google_action' ) ) {

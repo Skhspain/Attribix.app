@@ -5,6 +5,7 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import { useState, useCallback } from "react";
 import {
   Card, BlockStack, InlineStack, Text, Button, Badge, TextField, Select, Banner,
@@ -369,6 +370,7 @@ window.atbxSubmit = function() {
 export default function NewsletterWidget() {
   const { config, scriptTagInstalled: initialInstalled } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<any>();
+  const authFetch = useAuthenticatedFetch();
 
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -407,8 +409,14 @@ export default function NewsletterWidget() {
     setScanning(true);
     setScanError(null);
     try {
-      const res = await fetch("/api/buy-now/scan-style");
-      const data = await res.json();
+      const res = await authFetch("/api/buy-now/scan-style");
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(`Scan endpoint returned non-JSON (status ${res.status}).`);
+      }
       if (data.ok) {
         setDetectedColors({
           btn: data.buttonColor ?? "#008060",
@@ -427,7 +435,7 @@ export default function NewsletterWidget() {
     } finally {
       setScanning(false);
     }
-  }, [btnLabel]);
+  }, [btnLabel, authFetch]);
 
   const colors = { ...detectedColors, btnLabel };
 
