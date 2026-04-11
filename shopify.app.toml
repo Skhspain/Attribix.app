@@ -5,6 +5,7 @@ name = "Attribix"
 application_url = "https://attribix-app.fly.dev"
 embedded = true
 handle = "attribix-app"
+privacy_policy_url = "https://attribix-app.fly.dev/privacy"
 
 [build]
 automatically_update_urls_on_dev = false

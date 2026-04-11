@@ -44,7 +44,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
     db.metaConnection.findUnique({ where: { shop }, select: { lastSyncedAt: true } }).catch(() => null),
   ]);
 
-  return json({ shop, nowMs: Date.now(), campaigns: campaigns ?? [], ads: ads ?? [], lastSyncedAt: metaConn?.lastSyncedAt ?? null });
+  const hasConnection = !!(metaConn && metaConn.accessToken && metaConn.accessToken !== "__PENDING__");
+
+  return json({
+    shop,
+    nowMs: Date.now(),
+    campaigns: campaigns ?? [],
+    ads: ads ?? [],
+    lastSyncedAt: metaConn?.lastSyncedAt ?? null,
+    hasConnection,
+    adAccountId: metaConn?.adAccountId ?? null,
+  });
 }
 
 function safeNum(v: unknown) {
@@ -336,6 +346,40 @@ export default function MetaAdsDetail() {
       }
     >
       <BlockStack gap="600">
+
+        {/* Disconnected state */}
+        {!data.hasConnection && (
+          <div style={{
+            padding: 32,
+            borderRadius: 12,
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            textAlign: "center",
+          }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📘</div>
+            <h2 style={{ fontSize: 22, fontWeight: 700, margin: "0 0 8px", color: "#1e3a8a" }}>
+              Connect Meta Ads
+            </h2>
+            <p style={{ color: "#475569", fontSize: 14, margin: "0 0 20px", maxWidth: 480, marginLeft: "auto", marginRight: "auto" }}>
+              Connect your Meta Business account to see Facebook & Instagram ad performance, ROAS, and campaign insights right here.
+            </p>
+            <a
+              href="/app/integrations/meta"
+              style={{
+                display: "inline-block",
+                padding: "12px 28px",
+                background: "#1877f2",
+                color: "#fff",
+                borderRadius: 8,
+                fontWeight: 600,
+                textDecoration: "none",
+                fontSize: 14,
+              }}
+            >
+              Go to Meta Integration →
+            </a>
+          </div>
+        )}
 
         {/* Sync status */}
         {syncMessage && (
