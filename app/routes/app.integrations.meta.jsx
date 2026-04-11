@@ -491,6 +491,9 @@ function MetaIntegrationsInner({ data }) {
               <BlockStack gap="400">
                 <Text as="h2" variant="headingMd">Sync ad spend</Text>
                 <Text as="p" tone="subdued" variant="bodySm">
+                  ✓ Auto-syncs every 24 hours. Use this to manually sync now if you need fresh data immediately.
+                </Text>
+                <Text as="p" tone="subdued" variant="bodySm">
                   Pull campaign-level spend, purchases, and purchase value from Meta Ads Manager
                   into your database. Run this manually or it will sync automatically each day.
                 </Text>
