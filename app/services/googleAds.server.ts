@@ -101,16 +101,43 @@ export async function listAccessibleCustomers(args: {
 
   const resourceNames: string[] = Array.isArray(data?.resourceNames) ? data.resourceNames : [];
 
-  return resourceNames.map((rn) => {
-    const id = rn.split("/")[1] ?? rn;
+  // Fetch descriptive_name for each customer in parallel via GAQL
+  const customers = await Promise.all(
+    resourceNames.map(async (rn) => {
+      const id = rn.split("/")[1] ?? rn;
+      try {
+        const result = await googleAdsFetch({
+          path: `/customers/${id}/googleAds:search`,
+          accessToken: args.accessToken,
+          developerToken,
+          loginCustomerId: id,
+          method: "POST",
+          body: {
+            query: "SELECT customer.descriptive_name, customer.currency_code, customer.manager FROM customer LIMIT 1",
+          },
+        });
+        const row = result?.results?.[0]?.customer;
+        return {
+          id,
+          name: row?.descriptiveName || null,
+          currency: row?.currencyCode || null,
+          manager: !!row?.manager,
+          resourceName: rn,
+        };
+      } catch (e) {
+        // If a single account fails (no permission, etc.), still return it without name
+        return {
+          id,
+          name: null,
+          currency: null,
+          manager: false,
+          resourceName: rn,
+        };
+      }
+    })
+  );
 
-    // UI expects { id, name } (and uses id as label fallback)
-    return {
-      id,
-      name: null,
-      resourceName: rn,
-    };
-  });
+  return customers;
 }
 
 /**
