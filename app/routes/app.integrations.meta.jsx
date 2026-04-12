@@ -45,7 +45,7 @@ function getAppOrigin(request) {
 }
 
 export async function action({ request }) {
-  const { authenticate } = await import("./shopify.server").catch(() => import("../shopify.server"));
+  const { authenticate } = await import("../shopify.server");
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const form = await request.formData();
