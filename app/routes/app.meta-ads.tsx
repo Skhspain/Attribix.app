@@ -41,7 +41,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       select: { adId: true, adName: true, adSetName: true, campaignName: true, spend: true, impressions: true, clicks: true, ctr: true, cpc: true, purchases: true, purchaseValue: true, date: true },
       orderBy: { date: "desc" },
     }).catch(() => []),
-    db.metaConnection.findUnique({ where: { shop }, select: { lastSyncedAt: true } }).catch(() => null),
+    db.metaConnection.findUnique({ where: { shop }, select: { lastSyncedAt: true, accessToken: true, adAccountId: true } }).catch(() => null),
   ]);
 
   const hasConnection = !!(metaConn && metaConn.accessToken && metaConn.accessToken !== "__PENDING__");
