@@ -201,6 +201,10 @@ export async function syncGoogleSpendDaily(args: {
       campaign.id,
       campaign.name,
       metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.conversions_value,
       segments.date
     FROM campaign
     WHERE segments.date BETWEEN '${fmt(since)}' AND '${fmt(today)}'
@@ -219,7 +223,7 @@ export async function syncGoogleSpendDaily(args: {
   // searchStream returns array of response objects each with a .results array
   const rows: Array<{
     campaign: { id: string; name: string };
-    metrics: { costMicros: string };
+    metrics: { costMicros: string; impressions: string; clicks: string; conversions: number; conversionsValue: number };
     segments: { date: string };
   }> = streamResults.flatMap((chunk: any) => chunk?.results ?? []);
 
@@ -230,15 +234,24 @@ export async function syncGoogleSpendDaily(args: {
   const { db } = await import("~/db.server");
   let upserted = 0;
 
+  // Aggregate per date (since multiple campaigns can exist per day)
+  const dateAgg = new Map<string, { spend: number; impressions: number; clicks: number; conversions: number; conversionValue: number; campaignName: string | null; campaignId: string }>();
   for (const row of rows) {
-    const campaignId = row.campaign?.id ?? "unknown";
-    const campaignName = row.campaign?.name ?? null;
-    const spendMicros = Number(row.metrics?.costMicros ?? 0);
-    const spend = spendMicros / 1_000_000;
     const dateStr = row.segments?.date;
-
     if (!dateStr) continue;
+    const spendMicros = Number(row.metrics?.costMicros ?? 0);
+    const existing = dateAgg.get(dateStr) || { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversionValue: 0, campaignName: null, campaignId: "unknown" };
+    existing.spend += spendMicros / 1_000_000;
+    existing.impressions += Number(row.metrics?.impressions ?? 0);
+    existing.clicks += Number(row.metrics?.clicks ?? 0);
+    existing.conversions += Number(row.metrics?.conversions ?? 0);
+    existing.conversionValue += Number(row.metrics?.conversionsValue ?? 0);
+    existing.campaignName = existing.campaignName || row.campaign?.name || null;
+    existing.campaignId = row.campaign?.id ?? "unknown";
+    dateAgg.set(dateStr, existing);
+  }
 
+  for (const [dateStr, agg] of dateAgg) {
     const date = new Date(dateStr + "T00:00:00Z");
 
     try {
@@ -250,7 +263,7 @@ export async function syncGoogleSpendDaily(args: {
             date,
           },
         },
-        update: { spend, campaign: campaignName },
+        update: { spend: agg.spend, campaign: agg.campaignName },
         create: {
           shop: args.shop,
           platform: "google",

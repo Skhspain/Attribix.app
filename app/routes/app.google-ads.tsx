@@ -50,16 +50,40 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const hasConnection = !!googleConn?.adCustomerId;
 
-  // Transform adSpendDaily rows to look like campaign insights
-  const transformedCampaigns = (campaigns ?? []).map((row: any) => ({
-    campaignId: row.ad || "unknown",
-    campaignName: row.campaign || row.ad || "Unknown campaign",
-    spend: Number(row.spend || 0),
-    impressions: 0,
-    clicks: 0,
-    conversions: 0,
-    conversionValue: 0,
-    date: row.date,
+  // Also pull live metrics from Google Ads API if connected (for impressions/clicks/conversions)
+  let liveMetrics: any[] = [];
+  if (hasConnection && googleConn) {
+    try {
+      const { getValidGoogleToken } = await import("~/services/tokenRefresh.server");
+      const tokenResult = await getValidGoogleToken(shop);
+      if (tokenResult.ok) {
+        const { googleAdsSearchStream } = await import("~/services/googleAds.server");
+        const since = new Date(); since.setDate(since.getDate() - 90);
+        const fmtD = (d: Date) => d.toISOString().slice(0, 10);
+        const today = new Date();
+        const query = `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, segments.date FROM campaign WHERE segments.date BETWEEN '${fmtD(since)}' AND '${fmtD(today)}' AND campaign.status != 'REMOVED' ORDER BY segments.date DESC`;
+        const streamResults = await googleAdsSearchStream({
+          accessToken: tokenResult.accessToken,
+          customerId: googleConn.adCustomerId!,
+          query,
+        });
+        liveMetrics = streamResults.flatMap((chunk: any) => chunk?.results ?? []);
+      }
+    } catch (e) {
+      console.error("[google-ads] live metrics fetch failed:", e);
+    }
+  }
+
+  // Transform live metrics into campaign-level data
+  const transformedCampaigns = liveMetrics.map((row: any) => ({
+    campaignId: row.campaign?.id || "unknown",
+    campaignName: row.campaign?.name || "Unknown campaign",
+    spend: Number(row.metrics?.costMicros || 0) / 1_000_000,
+    impressions: Number(row.metrics?.impressions || 0),
+    clicks: Number(row.metrics?.clicks || 0),
+    conversions: Number(row.metrics?.conversions || 0),
+    conversionValue: Number(row.metrics?.conversionsValue || 0),
+    date: row.segments?.date ? new Date(row.segments.date + "T00:00:00Z").toISOString() : new Date().toISOString(),
   }));
 
   return json({
