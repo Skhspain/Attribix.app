@@ -45,6 +45,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = session.shop;
   const anyDb = db as any;
 
+  // Mark reviews as seen so the dashboard notification badge clears
+  anyDb.trackingSettings?.upsert?.({
+    where: { shop },
+    create: { shop, reviewsSeenAt: new Date() },
+    update: { reviewsSeenAt: new Date() },
+  }).catch(() => null);
+
   const url = new URL(request.url);
   const status = url.searchParams.get("status") || "all";
   const where: any = { shop };

@@ -140,6 +140,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = session.shop;
   const anyDb = db as any;
 
+  // Mark leads as seen so the dashboard notification badge clears
+  anyDb.trackingSettings?.upsert?.({
+    where: { shop },
+    create: { shop, leadsSeenAt: new Date() },
+    update: { leadsSeenAt: new Date() },
+  }).catch(() => null);
+
   const url = new URL(request.url);
   const statusFilter = url.searchParams.get("status") ?? "all";
   const sourceFilter = url.searchParams.get("source") ?? "all";

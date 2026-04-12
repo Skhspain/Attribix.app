@@ -205,22 +205,32 @@ export async function loader({ request }) {
     }));
 
   // Feature hub stats + notification counts (items needing attention)
+  // "New since last visit" — each tool has a seen-at timestamp, only count items newer than that
+  const reviewsSeenAt = settings?.reviewsSeenAt ?? new Date(0);
+  const leadsSeenAt = settings?.leadsSeenAt ?? new Date(0);
+  const newsletterSeenAt = settings?.newsletterSeenAt ?? new Date(0);
+
   const [
     subscriberCount,
     pendingReviews,
     avgReviewRating,
     leadCount,
     campaignCount,
-    newLeads7d,
-    newSubscribers7d,
+    newReviewsUnseen,
+    newLeadsUnseen,
+    newSubscribersUnseen,
   ] = await Promise.all([
     db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } }).catch(() => 0),
     db.review.count({ where: { shop, status: "pending" } }).catch(() => 0),
     db.review.aggregate({ where: { shop, status: "approved" }, _avg: { rating: true }, _count: true }).catch(() => ({ _avg: { rating: null }, _count: 0 })),
     db.lead.count({ where: { shop } }).catch(() => 0),
     db.newsletterCampaign.count({ where: { shop, status: "sent" } }).catch(() => 0),
-    db.lead.count({ where: { shop, status: "new", createdAt: { gte: since7 } } }).catch(() => 0),
-    db.newsletterSubscriber.count({ where: { shop, status: "subscribed", createdAt: { gte: since7 } } }).catch(() => 0),
+    // Pending reviews created since last visit
+    db.review.count({ where: { shop, status: "pending", createdAt: { gt: reviewsSeenAt } } }).catch(() => 0),
+    // New leads since last visit
+    db.lead.count({ where: { shop, createdAt: { gt: leadsSeenAt } } }).catch(() => 0),
+    // New subscribers since last visit
+    db.newsletterSubscriber.count({ where: { shop, status: "subscribed", createdAt: { gt: newsletterSeenAt } } }).catch(() => 0),
   ]);
 
   return json({
@@ -247,8 +257,10 @@ export async function loader({ request }) {
       totalReviews: avgReviewRating?._count ?? 0,
       leadCount,
       campaignCount,
-      newLeads7d,
-      newSubscribers7d,
+      // Notification badge counts (items created after last visit)
+      newReviewsUnseen,
+      newLeadsUnseen,
+      newSubscribersUnseen,
     },
   });
 }
@@ -466,21 +478,21 @@ export default function AppIndex() {
                     icon: "📧",
                     title: "Newsletter",
                     lines: [{ text: `${data.featureHub?.subscriberCount || 0} subs · ${data.featureHub?.campaignCount || 0} sent`, muted: true }],
-                    badge: data.featureHub?.newSubscribers7d || 0,
+                    badge: data.featureHub?.newSubscribersUnseen || 0,
                     url: "/app/newsletter",
                   },
                   {
                     icon: "⭐",
                     title: "Reviews",
                     lines: [{ text: `${data.featureHub?.totalReviews || 0} reviews${data.featureHub?.pendingReviews > 0 ? ` · ${data.featureHub.pendingReviews} pending` : ""}`, muted: true }],
-                    badge: data.featureHub?.pendingReviews || 0,
+                    badge: data.featureHub?.newReviewsUnseen || 0,
                     url: "/app/reviews",
                   },
                   {
                     icon: "👥",
                     title: "Lead Center",
                     lines: [{ text: `${data.featureHub?.leadCount || 0} leads`, muted: true }],
-                    badge: data.featureHub?.newLeads7d || 0,
+                    badge: data.featureHub?.newLeadsUnseen || 0,
                     url: "/app/leads",
                   },
                   { icon: "🔍", title: "SEO Audit", lines: [{ text: "Score products", muted: true }], url: "/app/seo" },

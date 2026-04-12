@@ -210,6 +210,11 @@ model TrackingSettings {
   attributionWindowDays Int     @default(7)
   leadWebhookToken      String?
 
+  // Last-seen timestamps per tool (for dashboard notification badges)
+  reviewsSeenAt    DateTime?
+  leadsSeenAt      DateTime?
+  newsletterSeenAt DateTime?
+
   @@index([shop])
   @@index([trackingKey])
   @@index([trackingEnabled])

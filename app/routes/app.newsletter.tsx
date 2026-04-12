@@ -13,6 +13,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = session.shop;
   const anyDb = db as any;
 
+  // Mark newsletter as seen so the dashboard notification badge clears
+  anyDb.trackingSettings?.upsert?.({
+    where: { shop },
+    create: { shop, newsletterSeenAt: new Date() },
+    update: { newsletterSeenAt: new Date() },
+  }).catch(() => null);
+
   const [subscriberCount, campaignCount, sentCount] = await Promise.all([
     db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } }),
     anyDb.newsletterCampaign?.count?.({ where: { shop } }).catch(() => 0) ?? 0,
