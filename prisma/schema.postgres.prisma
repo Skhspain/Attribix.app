@@ -273,15 +273,16 @@ model MetaAdDailyInsight {
 }
 
 model GoogleConnection {
-  id           String   @id @default(cuid())
-  shop         String   @unique
-  accessToken  String
-  refreshToken String?
-  expiresAt    DateTime?
-  scope        String?
-  adCustomerId String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String    @id @default(cuid())
+  shop          String    @unique
+  accessToken   String
+  refreshToken  String?
+  expiresAt     DateTime?
+  scope         String?
+  adCustomerId  String?
+  lastSyncedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([shop])
 }
