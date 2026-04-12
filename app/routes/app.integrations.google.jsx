@@ -111,11 +111,8 @@ function GoogleIntegrationsInner({ data }) {
 
   function startGoogleOAuth() {
     const returnTo = "/app/integrations/google";
-    const startUrl = apiUrl(
-      `/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(
-        returnTo
-      )}`
-    );
+    // Route through www.attribix.app to avoid Chrome lookalike warning on attribix-app.fly.dev
+    const startUrl = `https://www.attribix.app/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(returnTo)}`;
 
     const topWindow = window.top ?? window;
     topWindow.location.href = startUrl;
