@@ -31,16 +31,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   since90.setHours(0, 0, 0, 0);
 
   const [campaigns, googleConn] = await Promise.all([
-    anyDb.googleCampaignDailyInsight?.findMany?.({
-      where: { shop, date: { gte: since90 } },
+    // Read from adSpendDaily where platform='google' (that's where syncGoogleSpendDaily writes)
+    db.adSpendDaily.findMany({
+      where: { shop, platform: "google", date: { gte: since90 } },
       select: {
-        campaignId: true,
-        campaignName: true,
+        campaign: true,
+        ad: true,
         spend: true,
-        impressions: true,
-        clicks: true,
-        conversions: true,
-        conversionValue: true,
         date: true,
       },
       orderBy: { date: "desc" },
@@ -53,10 +50,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const hasConnection = !!googleConn?.adCustomerId;
 
+  // Transform adSpendDaily rows to look like campaign insights
+  const transformedCampaigns = (campaigns ?? []).map((row: any) => ({
+    campaignId: row.ad || "unknown",
+    campaignName: row.campaign || row.ad || "Unknown campaign",
+    spend: Number(row.spend || 0),
+    impressions: 0,
+    clicks: 0,
+    conversions: 0,
+    conversionValue: 0,
+    date: row.date,
+  }));
+
   return json({
     shop,
     nowMs: Date.now(),
-    campaigns: campaigns ?? [],
+    campaigns: transformedCampaigns,
     lastSyncedAt: googleConn?.lastSyncedAt ?? null,
     hasConnection,
   });
