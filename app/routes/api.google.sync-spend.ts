@@ -4,6 +4,7 @@ import { json } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { syncGoogleSpendDaily } from "~/services/googleAds.server";
+import { getValidGoogleToken } from "~/services/tokenRefresh.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   const result = await authenticate.admin(request);
@@ -21,11 +22,21 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, error: "No selected Google Ads customer ID (adCustomerId is null)" }, { status: 400 });
   }
 
-  const out = await syncGoogleSpendDaily({
-    shop,
-    accessToken: conn.accessToken,
-    customerId: conn.adCustomerId,
-  });
+  // Auto-refresh expired token
+  const tokenResult = await getValidGoogleToken(shop);
+  if (!tokenResult.ok) {
+    return json({ ok: false, error: tokenResult.reason }, { status: 401 });
+  }
 
-  return json({ ok: true, result: out });
+  try {
+    const out = await syncGoogleSpendDaily({
+      shop,
+      accessToken: tokenResult.accessToken,
+      customerId: conn.adCustomerId,
+    });
+
+    return json({ ok: true, result: out });
+  } catch (e: any) {
+    return json({ ok: false, error: e?.message || "Sync failed" }, { status: 500 });
+  }
 }
