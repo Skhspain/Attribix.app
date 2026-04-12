@@ -1,4 +1,4 @@
-// app/routes/app.meta-ads.tsx
+// app/routes/app.meta-ads.tsx — v2 banner removed
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useRevalidator } from "@remix-run/react";
 import { useMemo, useState } from "react";
