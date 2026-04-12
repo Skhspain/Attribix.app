@@ -1,7 +1,7 @@
 // app/routes/app.integrations.google.jsx
 import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { json } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { json, redirect } from "@remix-run/node";
+import { useLoaderData, Form } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -45,6 +45,22 @@ function getAppOrigin(request) {
     url.host;
 
   return `${proto}://${host}`;
+}
+
+export async function action({ request }) {
+  const { authenticate } = await import("../shopify.server");
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const form = await request.formData();
+  const intent = form.get("intent");
+
+  if (intent === "disconnect") {
+    const { db } = await import("../db.server");
+    await db.googleConnection.delete({ where: { shop } }).catch(() => null);
+    return json({ ok: true, disconnected: true });
+  }
+
+  return json({ ok: false });
 }
 
 export async function loader({ request }) {
@@ -291,6 +307,18 @@ function GoogleIntegrationsInner({ data }) {
                 <Button variant="primary" onClick={startGoogleOAuth}>
                   {data.connected ? "Reconnect Google Ads" : "Connect Google Ads"}
                 </Button>
+                {data.connected && (
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="disconnect" />
+                    <Button variant="secondary" tone="critical" submit onClick={(e) => {
+                      if (!confirm("Disconnect Google Ads? You'll need to reconnect to see ad data.")) {
+                        e.preventDefault();
+                      }
+                    }}>
+                      Disconnect
+                    </Button>
+                  </Form>
+                )}
               </InlineStack>
             </BlockStack>
           </Card>

@@ -1,7 +1,7 @@
 // app/routes/app.integrations.meta.jsx
 import React, { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useRevalidator, Form } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -42,6 +42,22 @@ function getAppOrigin(request) {
     request.headers.get("host") ||
     url.host;
   return `${proto}://${host}`;
+}
+
+export async function action({ request }) {
+  const { authenticate } = await import("./shopify.server").catch(() => import("../shopify.server"));
+  const { session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const form = await request.formData();
+  const intent = form.get("intent");
+
+  if (intent === "disconnect") {
+    const { db } = await import("../db.server");
+    await db.metaConnection.delete({ where: { shop } }).catch(() => null);
+    return json({ ok: true, disconnected: true });
+  }
+
+  return json({ ok: false });
 }
 
 export async function loader({ request }) {
@@ -359,6 +375,18 @@ function MetaIntegrationsInner({ data }) {
                 <Button variant="primary" onClick={startMetaOAuth}>
                   {connected ? "Reconnect Meta" : "Connect Meta"}
                 </Button>
+                {connected && (
+                  <Form method="post">
+                    <input type="hidden" name="intent" value="disconnect" />
+                    <Button variant="secondary" tone="critical" submit onClick={(e) => {
+                      if (!confirm("Disconnect Meta? You'll need to reconnect to see ad data and pixel tracking.")) {
+                        e.preventDefault();
+                      }
+                    }}>
+                      Disconnect
+                    </Button>
+                  </Form>
+                )}
               </InlineStack>
             </BlockStack>
           </Card>
