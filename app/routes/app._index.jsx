@@ -366,7 +366,7 @@ function InsightRow({ tone, icon, title, body }) {
 export default function AppIndex() {
   const data = useLoaderData();
   const navigate = useNavigate();
-  const currency = "NOK";
+  const currency = data.storeCurrency || "NOK";
 
   const roas = data.totalSpend > 0 ? data.rev30 / data.totalSpend : null;
   const metaRoas = data.metaKpis.spend > 0 ? data.metaKpis.value / data.metaKpis.spend : null;
@@ -482,6 +482,54 @@ export default function AppIndex() {
             </Grid.Cell>
           ))}
         </Grid>
+
+        {/* Shopify vs Ad Platform Sales Comparison */}
+        {(data.metaRev7 > 0 || data.googleRev7 > 0) && (
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h2" variant="headingSm">Shopify Sales vs Ad Platform Reported (7d)</Text>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "14px 16px" }}>
+                  <Text as="p" variant="bodySm" tone="subdued">Shopify Revenue</Text>
+                  <Text as="p" variant="headingLg">{fmt(data.rev7, currency)}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{data.orders7} orders</Text>
+                </div>
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "14px 16px" }}>
+                  <Text as="p" variant="bodySm" tone="subdued">Ad Platform Reported</Text>
+                  <Text as="p" variant="headingLg">{fmt((data.metaRev7 || 0) + (data.googleRev7 || 0), currency)}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Meta: {fmt(data.metaRev7 || 0, currency)} · Google: {fmt(data.googleRev7 || 0, currency)}
+                  </Text>
+                </div>
+                <div style={{
+                  background: Math.abs((data.metaRev7 || 0) + (data.googleRev7 || 0) - data.rev7) / Math.max(data.rev7, 1) > 0.2 ? "#fffbeb" : "#f0fdf4",
+                  border: `1px solid ${Math.abs((data.metaRev7 || 0) + (data.googleRev7 || 0) - data.rev7) / Math.max(data.rev7, 1) > 0.2 ? "#fde68a" : "#bbf7d0"}`,
+                  borderRadius: 8,
+                  padding: "14px 16px",
+                }}>
+                  <Text as="p" variant="bodySm" tone="subdued">Difference</Text>
+                  <Text as="p" variant="headingLg">
+                    {(() => {
+                      const adTotal = (data.metaRev7 || 0) + (data.googleRev7 || 0);
+                      const diff = adTotal - data.rev7;
+                      const pct = data.rev7 > 0 ? Math.round((diff / data.rev7) * 100) : 0;
+                      const sign = diff >= 0 ? "+" : "";
+                      return `${sign}${pct}%`;
+                    })()}
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {(() => {
+                      const adTotal = (data.metaRev7 || 0) + (data.googleRev7 || 0);
+                      if (adTotal > data.rev7) return "Ad platforms report more than Shopify (normal — they count view-through)";
+                      if (adTotal < data.rev7) return "Shopify has more revenue (organic/direct sales not from ads)";
+                      return "Numbers match closely";
+                    })()}
+                  </Text>
+                </div>
+              </div>
+            </BlockStack>
+          </Card>
+        )}
 
         {/* Feature Hub */}
         <Card>
