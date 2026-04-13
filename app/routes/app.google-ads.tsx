@@ -1,4 +1,5 @@
 // app/routes/app.google-ads.tsx
+import { SalesComparison } from "~/components/SalesComparison";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useRevalidator } from "@remix-run/react";
 import { useMemo, useState } from "react";
@@ -116,6 +117,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
     date: row.segments?.date ? new Date(row.segments.date + "T00:00:00Z").toISOString() : new Date().toISOString(),
   }));
 
+  // Shopify revenue for comparison
+  const since7 = new Date(); since7.setDate(since7.getDate() - 7); since7.setHours(0,0,0,0);
+  const shopifyPurchases7 = await db.purchase.findMany({
+    where: { shop, createdAt: { gte: since7 } },
+    select: { totalValue: true },
+  }).catch(() => []);
+  const shopifyRev7 = shopifyPurchases7.reduce((s: number, p: any) => s + Number(p.totalValue || 0), 0);
+  const shopifyOrders7 = shopifyPurchases7.length;
+
   return json({
     shop,
     nowMs: Date.now(),
@@ -124,6 +134,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     hasConnection,
     storeCurrency,
     adAccountCurrency,
+    shopifyRev7,
+    shopifyOrders7,
     exchangeRate: rate,
   });
 }
@@ -611,6 +623,15 @@ export default function GoogleAdsDetail() {
             )}
           </BlockStack>
         </Card>
+
+        {/* Shopify vs Google Sales Comparison */}
+        <SalesComparison
+          shopifyRevenue={data.shopifyRev7 || 0}
+          shopifyOrders={data.shopifyOrders7 || 0}
+          platformName="Google"
+          platformRevenue={kpis.value}
+          currency={data.storeCurrency || "NOK"}
+        />
 
       </BlockStack>
     </Page>

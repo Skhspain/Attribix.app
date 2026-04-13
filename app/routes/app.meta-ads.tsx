@@ -1,4 +1,5 @@
 // app/routes/app.meta-ads.tsx — v2 banner removed
+import { SalesComparison } from "~/components/SalesComparison";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useRevalidator } from "@remix-run/react";
 import { useMemo, useState } from "react";
@@ -46,6 +47,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const hasConnection = !!(metaConn && metaConn.accessToken && metaConn.accessToken !== "__PENDING__");
 
+  // Get Shopify revenue for comparison (7-day)
+  const since7 = new Date(); since7.setDate(since7.getDate() - 7); since7.setHours(0,0,0,0);
+  const [shopifyPurchases7, storeCurrencyRes] = await Promise.all([
+    db.purchase.findMany({
+      where: { shop, createdAt: { gte: since7 } },
+      select: { totalValue: true },
+    }).catch(() => []),
+    admin.graphql(`{ shop { currencyCode } }`).then((r: any) => r.json()).catch(() => null),
+  ]);
+  const shopifyRev7 = shopifyPurchases7.reduce((s: number, p: any) => s + Number(p.totalValue || 0), 0);
+  const shopifyOrders7 = shopifyPurchases7.length;
+  const storeCurrency = storeCurrencyRes?.data?.shop?.currencyCode || "NOK";
+
   return json({
     shop,
     nowMs: Date.now(),
@@ -54,6 +68,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     lastSyncedAt: metaConn?.lastSyncedAt ?? null,
     hasConnection,
     adAccountId: metaConn?.adAccountId ?? null,
+    shopifyRev7,
+    shopifyOrders7,
+    storeCurrency,
   });
 }
 
@@ -998,6 +1015,15 @@ export default function MetaAdsDetail() {
             </BlockStack>
           </div>
         </div>
+
+        {/* Shopify vs Meta Sales Comparison */}
+        <SalesComparison
+          shopifyRevenue={data.shopifyRev7 || 0}
+          shopifyOrders={data.shopifyOrders7 || 0}
+          platformName="Meta"
+          platformRevenue={metaKpis.value || 0}
+          currency={data.storeCurrency || "NOK"}
+        />
 
         {data.lastSyncedAt && (
           <Text as="p" variant="bodySm" tone="subdued" alignment="center">
