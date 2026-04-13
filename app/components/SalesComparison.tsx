@@ -23,6 +23,9 @@ export function SalesComparison({ shopifyRevenue, shopifyOrders, platformName, p
 
   const diff = platformRevenue - shopifyRevenue;
   const pct = shopifyRevenue > 0 ? Math.round((diff / shopifyRevenue) * 100) : 0;
+
+  // Only show when platform reports 20%+ more than Shopify
+  if (pct < 20) return null;
   const sign = diff >= 0 ? "+" : "";
   const bigGap = Math.abs(pct) > 20;
 

@@ -483,8 +483,12 @@ export default function AppIndex() {
           ))}
         </Grid>
 
-        {/* Shopify vs Ad Platform Sales Comparison */}
-        {(data.metaRev7 > 0 || data.googleRev7 > 0) && (
+        {/* Shopify vs Ad Platform Sales Comparison — only when platforms report 20%+ more */}
+        {(() => {
+          const adTotal = (data.metaRev7 || 0) + (data.googleRev7 || 0);
+          const pct = data.rev7 > 0 ? Math.round(((adTotal - data.rev7) / data.rev7) * 100) : 0;
+          return pct >= 20;
+        })() && (
           <Card>
             <BlockStack gap="300">
               <Text as="h2" variant="headingSm">Shopify Sales vs Ad Platform Reported (7d)</Text>
