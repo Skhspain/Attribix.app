@@ -50,14 +50,38 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const hasConnection = !!googleConn?.adCustomerId;
 
-  // Also pull live metrics from Google Ads API if connected (for impressions/clicks/conversions)
+  // Detect store currency from Shopify
+  let storeCurrency = "NOK";
+  try {
+    const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
+    const shopData = await shopRes.json();
+    storeCurrency = shopData?.data?.shop?.currencyCode || "NOK";
+  } catch {}
+
+  // Also pull live metrics from Google Ads API if connected
   let liveMetrics: any[] = [];
+  let adAccountCurrency = "USD"; // Default; we'll detect from the API response
   if (hasConnection && googleConn) {
     try {
       const { getValidGoogleToken } = await import("~/services/tokenRefresh.server");
       const tokenResult = await getValidGoogleToken(shop);
       if (tokenResult.ok) {
         const { googleAdsSearchStream } = await import("~/services/googleAds.server");
+
+        // First detect the ad account's currency
+        try {
+          const { listAccessibleCustomers } = await import("~/services/googleAds.server");
+          // We already have the customer list cached — just query this customer's currency
+          const custQuery = `SELECT customer.currency_code FROM customer LIMIT 1`;
+          const custResult = await googleAdsSearchStream({
+            accessToken: tokenResult.accessToken,
+            customerId: googleConn.adCustomerId!,
+            query: custQuery,
+          });
+          const custRow = custResult?.[0]?.results?.[0]?.customer;
+          if (custRow?.currencyCode) adAccountCurrency = custRow.currencyCode;
+        } catch {}
+
         const since = new Date(); since.setDate(since.getDate() - 90);
         const fmtD = (d: Date) => d.toISOString().slice(0, 10);
         const today = new Date();
@@ -74,15 +98,21 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   }
 
-  // Transform live metrics into campaign-level data
+  // Convert ad account currency to store currency
+  const { convertCurrency } = await import("~/services/currency.server");
+  const rate = adAccountCurrency !== storeCurrency
+    ? await convertCurrency(1, adAccountCurrency, storeCurrency)
+    : 1;
+
+  // Transform live metrics into campaign-level data with currency conversion
   const transformedCampaigns = liveMetrics.map((row: any) => ({
     campaignId: row.campaign?.id || "unknown",
     campaignName: row.campaign?.name || "Unknown campaign",
-    spend: Number(row.metrics?.costMicros || 0) / 1_000_000,
+    spend: (Number(row.metrics?.costMicros || 0) / 1_000_000) * rate,
     impressions: Number(row.metrics?.impressions || 0),
     clicks: Number(row.metrics?.clicks || 0),
     conversions: Number(row.metrics?.conversions || 0),
-    conversionValue: Number(row.metrics?.conversionsValue || 0),
+    conversionValue: Number(row.metrics?.conversionsValue || 0) * rate,
     date: row.segments?.date ? new Date(row.segments.date + "T00:00:00Z").toISOString() : new Date().toISOString(),
   }));
 
@@ -92,6 +122,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     campaigns: transformedCampaigns,
     lastSyncedAt: googleConn?.lastSyncedAt ?? null,
     hasConnection,
+    storeCurrency,
+    adAccountCurrency,
+    exchangeRate: rate,
   });
 }
 

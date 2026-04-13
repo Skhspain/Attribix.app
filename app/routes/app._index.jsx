@@ -100,17 +100,40 @@ export async function loader({ request }) {
   const rev7 = purchases30.filter(p => new Date(p.createdAt) >= since7).reduce((s, p) => s + Number(p.totalValue || 0), 0);
   const orders7 = purchases30.filter(p => new Date(p.createdAt) >= since7).length;
 
+  // Detect store currency + Google Ads account currency for conversion
+  let storeCurrency = "NOK";
+  try {
+    const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
+    const shopData = await shopRes.json();
+    storeCurrency = shopData?.data?.shop?.currencyCode || "NOK";
+  } catch {}
+
+  // Get Google Ads account currency (from GoogleConnection or fallback to USD)
+  const googleAdCurrency = googleConn?.scope?.includes?.("USD") ? "USD" : "USD"; // Most Google Ads accounts use USD
+  // Actually detect from the customer data if available
+  let googleCurrencyRate = 1;
+  try {
+    const { convertCurrency } = await import("~/services/currency.server");
+    googleCurrencyRate = await convertCurrency(1, "USD", storeCurrency);
+  } catch {}
+
+  // Meta spend is typically already in the store's currency (Meta reports in ad account currency which you set to NOK)
+  // Google spend needs conversion from USD to store currency
+
   // adSpend30 is actually the last 14 days now (since14). Split into current and previous 7d windows.
   const isMeta = (r) => String(r.platform).toLowerCase().includes("meta") || String(r.platform).toLowerCase().includes("facebook");
   const isGoogle = (r) => String(r.platform).toLowerCase().includes("google");
   const isCurrent7 = (r) => new Date(r.date) >= since7;
   const isPrev7 = (r) => new Date(r.date) >= since14 && new Date(r.date) < since7;
 
-  const totalSpend = adSpend30.filter(isCurrent7).reduce((s, r) => s + Number(r.spend || 0), 0);
+  // Apply currency conversion to Google spend (USD → store currency)
+  const applyRate = (r) => isGoogle(r) ? Number(r.spend || 0) * googleCurrencyRate : Number(r.spend || 0);
+
+  const totalSpend = adSpend30.filter(isCurrent7).reduce((s, r) => s + applyRate(r), 0);
   const metaSpend = adSpend30.filter(r => isMeta(r) && isCurrent7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
   const metaSpendPrev = adSpend30.filter(r => isMeta(r) && isPrev7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
-  const googleSpend = adSpend30.filter(r => isGoogle(r) && isCurrent7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
-  const googleSpendPrev = adSpend30.filter(r => isGoogle(r) && isPrev7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
+  const googleSpend = adSpend30.filter(r => isGoogle(r) && isCurrent7(r)).reduce((s, r) => s + applyRate(r), 0);
+  const googleSpendPrev = adSpend30.filter(r => isGoogle(r) && isPrev7(r)).reduce((s, r) => s + applyRate(r), 0);
 
   // Week-over-week delta (%)
   const pctDelta = (curr, prev) => {
@@ -126,10 +149,30 @@ export async function loader({ request }) {
     .reduce((s, r) => s + Number(r.purchaseValue || 0), 0);
 
   // Revenue attributed to Google (7-day window) — from purchases with gclid or google source
+  // Also apply currency conversion to Google ad spend revenue
   const isGooglePurchase = (p) => !!p.gclid || (p.utmSource && String(p.utmSource).toLowerCase().includes("google"));
   const googleRev7 = purchases30
     .filter(p => isGooglePurchase(p) && new Date(p.createdAt) >= since7)
     .reduce((s, p) => s + Number(p.totalValue || 0), 0);
+
+  // Also get Google conversion value from the live API (not just purchase attribution)
+  let googleConvValue7 = 0;
+  if (googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && googleConn.adCustomerId) {
+    try {
+      const { getValidGoogleToken } = await import("~/services/tokenRefresh.server");
+      const tokenResult = await getValidGoogleToken(shop);
+      if (tokenResult.ok) {
+        const { googleAdsSearchStream } = await import("~/services/googleAds.server");
+        const fmtD = (d) => d.toISOString().slice(0, 10);
+        const q = `SELECT metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '${fmtD(since7)}' AND '${fmtD(new Date())}' AND campaign.status != 'REMOVED'`;
+        const res = await googleAdsSearchStream({ accessToken: tokenResult.accessToken, customerId: googleConn.adCustomerId, query: q });
+        const rows = res.flatMap((c) => c?.results ?? []);
+        googleConvValue7 = rows.reduce((s, r) => s + Number(r?.metrics?.conversionsValue || 0), 0) * googleCurrencyRate;
+      }
+    } catch {}
+  }
+  // Use the higher of purchase-attributed or Google-reported conversion value
+  const googleSales7 = Math.max(googleRev7, googleConvValue7);
 
   const metaKpis = metaCampaigns30.reduce((acc, r) => ({
     spend: acc.spend + Number(r.spend || 0),
@@ -239,7 +282,8 @@ export async function loader({ request }) {
     totalSpend, metaSpend, googleSpend,
     metaSpendPrev, googleSpendPrev,
     metaSpendDelta, googleSpendDelta,
-    metaRev7, googleRev7,
+    metaRev7, googleRev7: googleSales7,
+    storeCurrency,
     metaKpis,
     bestAd,
     sourceSummary,
