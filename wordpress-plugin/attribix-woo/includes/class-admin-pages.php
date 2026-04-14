@@ -34,7 +34,7 @@ class Admin_Pages {
 			array( 'slug' => 'attribix-newsletter-templates', 'title' => 'Templates',          'file' => 'newsletter-templates', 'hidden' => true ),
 			array( 'slug' => 'attribix-flows',                'title' => 'Automation Flows',   'file' => 'flows' ),
 			array( 'slug' => 'attribix-reviews',              'title' => 'Reviews',            'file' => 'reviews' ),
-			array( 'slug' => 'attribix-review-settings',      'title' => 'Widget Settings',    'file' => 'review-settings', 'hidden' => true ),
+			array( 'slug' => 'attribix-review-settings',      'title' => 'Review Settings',    'file' => 'review-settings' ),
 			array( 'slug' => 'attribix-leads',                'title' => 'Lead Center',        'file' => 'leads' ),
 			array( 'slug' => 'attribix-seo',                  'title' => 'SEO Audit',          'file' => 'seo' ),
 			array( 'slug' => 'attribix-utm',                  'title' => 'UTM Builder',        'file' => 'utm' ),

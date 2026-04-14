@@ -39,13 +39,9 @@ if ( $filter !== 'all' ) {
 }
 ?>
 <div class="wrap ax-wrap">
-	<div class="ax-row">
-		<h1 style="display:flex;align-items:center;gap:10px;margin:0;">
-			<span style="font-size:24px;">⭐</span> Reviews
-		</h1>
-		<div class="ax-spacer"></div>
-		<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-review-settings' ) ); ?>" class="ax-btn">Widget Settings</a>
-	</div>
+	<h1 style="display:flex;align-items:center;gap:10px;">
+		<span style="font-size:24px;">⭐</span> Reviews
+	</h1>
 
 	<div class="ax-cards" style="grid-template-columns:repeat(4,1fr);">
 		<div class="ax-card">
@@ -64,6 +60,16 @@ if ( $filter !== 'all' ) {
 			<p class="ax-card-label">Approved</p>
 			<p class="ax-card-value" style="color:#16a34a;"><?php echo (int) ( $stats['approved'] ?? 0 ); ?></p>
 		</div>
+	</div>
+
+	<!-- Action Buttons -->
+	<div style="display:flex;gap:12px;margin:20px 0;">
+		<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-review-settings' ) ); ?>" style="display:inline-flex;align-items:center;gap:8px;padding:12px 24px;background:#6366f1;color:#fff;border-radius:8px;font-size:15px;font-weight:600;text-decoration:none;transition:background 0.15s;" onmouseenter="this.style.background='#4f46e5'" onmouseleave="this.style.background='#6366f1'">
+			🎨 Customize Widget
+		</a>
+		<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-newsletter-templates' ) ); ?>" style="display:inline-flex;align-items:center;gap:8px;padding:12px 24px;background:#16a34a;color:#fff;border-radius:8px;font-size:15px;font-weight:600;text-decoration:none;transition:background 0.15s;" onmouseenter="this.style.background='#15803d'" onmouseleave="this.style.background='#16a34a'">
+			📧 Send Review Request
+		</a>
 	</div>
 
 	<!-- Filter -->

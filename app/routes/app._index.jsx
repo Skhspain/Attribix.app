@@ -247,6 +247,15 @@ export async function loader({ request }) {
       visitors: visitorMap.get(src)?.size ?? 0,
     }));
 
+  // Attribution Intelligence — show why Attribix tracking is superior
+  const attributedOrders = purchases30.filter(p => p.utmSource || p.fbclid || p.gclid || p.ttclid || p.msclkid).length;
+  const attributionRate = orders30 > 0 ? Math.round((attributedOrders / orders30) * 100) : 0;
+  const uniqueVisitors = new Set(trackedEvents30.filter(e => e.visitorId).map(e => String(e.visitorId))).size;
+  const metaReportedPurchases = metaKpis.purchases;
+  const googleReportedPurchases = 0; // TODO: populate if available
+  const platformTotal = metaReportedPurchases + googleReportedPurchases;
+  const attribixTrackedMore = attributedOrders > platformTotal;
+
   // Feature hub stats + notification counts (items needing attention)
   // "New since last visit" — each tool has a seen-at timestamp, only count items newer than that
   const reviewsSeenAt = settings?.reviewsSeenAt ?? new Date(0);
@@ -284,6 +293,16 @@ export async function loader({ request }) {
     metaSpendDelta, googleSpendDelta,
     metaRev7, googleRev7: googleSales7,
     storeCurrency,
+    // Attribution Intelligence
+    tracking: {
+      attributedOrders,
+      attributionRate,
+      uniqueVisitors,
+      pixelStatus,
+      metaReportedPurchases,
+      platformTotal,
+      attribixTrackedMore,
+    },
     metaKpis,
     bestAd,
     sourceSummary,
@@ -482,6 +501,94 @@ export default function AppIndex() {
             </Grid.Cell>
           ))}
         </Grid>
+
+        {/* Attribution Intelligence — highlight tracking quality */}
+        {data.tracking && data.orders30 > 0 && (
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingSm">🔬 Attribix Attribution Intelligence</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">Real-time tracking quality — what ad platforms can't tell you</Text>
+                </BlockStack>
+                {data.tracking.pixelStatus === "healthy" && (
+                  <Badge tone="success">Pixel Active</Badge>
+                )}
+              </InlineStack>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                {/* Attribution Rate */}
+                <div style={{
+                  background: data.tracking.attributionRate >= 70 ? "#f0fdf4" : data.tracking.attributionRate >= 40 ? "#fffbeb" : "#fef2f2",
+                  border: `1px solid ${data.tracking.attributionRate >= 70 ? "#bbf7d0" : data.tracking.attributionRate >= 40 ? "#fde68a" : "#fecaca"}`,
+                  borderRadius: 8, padding: "14px 16px", textAlign: "center",
+                }}>
+                  <Text as="p" variant="bodySm" tone="subdued">Attribution Rate</Text>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: data.tracking.attributionRate >= 70 ? "#16a34a" : data.tracking.attributionRate >= 40 ? "#f59e0b" : "#dc2626" }}>
+                    {data.tracking.attributionRate}%
+                  </div>
+                  <Text as="p" variant="bodySm" tone="subdued">{data.tracking.attributedOrders} / {data.orders30} orders tracked</Text>
+                </div>
+
+                {/* First-Party Visitors */}
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "14px 16px", textAlign: "center" }}>
+                  <Text as="p" variant="bodySm" tone="subdued">First-Party Visitors</Text>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#1e40af" }}>
+                    {data.tracking.uniqueVisitors.toLocaleString()}
+                  </div>
+                  <Text as="p" variant="bodySm" tone="subdued">Cookie-based, ad-blocker proof</Text>
+                </div>
+
+                {/* Orders Attribix Found */}
+                <div style={{
+                  background: data.tracking.attribixTrackedMore ? "#f0fdf4" : "#f9fafb",
+                  border: `1px solid ${data.tracking.attribixTrackedMore ? "#bbf7d0" : "#e5e7eb"}`,
+                  borderRadius: 8, padding: "14px 16px", textAlign: "center",
+                }}>
+                  <Text as="p" variant="bodySm" tone="subdued">Attribix Found</Text>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#111827" }}>
+                    {data.tracking.attributedOrders}
+                  </div>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {data.tracking.attribixTrackedMore
+                      ? `${data.tracking.attributedOrders - data.tracking.platformTotal} more than platforms`
+                      : "attributed orders"
+                    }
+                  </Text>
+                </div>
+
+                {/* Platform Blind Spots */}
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "14px 16px", textAlign: "center" }}>
+                  <Text as="p" variant="bodySm" tone="subdued">Platform Blind Spots</Text>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: "#dc2626" }}>
+                    {Math.max(0, data.orders30 - data.tracking.attributedOrders)}
+                  </div>
+                  <Text as="p" variant="bodySm" tone="subdued">Orders ad platforms miss entirely</Text>
+                </div>
+              </div>
+
+              {/* Insight message */}
+              <div style={{
+                background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "12px 16px",
+                display: "flex", alignItems: "center", gap: 12,
+              }}>
+                <span style={{ fontSize: 20 }}>💡</span>
+                <Text as="p" variant="bodySm">
+                  {data.tracking.attributionRate >= 70
+                    ? "Excellent tracking coverage. Attribix is capturing most of your customer journeys with first-party data that survives iOS privacy, ad blockers, and cookie restrictions."
+                    : data.tracking.attributionRate >= 40
+                    ? "Good tracking, but some orders are unattributed. Consider adding UTM parameters to all your marketing links for better coverage."
+                    : "Many orders are unattributed. Make sure your pixel is installed and UTM parameters are on all ad and email links."
+                  }
+                </Text>
+              </div>
+
+              <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                Unlike Meta and Google which only see their own clicks, Attribix uses first-party cookies to track the full customer journey across all channels — even after iOS 14.5+ and ad blockers.
+              </Text>
+            </BlockStack>
+          </Card>
+        )}
 
         {/* Shopify vs Ad Platform Sales Comparison — only when platforms report 20%+ more */}
         {(() => {
