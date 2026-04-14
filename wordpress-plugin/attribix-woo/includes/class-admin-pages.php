@@ -23,19 +23,24 @@ class Admin_Pages {
 
 	public static function register_menus() {
 		$pages = array(
-			array( 'slug' => 'attribix-dashboard',     'title' => 'Dashboard',        'file' => 'dashboard' ),
-			array( 'slug' => 'attribix-meta-ads',      'title' => 'Meta Ads',         'file' => 'meta-ads' ),
-			array( 'slug' => 'attribix-google-ads',    'title' => 'Google Ads',       'file' => 'google-ads' ),
-			array( 'slug' => 'attribix-attribution',   'title' => 'Attribution',      'file' => 'attribution' ),
-			array( 'slug' => 'attribix-products',      'title' => 'Products',         'file' => 'products' ),
-			array( 'slug' => 'attribix-orders',        'title' => 'Orders',           'file' => 'orders' ),
-			array( 'slug' => 'attribix-newsletter',    'title' => 'Newsletter',       'file' => 'newsletter' ),
-			array( 'slug' => 'attribix-reviews',       'title' => 'Reviews',          'file' => 'reviews' ),
-			array( 'slug' => 'attribix-leads',         'title' => 'Lead Center',      'file' => 'leads' ),
-			array( 'slug' => 'attribix-seo',           'title' => 'SEO Audit',        'file' => 'seo' ),
-			array( 'slug' => 'attribix-utm',           'title' => 'UTM Builder',      'file' => 'utm' ),
-			array( 'slug' => 'attribix-feeds',         'title' => 'Product Feeds',    'file' => 'feeds' ),
-			array( 'slug' => 'attribix-billing',       'title' => 'Billing',          'file' => 'billing' ),
+			array( 'slug' => 'attribix-dashboard',            'title' => 'Dashboard',          'file' => 'dashboard' ),
+			array( 'slug' => 'attribix-meta-ads',             'title' => 'Meta Ads',           'file' => 'meta-ads' ),
+			array( 'slug' => 'attribix-google-ads',           'title' => 'Google Ads',         'file' => 'google-ads' ),
+			array( 'slug' => 'attribix-attribution',          'title' => 'Attribution',        'file' => 'attribution' ),
+			array( 'slug' => 'attribix-products',             'title' => 'Products',           'file' => 'products' ),
+			array( 'slug' => 'attribix-orders',               'title' => 'Orders',             'file' => 'orders' ),
+			array( 'slug' => 'attribix-newsletter',           'title' => 'Newsletter',         'file' => 'newsletter' ),
+			array( 'slug' => 'attribix-newsletter-editor',    'title' => 'Newsletter Editor',  'file' => 'newsletter-editor', 'hidden' => true ),
+			array( 'slug' => 'attribix-newsletter-templates', 'title' => 'Templates',          'file' => 'newsletter-templates', 'hidden' => true ),
+			array( 'slug' => 'attribix-flows',                'title' => 'Automation Flows',   'file' => 'flows' ),
+			array( 'slug' => 'attribix-reviews',              'title' => 'Reviews',            'file' => 'reviews' ),
+			array( 'slug' => 'attribix-review-settings',      'title' => 'Widget Settings',    'file' => 'review-settings', 'hidden' => true ),
+			array( 'slug' => 'attribix-leads',                'title' => 'Lead Center',        'file' => 'leads' ),
+			array( 'slug' => 'attribix-seo',                  'title' => 'SEO Audit',          'file' => 'seo' ),
+			array( 'slug' => 'attribix-utm',                  'title' => 'UTM Builder',        'file' => 'utm' ),
+			array( 'slug' => 'attribix-feeds',                'title' => 'Product Feeds',      'file' => 'feeds' ),
+			array( 'slug' => 'attribix-buy-now',              'title' => 'Buy Now Button',     'file' => 'buy-now' ),
+			array( 'slug' => 'attribix-billing',              'title' => 'Billing',            'file' => 'billing' ),
 		);
 
 		// First submenu replaces parent page
@@ -79,19 +84,24 @@ class Admin_Pages {
 
 		// Map screen ID to page file
 		$map = array(
-			'toplevel_page_attribix-woo'           => 'dashboard',
-			'attribix_page_attribix-meta-ads'      => 'meta-ads',
-			'attribix_page_attribix-google-ads'    => 'google-ads',
-			'attribix_page_attribix-attribution'   => 'attribution',
-			'attribix_page_attribix-products'      => 'products',
-			'attribix_page_attribix-orders'        => 'orders',
-			'attribix_page_attribix-newsletter'    => 'newsletter',
-			'attribix_page_attribix-reviews'       => 'reviews',
-			'attribix_page_attribix-leads'         => 'leads',
-			'attribix_page_attribix-seo'           => 'seo',
-			'attribix_page_attribix-utm'           => 'utm',
-			'attribix_page_attribix-feeds'         => 'feeds',
-			'attribix_page_attribix-billing'       => 'billing',
+			'toplevel_page_attribix-woo'                    => 'dashboard',
+			'attribix_page_attribix-meta-ads'               => 'meta-ads',
+			'attribix_page_attribix-google-ads'             => 'google-ads',
+			'attribix_page_attribix-attribution'            => 'attribution',
+			'attribix_page_attribix-products'               => 'products',
+			'attribix_page_attribix-orders'                 => 'orders',
+			'attribix_page_attribix-newsletter'             => 'newsletter',
+			'attribix_page_attribix-newsletter-editor'      => 'newsletter-editor',
+			'attribix_page_attribix-newsletter-templates'   => 'newsletter-templates',
+			'attribix_page_attribix-flows'                  => 'flows',
+			'attribix_page_attribix-reviews'                => 'reviews',
+			'attribix_page_attribix-review-settings'        => 'review-settings',
+			'attribix_page_attribix-leads'                  => 'leads',
+			'attribix_page_attribix-seo'                    => 'seo',
+			'attribix_page_attribix-utm'                    => 'utm',
+			'attribix_page_attribix-feeds'                  => 'feeds',
+			'attribix_page_attribix-buy-now'                => 'buy-now',
+			'attribix_page_attribix-billing'                => 'billing',
 		);
 
 		$page_file = isset( $map[ $slug ] ) ? $map[ $slug ] : 'dashboard';
@@ -102,6 +112,12 @@ class Admin_Pages {
 		} else {
 			echo '<div class="wrap"><h1>Attribix</h1><p>Page coming soon.</p></div>';
 		}
+
+		// Referral footer on every page
+		echo '<div style="text-align:center;margin:40px 0 20px;padding:20px;border-top:1px solid #e5e7eb;">';
+		echo '<p style="color:#9ca3af;font-size:13px;margin:0;">Powered by <a href="https://attribix.app" target="_blank" style="color:#6366f1;text-decoration:none;font-weight:600;">Attribix</a></p>';
+		echo '<p style="color:#6b7280;font-size:12px;margin:6px 0 0;">Want to work with us? <a href="https://attribix.app/partners" target="_blank" style="color:#6366f1;text-decoration:underline;">Become a partner →</a></p>';
+		echo '</div>';
 	}
 
 	private static function global_css() {

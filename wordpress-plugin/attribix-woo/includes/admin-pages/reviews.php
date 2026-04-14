@@ -39,9 +39,13 @@ if ( $filter !== 'all' ) {
 }
 ?>
 <div class="wrap ax-wrap">
-	<h1 style="display:flex;align-items:center;gap:10px;">
-		<span style="font-size:24px;">⭐</span> Reviews
-	</h1>
+	<div class="ax-row">
+		<h1 style="display:flex;align-items:center;gap:10px;margin:0;">
+			<span style="font-size:24px;">⭐</span> Reviews
+		</h1>
+		<div class="ax-spacer"></div>
+		<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-review-settings' ) ); ?>" class="ax-btn">Widget Settings</a>
+	</div>
 
 	<div class="ax-cards" style="grid-template-columns:repeat(4,1fr);">
 		<div class="ax-card">

@@ -19,9 +19,14 @@ $tab = isset( $_GET['subtab'] ) ? sanitize_key( $_GET['subtab'] ) : 'subscribers
 $base_url = admin_url( 'admin.php?page=attribix-newsletter' );
 ?>
 <div class="wrap ax-wrap">
-	<h1 style="display:flex;align-items:center;gap:10px;">
-		<span style="font-size:24px;">📧</span> Newsletter
-	</h1>
+	<div class="ax-row">
+		<h1 style="display:flex;align-items:center;gap:10px;margin:0;">
+			<span style="font-size:24px;">📧</span> Newsletter
+		</h1>
+		<div class="ax-spacer"></div>
+		<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-newsletter-templates' ) ); ?>" class="ax-btn ax-btn-primary">+ New Newsletter</a>
+		<a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-flows' ) ); ?>" class="ax-btn">Automation Flows</a>
+	</div>
 
 	<!-- KPI Cards -->
 	<div class="ax-cards" style="grid-template-columns:repeat(4,1fr);">
