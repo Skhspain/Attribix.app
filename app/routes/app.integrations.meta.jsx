@@ -314,8 +314,8 @@ function MetaIntegrationsInner({ data }) {
         }
       }, 1000);
     } else {
-      // Popup blocked — fall back to redirect
-      try { window.top.location.href = startUrl; } catch { window.location.href = startUrl; }
+      // Popup blocked — top-level redirect (App Bridge-compatible when embedded)
+      window.open(startUrl, "_top");
     }
   }
 
