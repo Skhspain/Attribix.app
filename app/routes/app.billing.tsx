@@ -4,6 +4,7 @@
 
 import { json, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useEffect } from "react";
 import { authenticate } from "~/shopify.server";
 import { setCachedPlan, type PlanId } from "~/services/plan.server";
 import {
@@ -105,8 +106,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
         }
       }
     `);
-    const json = await res.json();
-    const subs = json?.data?.appInstallation?.activeSubscriptions ?? [];
+    const body = await res.json();
+    const subs = body?.data?.appInstallation?.activeSubscriptions ?? [];
     if (subs.length > 0) {
       const sub = subs[0];
       subscriptionId = sub.id;
@@ -168,8 +169,8 @@ export async function action({ request }: ActionFunctionArgs) {
       },
     });
 
-    const json = await res.json();
-    const result = json?.data?.appSubscriptionCreate;
+    const gql = await res.json();
+    const result = gql?.data?.appSubscriptionCreate;
     const errors = result?.userErrors ?? [];
 
     if (errors.length > 0) {
@@ -198,10 +199,13 @@ export default function BillingPage() {
 
   const isLoading = fetcher.state !== "idle";
 
-  // If we get a confirmationUrl back, redirect there (App Bridge aware)
-  if (fetcher.data?.confirmationUrl) {
-    window.top ? window.top.location.href = fetcher.data.confirmationUrl : window.location.href = fetcher.data.confirmationUrl;
-  }
+  useEffect(() => {
+    const confirmationUrl = (fetcher.data as any)?.confirmationUrl;
+    if (!confirmationUrl) return;
+    // Break out of the embedded iframe to Shopify's charge-approval page.
+    // Using _top is App Bridge-compatible and works when third-party cookies are blocked.
+    window.open(confirmationUrl, "_top");
+  }, [fetcher.data]);
 
   function handleSubscribe(planId: string) {
     fetcher.submit({ intent: "subscribe", planId }, { method: "post", encType: "application/json" });

@@ -115,7 +115,7 @@ export default function Index() {
           </p>
           <a
             className="cta"
-            href="https://apps.shopify.com"
+            href="https://apps.shopify.com/attribix-app"
           >
             Install on Shopify
           </a>

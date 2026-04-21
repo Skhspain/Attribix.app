@@ -20,7 +20,7 @@ shop_deletion_url = "https://attribix-app.fly.dev/webhooks/gdpr/shop_redact"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_customer_events,read_customers,read_orders,read_products,write_app_proxy,write_pixels,write_products,read_script_tags,write_script_tags"
+scopes = "read_customer_events,read_orders,read_products,write_app_proxy,write_pixels,read_script_tags,write_script_tags"
 
 [auth]
 redirect_urls = [
