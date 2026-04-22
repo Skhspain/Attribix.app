@@ -615,7 +615,6 @@ export default function AppIndex() {
                   { icon: "🔌", title: "Integrations", lines: [{ text: "Meta, Google, Stripe", muted: true }], url: "/app/ads" },
                   { icon: "🏷️", title: "UTM Builder", lines: [{ text: "Create tracked links", muted: true }], url: "/app/settings" },
                   { icon: "🛒", title: "Buy Now Button", lines: [{ text: data.pixelStatus === "healthy" ? "Active" : "Inactive", muted: true }], url: "/app/buy-now" },
-                  { icon: "💳", title: "Billing", lines: [{ text: "Plans & subscription", muted: true }], url: "/app/billing" },
                 ];
 
                 return items.map(item => {
