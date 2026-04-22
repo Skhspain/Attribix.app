@@ -39,6 +39,12 @@ $aov       = $data['aov'] ?? 0;
 $spend     = $data['spend'] ?? 0;
 $roas      = $data['roas'] ?? 0;
 $visitors  = $data['visitors'] ?? 0;
+// Fallback: sum visitors from sources if top-level is 0
+if ( $visitors === 0 && ! empty( $data['sources'] ) ) {
+	foreach ( $data['sources'] as $s ) {
+		$visitors += (int) ( $s['visitors'] ?? $s['count'] ?? 0 );
+	}
+}
 $sources   = $data['sources'] ?? array();
 $recent    = $data['recentOrders'] ?? array();
 $currency  = $data['currency'] ?? get_woocommerce_currency();
@@ -88,7 +94,45 @@ $cur = $currency;
 		<div class="ax-card"><p class="ax-card-label">Visitors</p><p class="ax-card-value"><?php echo (int) $visitors; ?></p></div>
 	</div>
 
-	<!-- Shopify vs Ad Platform Sales Comparison (only when platforms report 20%+ more) -->
+	<!-- Attribution Intelligence (simple) -->
+	<?php
+	$attributed = 0;
+	foreach ( $recent as $o ) {
+		if ( ! empty( $o['utmSource'] ) || ! empty( $o['fbclid'] ) || ! empty( $o['gclid'] ) ) $attributed++;
+	}
+	$attr_rate = $orders > 0 ? round( ( $attributed / min( $orders, count( $recent ) ) ) * 100 ) : 0;
+	$attr_color = $attr_rate >= 70 ? '#16a34a' : ( $attr_rate >= 40 ? '#f59e0b' : '#dc2626' );
+	$attr_bg = $attr_rate >= 70 ? '#f0fdf4' : ( $attr_rate >= 40 ? '#fffbeb' : '#fef2f2' );
+	$attr_border = $attr_rate >= 70 ? '#bbf7d0' : ( $attr_rate >= 40 ? '#fde68a' : '#fecaca' );
+	if ( $visitors > 0 || $orders > 0 ) :
+	?>
+	<div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:16px 20px;margin:16px 0;display:flex;align-items:center;gap:16px;">
+		<div style="text-align:center;min-width:80px;">
+			<div style="font-size:32px;font-weight:800;color:#1e40af;"><?php echo (int) $visitors; ?></div>
+			<div style="font-size:11px;color:#6b7280;">visitors tracked</div>
+		</div>
+		<div style="flex:1;">
+			<div style="font-weight:600;font-size:14px;color:#111827;">🔬 Attribix Tracking Active</div>
+			<div style="font-size:13px;color:#374151;margin-top:2px;">
+				<?php if ( $visitors > 0 && $orders > 0 ) : ?>
+					Tracking <?php echo (int) $visitors; ?> visitors and <?php echo (int) $orders; ?> orders using first-party cookies — data that survives iOS 14.5+, ad blockers, and cookie restrictions. Unlike Meta and Google, Attribix sees the full journey.
+				<?php elseif ( $visitors > 0 ) : ?>
+					Attribix is actively tracking visitors using first-party cookies. This data survives iOS 14.5+, ad blockers, and cookie restrictions — giving you attribution data that Meta and Google can't provide.
+				<?php else : ?>
+					Tracking is set up. Visitors will appear here as they browse your store. Attribix uses first-party cookies for attribution that ad platforms can't match.
+				<?php endif; ?>
+			</div>
+		</div>
+		<?php if ( $orders > 0 && $attr_rate > 0 ) : ?>
+			<div style="text-align:right;min-width:100px;">
+				<div style="font-size:24px;font-weight:800;color:<?php echo $attr_color; ?>;"><?php echo $attr_rate; ?>%</div>
+				<div style="font-size:11px;color:#6b7280;">orders attributed</div>
+			</div>
+		<?php endif; ?>
+	</div>
+	<?php endif; ?>
+
+	<!-- Store vs Ad Platform Sales Comparison (only when platforms report 20%+ more) -->
 	<?php
 	$ad_total_rev = $meta_revenue + $google_revenue;
 	$shopify_rev7 = $data['rev7'] ?? $revenue; // fallback to 30d if 7d not available
