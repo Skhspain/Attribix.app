@@ -31,10 +31,11 @@ export default function AuthSessionToken() {
     // Break out of iframe and reload top-level
     if (typeof window === "undefined") return;
 
-    const topWindow: Window = window.top ?? window;
-
+    // App Bridge-compatible top-level redirect. Using window.open with _top
+    // target works even when third-party cookies are blocked, which direct
+    // topWindow.location.href assignment does not.
     try {
-      topWindow.location.href = reload;
+      window.open(reload, "_top");
     } catch {
       window.location.href = reload;
     }

@@ -130,8 +130,8 @@ function GoogleIntegrationsInner({ data }) {
     // Route through www.attribix.app to avoid Chrome lookalike warning on attribix-app.fly.dev
     const startUrl = `https://www.attribix.app/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(returnTo)}`;
 
-    const topWindow = window.top ?? window;
-    topWindow.location.href = startUrl;
+    // App Bridge-compatible top-level redirect (works when third-party cookies are blocked)
+    window.open(startUrl, "_top");
   }
 
   async function loadAdAccounts() {
