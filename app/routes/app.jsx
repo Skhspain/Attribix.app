@@ -7,9 +7,15 @@ import shopify, { authenticate } from "~/shopify.server";
 const APP_BASE = (process.env.SHOPIFY_APP_URL || "https://api.attribix.app").replace(/\/$/, "");
 const WIDGET_SRC = `${APP_BASE}/reviews/widget.js`;
 
-async function ensureScriptTags(admin, shop) {
-  const PIXEL_SRC = `${APP_BASE}/pixel/loader.js?shop=${encodeURIComponent(shop)}`;
-
+// Meta Pixel browser-side tracking is handled by the attribix-pixel web pixel
+// extension (extensions/attribix-pixel), which forwards events to the backend
+// for server-side Meta CAPI delivery. We no longer register a browser ScriptTag
+// for the Meta pixel — that path was redundant with the web pixel extension.
+//
+// The reviews widget is still ScriptTag-based until migrated to a theme app
+// extension block. Once migrated, this function + the read_script_tags /
+// write_script_tags scopes can be removed entirely.
+async function ensureScriptTags(admin) {
   try {
     const existing = await admin.graphql(`
       { scriptTags(first: 20) { edges { node { id src } } } }
@@ -18,17 +24,10 @@ async function ensureScriptTags(admin, shop) {
     const tags = body?.data?.scriptTags?.edges ?? [];
     const existingSrcs = tags.map((e) => e.node.src);
 
-    // Register widget if missing
+    // Register reviews widget if missing
     if (!existingSrcs.some((s) => s.includes("reviews/widget"))) {
       await admin.graphql(`
         mutation { scriptTagCreate(input: { src: "${WIDGET_SRC}", displayScope: ALL }) { scriptTag { id } userErrors { message } } }
-      `);
-    }
-
-    // Register pixel loader if missing
-    if (!existingSrcs.some((s) => s.includes("pixel/loader"))) {
-      await admin.graphql(`
-        mutation { scriptTagCreate(input: { src: "${PIXEL_SRC}", displayScope: ALL }) { scriptTag { id } userErrors { message } } }
       `);
     }
   } catch (e) {
@@ -39,7 +38,7 @@ async function ensureScriptTags(admin, shop) {
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
   await shopify.registerWebhooks({ session });
-  await ensureScriptTags(admin, session.shop);
+  await ensureScriptTags(admin);
 
   return json({
     apiKey:

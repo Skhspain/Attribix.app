@@ -21,13 +21,11 @@ import {
 import { authenticate } from "~/shopify.server";
 
 async function getCurrentShop(request) {
-  try {
-    const { session } = await authenticate.admin(request);
-    return session.shop;
-  } catch {
-    const url = new URL(request.url);
-    return url.searchParams.get("shop") || "attribix-com.myshopify.com";
-  }
+  // Never fall back to a hardcoded shop — that would leak another merchant's
+  // settings on any auth failure. If the session is missing, the
+  // authenticate.admin call re-throws a redirect/401 which Remix will handle.
+  const { session } = await authenticate.admin(request);
+  return session.shop;
 }
 
 export const loader = async ({ request }) => {

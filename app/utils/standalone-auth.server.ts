@@ -240,13 +240,19 @@ export function standaloneCors(request: Request, response: Response): Response {
     "http://localhost:3001",
   ];
 
-  // Allow any origin for API key auth (WooCommerce sites can be on any domain)
+  // Allow any origin for API key auth (WooCommerce sites can be on any domain).
+  // Important: credentials are DISABLED for this path because API key auth is
+  // bearer-style and doesn't need cookies. Allowing credentials + reflected
+  // origin together would create a CSRF/cookie-leak vector where a malicious
+  // site could read authenticated responses. With credentials disabled, the
+  // origin reflection is safe — an attacker would still need a valid API key
+  // to call these endpoints.
   const hasApiKey = request.headers.get("X-Api-Key") || new URL(request.url).searchParams.get("apiKey");
   if (hasApiKey && origin) {
     response.headers.set("Access-Control-Allow-Origin", origin);
     response.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     response.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Account-Id, X-Api-Key, X-Shop");
-    response.headers.set("Access-Control-Allow-Credentials", "true");
+    response.headers.set("Access-Control-Allow-Credentials", "false");
     return response;
   }
 
