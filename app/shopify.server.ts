@@ -18,6 +18,10 @@ const shopify = shopifyApp({
   distribution: AppDistribution.AppStore,
   sessionStorage: new PrismaSessionStorage(prisma),
   webhooks: {
+    // Non-compliance webhooks registered via shopifyApp. GDPR/privacy
+    // compliance webhooks live ONLY in shopify.app.toml under
+    // [webhooks.privacy_compliance] — registering them in both places
+    // causes duplicate deliveries per Shopify guidance.
     APP_UNINSTALLED: {
       deliveryMethod: DeliveryMethod.Http,
       callbackUrl: "/webhooks/app/uninstalled",
@@ -25,18 +29,6 @@ const shopify = shopifyApp({
     ORDERS_CREATE: {
       deliveryMethod: DeliveryMethod.Http,
       callbackUrl: "/webhooks/orders_create",
-    },
-    CUSTOMERS_DATA_REQUEST: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/gdpr/customers_data_request",
-    },
-    CUSTOMERS_REDACT: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/gdpr/customers_redact",
-    },
-    SHOP_REDACT: {
-      deliveryMethod: DeliveryMethod.Http,
-      callbackUrl: "/webhooks/gdpr/shop_redact",
     },
   },
   future: {
