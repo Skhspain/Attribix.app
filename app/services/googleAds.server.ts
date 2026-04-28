@@ -268,10 +268,10 @@ export async function syncGoogleSpendDaily(args: {
           shop: args.shop,
           platform: "google",
           date,
-          campaign: campaignName,
-          spend,
+          campaign: agg.campaignName,
+          spend: agg.spend,
           adset: null,
-          ad: campaignId,
+          ad: agg.campaignId,
         },
       });
       upserted++;

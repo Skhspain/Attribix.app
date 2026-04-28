@@ -1021,7 +1021,7 @@ export default function MetaAdsDetail() {
           shopifyRevenue={data.shopifyRev7 || 0}
           shopifyOrders={data.shopifyOrders7 || 0}
           platformName="Meta"
-          platformRevenue={metaKpis.value || 0}
+          platformRevenue={kpis.value || 0}
           currency={data.storeCurrency || "NOK"}
         />
 
