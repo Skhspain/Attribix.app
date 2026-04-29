@@ -369,16 +369,82 @@ export default function GoogleAdsDetail() {
           </div>
         )}
 
-        {/* Setup banners — split by state so the user knows what to do next */}
+        {/* Setup CTA — prominent card so users can't miss the next step */}
         {!data.oauthDone && (
-          <Banner tone="info" action={{ content: "Connect Google Ads", url: "/app/integrations/google" }}>
-            <p>Step 1 of 2: connect Google Ads via OAuth.</p>
-          </Banner>
+          <div style={{
+            background: "linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)",
+            border: "2px solid #3b82f6",
+            borderRadius: 16,
+            padding: 32,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 24,
+            flexWrap: "wrap",
+          }}>
+            <div style={{ flex: "1 1 320px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#1d4ed8", letterSpacing: 1, marginBottom: 4 }}>
+                STEP 1 OF 2
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>
+                Connect Google Ads
+              </div>
+              <div style={{ fontSize: 14, color: "#475569" }}>
+                Sign in with Google to grant Attribix read access to your campaigns.
+              </div>
+            </div>
+            <a href="/app/integrations/google" style={{
+              background: "#1d4ed8",
+              color: "#ffffff",
+              padding: "14px 28px",
+              borderRadius: 10,
+              fontSize: 16,
+              fontWeight: 600,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+              boxShadow: "0 4px 12px rgba(29, 78, 216, 0.3)",
+            }}>
+              Connect Google Ads →
+            </a>
+          </div>
         )}
         {data.oauthDone && !data.customerSelected && (
-          <Banner tone="warning" action={{ content: "Pick ad account", url: "/app/integrations/google" }}>
-            <p>Step 2 of 2: connected to Google, but no ad account selected yet. Open the integration page, click <strong>Refresh ad accounts</strong>, pick yours, and Save.</p>
-          </Banner>
+          <div style={{
+            background: "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)",
+            border: "2px solid #f59e0b",
+            borderRadius: 16,
+            padding: 32,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 24,
+            flexWrap: "wrap",
+          }}>
+            <div style={{ flex: "1 1 320px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#b45309", letterSpacing: 1, marginBottom: 4 }}>
+                ALMOST THERE — STEP 2 OF 2
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>
+                Pick your Google Ads account
+              </div>
+              <div style={{ fontSize: 14, color: "#78350f" }}>
+                You're connected to Google, but you haven't told Attribix which ad account to sync from. This takes 10 seconds.
+              </div>
+            </div>
+            <a href="/app/integrations/google" style={{
+              background: "#b45309",
+              color: "#ffffff",
+              padding: "14px 28px",
+              borderRadius: 10,
+              fontSize: 16,
+              fontWeight: 600,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+              boxShadow: "0 4px 12px rgba(180, 83, 9, 0.3)",
+            }}>
+              Pick ad account →
+            </a>
+          </div>
         )}
 
         {/* Decision banner */}
