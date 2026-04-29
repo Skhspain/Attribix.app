@@ -30,8 +30,20 @@ export async function action({ request }: ActionFunctionArgs) {
   const { session } = result;
   const shop = session.shop;
 
-  const form = await request.formData();
-  const days = Number(form.get("days") || "30");
+  // Accept either JSON or form-data so the dashboard's fetch() works either way.
+  let days = 30;
+  const ct = request.headers.get("content-type") || "";
+  try {
+    if (ct.includes("application/json")) {
+      const body = await request.json();
+      days = Number(body?.days ?? 30);
+    } else {
+      const form = await request.formData();
+      days = Number(form.get("days") || "30");
+    }
+  } catch {
+    days = 30;
+  }
 
   const conn = await db.metaConnection.findUnique({ where: { shop } });
   if (!conn || !conn.accessToken || conn.accessToken === "__PENDING__") {
