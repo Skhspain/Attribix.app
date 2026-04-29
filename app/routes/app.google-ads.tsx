@@ -45,11 +45,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }).catch(() => []),
     anyDb.googleConnection?.findUnique?.({
       where: { shop },
-      select: { lastSyncedAt: true, adCustomerId: true },
+      select: { lastSyncedAt: true, adCustomerId: true, accessToken: true },
     }).catch(() => null),
   ]);
 
-  const hasConnection = !!googleConn?.adCustomerId;
+  const oauthDone = !!googleConn?.accessToken && googleConn.accessToken !== "__PENDING__";
+  const customerSelected = !!googleConn?.adCustomerId;
+  const hasConnection = oauthDone && customerSelected;
 
   // Detect store currency from Shopify
   let storeCurrency = "NOK";
@@ -132,6 +134,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     campaigns: transformedCampaigns,
     lastSyncedAt: googleConn?.lastSyncedAt ?? null,
     hasConnection,
+    oauthDone,
+    customerSelected,
     storeCurrency,
     adAccountCurrency,
     shopifyRev7,
@@ -364,10 +368,15 @@ export default function GoogleAdsDetail() {
           </div>
         )}
 
-        {/* No connection banner */}
-        {!data.hasConnection && (
-          <Banner tone="info">
-            <p>Connect Google Ads in <strong>Settings → Integrations</strong> to see your data.</p>
+        {/* Setup banners — split by state so the user knows what to do next */}
+        {!data.oauthDone && (
+          <Banner tone="info" action={{ content: "Connect Google Ads", url: "/app/integrations/google" }}>
+            <p>Step 1 of 2: connect Google Ads via OAuth.</p>
+          </Banner>
+        )}
+        {data.oauthDone && !data.customerSelected && (
+          <Banner tone="warning" action={{ content: "Pick ad account", url: "/app/integrations/google" }}>
+            <p>Step 2 of 2: connected to Google, but no ad account selected yet. Open the integration page, click <strong>Refresh ad accounts</strong>, pick yours, and Save.</p>
           </Banner>
         )}
 
