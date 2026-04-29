@@ -82,7 +82,7 @@ export default function AppRoute() {
         <a href="/app/newsletter">Newsletter</a>
         <a href="/app/seo">SEO Audit</a>
         <a href="/app/feeds">Feeds</a>
-        <a href="/app/integrations/meta">Integrations</a>
+        <a href="/app/ads">Integrations</a>
         <a href="/app/settings">Settings</a>
       </ui-nav-menu>
       <Outlet />

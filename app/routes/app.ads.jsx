@@ -188,43 +188,6 @@ export default function IntegrationsHub() {
           </Card>
         </Layout.Section>
 
-        {/* Stripe */}
-        <Layout.Section variant="oneHalf">
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingMd">Stripe</Text>
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    Payments · Revenue sync
-                  </Text>
-                </BlockStack>
-                {stripe.connected ? (
-                  <Badge tone="success">Connected</Badge>
-                ) : (
-                  <Badge tone="warning">Not connected</Badge>
-                )}
-              </InlineStack>
-
-              {stripe.connected ? (
-                <Text as="p" tone="subdued" variant="bodySm">
-                  Account: <Text as="span" fontWeight="semibold">{stripe.accountName || "Connected"}</Text>
-                </Text>
-              ) : (
-                <Text as="p" tone="subdued" variant="bodySm">
-                  Connect Stripe to sync payments and attribute revenue alongside Shopify orders.
-                </Text>
-              )}
-
-              <InlineStack gap="200">
-                <Button url="/app/stripe" variant="primary">
-                  {stripe.connected ? "Manage Stripe" : "Connect Stripe"}
-                </Button>
-              </InlineStack>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
         {/* Help section */}
         <Layout.Section>
           <Card background="bg-surface-secondary">

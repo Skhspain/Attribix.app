@@ -612,7 +612,7 @@ export default function AppIndex() {
                   },
                   { icon: "🔍", title: "SEO Audit", lines: [{ text: "Score products", muted: true }], url: "/app/seo" },
                   { icon: "🔗", title: "Product Feeds", lines: [{ text: "Google & Meta", muted: true }], url: "/app/feeds" },
-                  { icon: "🔌", title: "Integrations", lines: [{ text: "Meta, Google, Stripe", muted: true }], url: "/app/ads" },
+                  { icon: "🔌", title: "Integrations", lines: [{ text: "Meta, Google", muted: true }], url: "/app/ads" },
                   { icon: "🏷️", title: "UTM Builder", lines: [{ text: "Create tracked links", muted: true }], url: "/app/settings" },
                   { icon: "🛒", title: "Buy Now Button", lines: [{ text: data.pixelStatus === "healthy" ? "Active" : "Inactive", muted: true }], url: "/app/buy-now" },
                 ];
