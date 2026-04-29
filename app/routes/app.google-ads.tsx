@@ -333,7 +333,8 @@ export default function GoogleAdsDetail() {
           content: syncing ? "Syncing…" : "Sync now",
           onAction: handleSync,
           loading: syncing,
-          disabled: syncing,
+          disabled: syncing || !data.hasConnection,
+          helpText: !data.hasConnection ? "Pick an ad account first" : undefined,
         },
       ]}
       primaryAction={
