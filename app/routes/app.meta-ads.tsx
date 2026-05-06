@@ -121,7 +121,9 @@ export default function MetaAdsDetail() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ days: windowDays }),
       });
-      const result = await res.json();
+      const text = await res.text();
+      let result: any;
+      try { result = JSON.parse(text); } catch { result = { ok: false, error: text || "Sync failed" }; }
       if (result.ok) {
         setSyncMessage(`✓ Synced ${result.campaigns || 0} campaigns, ${result.ads || 0} ads`);
         revalidator.revalidate();

@@ -30,8 +30,15 @@ export async function action({ request }: ActionFunctionArgs) {
   const { session } = result;
   const shop = session.shop;
 
-  const form = await request.formData();
-  const days = Number(form.get("days") || "30");
+  let days = 30;
+  const ct = request.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    const body = await request.json().catch(() => ({}));
+    days = Number(body.days || 30);
+  } else {
+    const form = await request.formData().catch(() => new FormData());
+    days = Number(form.get("days") || 30);
+  }
 
   const conn = await db.metaConnection.findUnique({ where: { shop } });
   if (!conn || !conn.accessToken || conn.accessToken === "__PENDING__") {
@@ -52,6 +59,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const anyDb = db as any;
 
+  try {
   // ── 1. Campaign-level sync ────────────────────────────────────────────────
   const campaignInsights = await fetchCampaignDailyInsights({
     accessToken: conn.accessToken,
@@ -147,4 +155,14 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   return json({ ok: true, days, campaignRows: campaignRows.length, adRows: adRows.length });
+  } catch (e: any) {
+    let errMsg: string;
+    if (e instanceof Response) {
+      errMsg = await e.text().catch(() => "Sync failed");
+    } else {
+      errMsg = e?.message || "Sync failed";
+    }
+    console.error("[metaSync] error:", errMsg);
+    return json({ ok: false, error: errMsg });
+  }
 }
