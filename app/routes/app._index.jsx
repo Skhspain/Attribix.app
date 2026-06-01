@@ -503,6 +503,8 @@ export default function AppIndex() {
 
   const roas = data.totalSpend > 0 ? data.rev30 / data.totalSpend : null;
   const metaRoas = data.metaKpis.spend > 0 ? data.metaKpis.value / data.metaKpis.spend : null;
+  const metaRoas7 = data.metaSpend > 0 ? data.metaRev7 / data.metaSpend : null;
+  const googleRoas7 = data.googleSpend > 0 ? data.googleRev7 / data.googleSpend : null;
   const aov = data.orders30 > 0 ? data.rev30 / data.orders30 : 0;
 
   // Smart insights including lead quality
@@ -616,7 +618,7 @@ export default function AppIndex() {
             { title: "Revenue (30d)", value: fmt(data.rev30, currency), sub: `${fmt(data.rev7, currency)} last 7 days` },
             { title: "Orders (30d)", value: String(data.orders30), sub: `${data.orders7} last 7 days` },
             { title: "Blended ROAS", value: roas !== null ? Math.round(roas * 100) + "%" : "—", sub: roas !== null ? `${fmtDec(data.totalSpend, currency)} total spend` : "Connect an ad account", tone: roas !== null && roas >= 2 ? "success" : undefined },
-            { title: "Avg order value", value: aov > 0 ? fmtDec(aov, currency) : "—", sub: "Last 30 days" },
+            { title: "Ad Spend (7d)", value: data.totalSpend > 0 ? fmt(data.totalSpend, currency) : "—", sub: data.totalSpend > 0 ? "Meta + Google" : "Connect an ad account" },
           ].map((kpi) => (
             <Grid.Cell key={kpi.title} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
               <Card>
@@ -630,57 +632,163 @@ export default function AppIndex() {
           ))}
         </Grid>
 
-        {/* Shopify vs Ad Platform Sales Comparison — only when platforms report 20%+ more */}
-        {(() => {
-          const adTotal = (data.metaRev7 || 0) + (data.googleRev7 || 0);
-          const pct = data.rev7 > 0 ? Math.round(((adTotal - data.rev7) / data.rev7) * 100) : 0;
-          return pct >= 20;
-        })() && (
-          <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingSm">Shopify Sales vs Ad Platform Reported (7d)</Text>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "14px 16px" }}>
-                  <Text as="p" variant="bodySm" tone="subdued">Shopify Revenue</Text>
-                  <Text as="p" variant="headingLg">{fmt(data.rev7, currency)}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">{data.orders7} orders</Text>
-                </div>
-                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "14px 16px" }}>
-                  <Text as="p" variant="bodySm" tone="subdued">Ad Platform Reported</Text>
-                  <Text as="p" variant="headingLg">{fmt((data.metaRev7 || 0) + (data.googleRev7 || 0), currency)}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Meta: {fmt(data.metaRev7 || 0, currency)} · Google: {fmt(data.googleRev7 || 0, currency)}
-                  </Text>
-                </div>
-                <div style={{
-                  background: Math.abs((data.metaRev7 || 0) + (data.googleRev7 || 0) - data.rev7) / Math.max(data.rev7, 1) > 0.2 ? "#fffbeb" : "#f0fdf4",
-                  border: `1px solid ${Math.abs((data.metaRev7 || 0) + (data.googleRev7 || 0) - data.rev7) / Math.max(data.rev7, 1) > 0.2 ? "#fde68a" : "#bbf7d0"}`,
-                  borderRadius: 8,
-                  padding: "14px 16px",
-                }}>
-                  <Text as="p" variant="bodySm" tone="subdued">Difference</Text>
-                  <Text as="p" variant="headingLg">
-                    {(() => {
-                      const adTotal = (data.metaRev7 || 0) + (data.googleRev7 || 0);
-                      const diff = adTotal - data.rev7;
-                      const pct = data.rev7 > 0 ? Math.round((diff / data.rev7) * 100) : 0;
-                      const sign = diff >= 0 ? "+" : "";
-                      return `${sign}${pct}%`;
-                    })()}
-                  </Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {(() => {
-                      const adTotal = (data.metaRev7 || 0) + (data.googleRev7 || 0);
-                      if (adTotal > data.rev7) return "Ad platforms report more than Shopify (normal — they count view-through)";
-                      if (adTotal < data.rev7) return "Shopify has more revenue (organic/direct sales not from ads)";
-                      return "Numbers match closely";
-                    })()}
-                  </Text>
-                </div>
-              </div>
-            </BlockStack>
-          </Card>
-        )}
+        {/* Ads platforms */}
+        <Grid>
+          <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h2" variant="headingMd">Meta Ads</Text>
+                    <Badge tone={data.metaConnected ? "success" : "new"}>{data.metaConnected ? "Connected" : "Not connected"}</Badge>
+                  </InlineStack>
+                  <Button size="slim" variant="plain" onClick={() => navigate("/app/meta-ads")}>Details →</Button>
+                </InlineStack>
+                {data.metaConnected && (data.metaSpend > 0 || data.metaRev7 > 0) ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Spend (7d)</Text>
+                      <Text as="p" variant="headingMd">{fmt(data.metaSpend, currency)}</Text>
+                      {typeof data.metaSpendDelta === "number" && (data.metaSpendPrev || 0) > 0 && (
+                        <Text as="p" variant="bodySm" tone={data.metaSpendDelta >= 0 ? "success" : "critical"}>
+                          {data.metaSpendDelta >= 0 ? "▲" : "▼"} {Math.abs(data.metaSpendDelta)}% vs last week
+                        </Text>
+                      )}
+                    </BlockStack>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Sales (7d)</Text>
+                      <Text as="p" variant="headingMd">{fmt(data.metaRev7, currency)}</Text>
+                    </BlockStack>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">ROAS</Text>
+                      <Text as="p" variant="headingMd" tone={metaRoas7 !== null && metaRoas7 >= 2 ? "success" : undefined}>
+                        {metaRoas7 !== null ? metaRoas7.toFixed(2) + "×" : "—"}
+                      </Text>
+                    </BlockStack>
+                  </div>
+                ) : (
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {data.metaConnected ? "No spend data yet — sync may still be running." : "Connect Meta Ads to track spend and ROAS."}
+                    </Text>
+                    {!data.metaConnected && <Button size="slim" onClick={() => navigate("/app/integrations/meta")}>Connect Meta</Button>}
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+          </Grid.Cell>
+
+          <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="h2" variant="headingMd">Google Ads</Text>
+                    <Badge tone={data.googleConnected ? "success" : "new"}>{data.googleConnected ? "Connected" : "Not connected"}</Badge>
+                  </InlineStack>
+                  <Button size="slim" variant="plain" onClick={() => navigate("/app/google-ads")}>Details →</Button>
+                </InlineStack>
+                {data.googleConnected && (data.googleSpend > 0 || data.googleRev7 > 0) ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Spend (7d)</Text>
+                      <Text as="p" variant="headingMd">{fmt(data.googleSpend, currency)}</Text>
+                      {typeof data.googleSpendDelta === "number" && (data.googleSpendPrev || 0) > 0 && (
+                        <Text as="p" variant="bodySm" tone={data.googleSpendDelta >= 0 ? "success" : "critical"}>
+                          {data.googleSpendDelta >= 0 ? "▲" : "▼"} {Math.abs(data.googleSpendDelta)}% vs last week
+                        </Text>
+                      )}
+                    </BlockStack>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">Sales (7d)</Text>
+                      <Text as="p" variant="headingMd">{fmt(data.googleRev7, currency)}</Text>
+                    </BlockStack>
+                    <BlockStack gap="100">
+                      <Text as="p" variant="bodySm" tone="subdued">ROAS</Text>
+                      <Text as="p" variant="headingMd" tone={googleRoas7 !== null && googleRoas7 >= 2 ? "success" : undefined}>
+                        {googleRoas7 !== null ? googleRoas7.toFixed(2) + "×" : "—"}
+                      </Text>
+                    </BlockStack>
+                  </div>
+                ) : (
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {data.googleConnected ? "No spend data yet — sync may still be running." : "Connect Google Ads to track spend and ROAS."}
+                    </Text>
+                    {!data.googleConnected && <Button size="slim" onClick={() => navigate("/app/integrations/google")}>Connect Google</Button>}
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+          </Grid.Cell>
+        </Grid>
+
+        {/* Tools summary */}
+        <Card>
+          <BlockStack gap="400">
+            <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">YOUR TOOLS</Text>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24 }}>
+              <BlockStack gap="150">
+                <Text as="p" variant="bodySm" fontWeight="semibold" tone="subdued">MARKETING</Text>
+                {[
+                  { title: "Newsletter", stat: `${data.featureHub?.subscriberCount || 0} subscribers`, badge: data.featureHub?.newSubscribersUnseen || 0, url: "/app/newsletter" },
+                  { title: "Lead Center", stat: `${data.featureHub?.leadCount || 0} leads`, badge: data.featureHub?.newLeadsUnseen || 0, url: "/app/leads" },
+                  { title: "Reviews", stat: data.featureHub?.avgRating ? `${data.featureHub.avgRating}★ · ${data.featureHub.totalReviews}` : `${data.featureHub?.totalReviews || 0} reviews`, badge: data.featureHub?.newReviewsUnseen || 0, url: "/app/reviews" },
+                ].map(item => (
+                  <div key={item.title} onClick={() => navigate(item.url)}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8, cursor: "pointer", background: "#fafafa" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "#f1f3f5")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "#fafafa")}
+                  >
+                    <Text as="p" variant="bodySm">{item.title}</Text>
+                    <InlineStack gap="150" blockAlign="center">
+                      {item.badge > 0 && (
+                        <div style={{ background: "#dc2626", color: "#fff", borderRadius: 999, fontSize: 10, fontWeight: 700, padding: "1px 6px" }}>+{item.badge}</div>
+                      )}
+                      <Text as="p" variant="bodySm" tone="subdued">{item.stat}</Text>
+                    </InlineStack>
+                  </div>
+                ))}
+              </BlockStack>
+
+              <BlockStack gap="150">
+                <Text as="p" variant="bodySm" fontWeight="semibold" tone="subdued">STORE</Text>
+                {[
+                  { title: "Orders", stat: `${data.orders30} orders (30d)`, url: "/app/orders" },
+                  { title: "SEO Audit", stat: "Score your products", url: "/app/seo" },
+                  { title: "Product Feeds", stat: "Google & Meta", url: "/app/feeds" },
+                ].map(item => (
+                  <div key={item.title} onClick={() => navigate(item.url)}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8, cursor: "pointer", background: "#fafafa" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "#f1f3f5")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "#fafafa")}
+                  >
+                    <Text as="p" variant="bodySm">{item.title}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">{item.stat}</Text>
+                  </div>
+                ))}
+              </BlockStack>
+
+              <BlockStack gap="150">
+                <Text as="p" variant="bodySm" fontWeight="semibold" tone="subdued">SETTINGS</Text>
+                {[
+                  { title: "Integrations", stat: `${[data.metaConnected, data.googleConnected].filter(Boolean).length} of 2 connected`, url: "/app/ads" },
+                  { title: "Tracking & Pixel", stat: data.pixelStatus === "healthy" ? "Active" : "Inactive", url: "/app/settings" },
+                  { title: "Buy Now Button", stat: data.pixelStatus === "healthy" ? "Active" : "Set up", url: "/app/buy-now" },
+                ].map(item => (
+                  <div key={item.title} onClick={() => navigate(item.url)}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8, cursor: "pointer", background: "#fafafa" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "#f1f3f5")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "#fafafa")}
+                  >
+                    <Text as="p" variant="bodySm">{item.title}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">{item.stat}</Text>
+                  </div>
+                ))}
+              </BlockStack>
+            </div>
+          </BlockStack>
+        </Card>
 
         {/* Insights */}
         {insights.length > 0 && (
