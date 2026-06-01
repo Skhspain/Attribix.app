@@ -189,7 +189,7 @@ class Server_Events {
 			'country'   => $order->get_billing_country(),
 			'postcode'  => $order->get_billing_postcode(),
 			'customerId' => $order->get_customer_id(),
-			'orderCount' => 0,
+			'orderCount' => $order->get_customer_id() ? (int) wc_get_customer_order_count( $order->get_customer_id() ) : 0,
 		);
 	}
 }

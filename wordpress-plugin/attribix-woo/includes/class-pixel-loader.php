@@ -13,6 +13,7 @@ class Pixel_Loader {
 
 	public static function init() {
 		add_action( 'wp_head', array( __CLASS__, 'inject_pixels' ), 5 );
+		add_action( 'wp_body_open', array( __CLASS__, 'inject_noscript_pixels' ), 5 );
 		add_action( 'woocommerce_thankyou', array( __CLASS__, 'purchase_pixels' ), 5, 1 );
 	}
 
@@ -68,6 +69,18 @@ class Pixel_Loader {
 					echo "<script>ttq.track('ViewContent',{content_id:'" . esc_js( $product->get_id() ) . "',content_name:'" . esc_js( $product->get_name() ) . "',content_type:'product',value:" . (float) $product->get_price() . ",currency:'" . esc_js( get_woocommerce_currency() ) . "'});</script>\n";
 				}
 			}
+		}
+	}
+
+	/**
+	 * Inject noscript fallback tags in <body> for pixels that require them.
+	 * Fires on wp_body_open (requires theme support, WP 5.2+).
+	 */
+	public static function inject_noscript_pixels() {
+		$settings = Settings::get();
+		$fb_pixel = $settings['fb_pixel_id'] ?? '';
+		if ( $fb_pixel ) {
+			echo '<noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=' . esc_attr( $fb_pixel ) . '&ev=PageView&noscript=1" /></noscript>' . "\n";
 		}
 	}
 

@@ -7,6 +7,7 @@ import { sendServerConversions } from "~/services/serverConversions.server";
 import { scheduleReviewRequest } from "~/services/reviewEmail.server";
 import { enrollInFlows } from "~/services/automationEngine.server";
 import { buildJourneyCredits } from "~/services/touchpoints.server";
+import { getShopPlan, checkOrdersQuota } from "~/services/plan.server";
 
 function pickFirstString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length ? x.trim() : null;
@@ -123,6 +124,17 @@ export async function action({ request }: ActionFunctionArgs) {
       null;
 
     if (orderId) {
+      // Enforce monthly order quota — check only for new orders (not re-deliveries)
+      const existingOrder = await db.purchase.findUnique({ where: { orderId } });
+      if (!existingOrder) {
+        const plan = await getShopPlan(shop);
+        const quota = await checkOrdersQuota(shop, plan);
+        if (!quota.allowed) {
+          console.log(`[orders_create] quota exceeded for ${shop} (${quota.used}/${quota.limit}) — order ${orderId} not saved`);
+          return json({ ok: false, reason: "quota_exceeded" }, { status: 200 });
+        }
+      }
+
       await db.purchase.upsert({
         where: { orderId },
         create: {

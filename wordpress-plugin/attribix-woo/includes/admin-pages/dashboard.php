@@ -27,11 +27,29 @@ if ( ! $is_connected ) {
 	return;
 }
 
-// Fetch all dashboard data
-$data      = Api::get( '/api/standalone/overview', array( 'shop' => $shop, 'accountId' => $settings['account_id'] ) );
-$meta_data = Api::get( '/api/standalone/meta-ads', array( 'days' => 7 ) );
-$google_data = Api::get( '/api/standalone/google-ads', array( 'days' => 7 ) );
-$status    = Api::get( '/api/woo/status', array( 'shop' => $shop ) );
+// Fetch all dashboard data (cached 5 minutes to avoid blocking on every load)
+$cache_key = 'ax_dashboard_' . md5( ( $settings['account_id'] ?? '' ) . $shop );
+$cached    = get_transient( $cache_key );
+
+if ( false === $cached ) {
+	$data        = Api::get( '/api/standalone/overview',   array( 'shop' => $shop, 'accountId' => $settings['account_id'] ) );
+	$meta_data   = Api::get( '/api/standalone/meta-ads',   array( 'days' => 7 ) );
+	$google_data = Api::get( '/api/standalone/google-ads', array( 'days' => 7 ) );
+	$status      = Api::get( '/api/woo/status',            array( 'shop' => $shop ) );
+	set_transient( $cache_key, array(
+		'data'        => $data,
+		'meta_data'   => $meta_data,
+		'google_data' => $google_data,
+		'status'      => $status,
+	), 5 * MINUTE_IN_SECONDS );
+} else {
+	$data        = $cached['data'];
+	$meta_data   = $cached['meta_data'];
+	$google_data = $cached['google_data'];
+	$status      = $cached['status'];
+}
+
+$api_error = isset( $data['error'] ) || ( isset( $data['ok'] ) && $data['ok'] === false );
 
 $revenue   = $data['revenue'] ?? 0;
 $orders    = $data['orders'] ?? 0;
@@ -66,16 +84,23 @@ try {
 } catch ( \Exception $e ) {}
 
 // Format helper
+if ( ! function_exists( 'ax_money' ) ) :
 function ax_money( $amount, $currency = 'USD' ) {
 	if ( function_exists( 'wc_price' ) ) {
 		return strip_tags( wc_price( $amount, array( 'currency' => $currency ) ) );
 	}
 	return $currency . ' ' . number_format( $amount, 2 );
 }
+endif;
 
 $cur = $currency;
 ?>
 <div class="wrap ax-wrap">
+	<?php if ( $api_error ) : ?>
+		<div class="notice notice-warning" style="margin:12px 0;">
+			<p><strong>Attribix:</strong> Could not reach the Attribix API. Data shown may be from the cache or unavailable. <a href="<?php echo esc_url( admin_url( 'admin.php?page=attribix-woo' ) ); ?>">Retry</a></p>
+		</div>
+	<?php endif; ?>
 	<h1 style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
 		<span style="font-size:28px;">📊</span> Attribix Dashboard
 	</h1>

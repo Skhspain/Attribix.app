@@ -6,6 +6,7 @@ import db from "~/db.server";
 // ─── Plan limits ─────────────────────────────────────────────────────────────
 
 export const PLAN_LIMITS = {
+  // "smallest-plan" in Shopify Partner Dashboard = entry-level "$39/month" plan
   starter: {
     ordersPerMonth:      300,
     emailSendsPerMonth:  500,
@@ -43,6 +44,12 @@ export function setCachedPlan(shop: string, plan: PlanId) {
   cache.set(shop, { plan, exp: Date.now() + TTL });
 }
 
+/** Evict a shop from the plan cache — call after returning from billing so the
+ *  next request re-fetches the now-active subscription from Shopify. */
+export function clearCachedPlan(shop: string) {
+  cache.delete(shop);
+}
+
 function getCached(shop: string): PlanId | null {
   const hit = cache.get(shop);
   if (hit && hit.exp > Date.now()) return hit.plan;
@@ -50,33 +57,106 @@ function getCached(shop: string): PlanId | null {
   return null;
 }
 
+// ─── Manual plan overrides (for dev stores billed outside Shopify) ───────────
+//
+// Set a Fly.io secret named  MANUAL_PLAN_<shop-with-dots-and-hyphens-as-underscores>
+// to "starter", "growth", or "pro" to grant a specific plan without going through
+// Shopify managed pricing.
+//
+// Example:  MANUAL_PLAN_annamariemonster_myshopify_com=growth
+//
+// To revoke access: delete the secret (flyctl secrets unset MANUAL_PLAN_...).
+// The in-memory cache will expire within 5 minutes.
+function getManualPlanOverride(shop: string): PlanId | null {
+  const key = "MANUAL_PLAN_" + shop.replace(/[\.\-]/g, "_");
+  const val = process.env[key] ?? process.env[key.toUpperCase()];
+  if (val === "starter" || val === "growth" || val === "pro") return val;
+  return null;
+}
+
 // ─── Plan resolution ─────────────────────────────────────────────────────────
+
+/** Persist the resolved plan to the DB so webhooks can look it up later. */
+async function persistPlanToDb(shop: string, plan: PlanId) {
+  try {
+    const anyDb = db as any;
+    await anyDb.shopPlan?.upsert?.({
+      where: { shop },
+      create: { shop, plan },
+      update: { plan },
+    });
+  } catch {
+    // Non-fatal — in-memory cache still works
+  }
+}
+
+/** Look up the persisted plan from DB (used by webhooks without admin access). */
+async function getPersistedPlan(shop: string): Promise<PlanId | null> {
+  try {
+    const anyDb = db as any;
+    const row = await anyDb.shopPlan?.findUnique?.({ where: { shop } });
+    if (!row) return null;
+    if (row.plan === "starter" || row.plan === "growth" || row.plan === "pro") return row.plan as PlanId;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /** Resolve plan from Shopify's active subscription (requires admin API). */
 export async function getShopPlan(shop: string, admin?: any): Promise<PlanId> {
   const cached = getCached(shop);
   if (cached) return cached;
 
-  if (!admin) return "starter"; // safe default when no API access (webhooks etc.)
+  // Check for a manual override (dev stores, partner clients billed outside Shopify)
+  const manual = getManualPlanOverride(shop);
+  if (manual) {
+    console.log(`[plan] ${shop} → ${manual} (manual override)`);
+    setCachedPlan(shop, manual);
+    persistPlanToDb(shop, manual); // keep DB in sync so webhooks see the right plan
+    return manual;
+  }
+
+  if (!admin) {
+    // Webhook path — no admin API. Use DB-persisted plan as fallback.
+    const persisted = await getPersistedPlan(shop);
+    if (persisted) {
+      console.log(`[plan] ${shop} → ${persisted} (db fallback)`);
+      setCachedPlan(shop, persisted);
+      return persisted;
+    }
+    console.log(`[plan] ${shop} → starter (no admin, no db record)`);
+    return "starter"; // safe default when plan is unknown
+  }
 
   try {
     const res = await admin.graphql(`
-      query { appInstallation { activeSubscriptions { name } } }
+      query { appInstallation { activeSubscriptions { name status } } }
     `);
     const data = await res.json();
-    const subs: { name: string }[] = data?.data?.appInstallation?.activeSubscriptions ?? [];
+    const subs: { name: string; status?: string }[] = data?.data?.appInstallation?.activeSubscriptions ?? [];
 
-    let plan: PlanId = "starter";
-    if (subs.length > 0) {
-      const name = (subs[0].name ?? "").toLowerCase();
-      if (name.includes("pro"))    plan = "pro";
-      else if (name.includes("growth")) plan = "growth";
-      else plan = "starter";
+    console.log(`[plan] ${shop} activeSubscriptions=${JSON.stringify(subs)}`);
+
+    if (subs.length === 0) {
+      console.log(`[plan] ${shop} → none (no active subscriptions)`);
+      // Don't cache "none" — plan may be confirmed moments later on return from billing
+      return "none" as any;
     }
 
+    const name = (subs[0].name ?? "").toLowerCase();
+    let plan: PlanId =
+      name.includes("pro")                          ? "pro" :
+      name.includes("growth")                       ? "growth" :
+      name.includes("attribix") || name.includes("client") ? "growth" : // agency/partner plans
+      "starter"; // covers "smallest-plan", "new store", or any other entry-level name
+
+    console.log(`[plan] ${shop} → ${plan} (subscription name="${subs[0].name}")`);
     setCachedPlan(shop, plan);
+    persistPlanToDb(shop, plan); // fire-and-forget
     return plan;
-  } catch {
+  } catch (err: any) {
+    console.error(`[plan] ${shop} getShopPlan error: ${err?.message ?? err}`);
     return "starter";
   }
 }
@@ -131,6 +211,18 @@ export async function checkNewsletterSendsQuota(shop: string, plan: PlanId, reci
 
   const used = campaigns.reduce((sum, c) => sum + (c.recipientCount ?? 0), 0);
   return { allowed: used + recipientCount <= limit, used, limit };
+}
+
+export async function checkSubscribersQuota(shop: string, plan: PlanId) {
+  const limit = getPlanLimits(plan).subscribers;
+  if (limit === -1) return { allowed: true, used: 0, limit };
+
+  const anyDb = db as any;
+  const used: number = await anyDb.newsletterSubscriber?.count?.({
+    where: { shop, status: "subscribed" },
+  }).catch(() => 0) ?? 0;
+
+  return { allowed: used < limit, used, limit };
 }
 
 export async function checkOrdersQuota(shop: string, plan: PlanId) {

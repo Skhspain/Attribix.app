@@ -65,7 +65,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // ─── Action ──────────────────────────────────────────────────────────────────
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const form = await request.formData();
   const intent = form.get("intent") as string;
@@ -85,6 +85,17 @@ export async function action({ request }: ActionFunctionArgs) {
 
     if (!email || !email.includes("@")) {
       return json({ ok: false, intent, error: "Please enter a valid email address." });
+    }
+
+    // Quota check — only for new/resubscribing addresses
+    const existing = await db.newsletterSubscriber.findUnique({ where: { shop_email: { shop, email } } });
+    if (!existing || existing.status === "unsubscribed") {
+      const { getShopPlan, checkSubscribersQuota } = await import("~/services/plan.server");
+      const plan = await getShopPlan(shop, admin);
+      const quota = await checkSubscribersQuota(shop, plan);
+      if (!quota.allowed) {
+        return json({ ok: false, intent, error: `Subscriber limit reached (${quota.used.toLocaleString()}/${quota.limit.toLocaleString()}). Upgrade your plan to add more.` });
+      }
     }
 
     try {
@@ -123,9 +134,15 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const dataLines = hasHeader ? lines.slice(1) : lines;
 
-    let imported = 0;
+    // Check how many new subscribers this import would add vs remaining quota
+    const { getShopPlan, checkSubscribersQuota } = await import("~/services/plan.server");
+    const plan = await getShopPlan(shop, admin);
+    const quota = await checkSubscribersQuota(shop, plan);
+    const remaining = quota.limit === -1 ? Infinity : Math.max(0, quota.limit - quota.used);
+
+    let imported = 0;   // total rows successfully processed (new + existing)
+    let newlyAdded = 0; // only net-new subscribers (counts against quota)
     let skipped = 0;
-    const errors: string[] = [];
 
     for (const line of dataLines) {
       const cols = line.split(sep).map(c => c.trim().replace(/^["']|["']$/g, ""));
@@ -134,6 +151,11 @@ export async function action({ request }: ActionFunctionArgs) {
       const firstName = firstIdx >= 0 ? (cols[firstIdx] || "") : "";
       const lastName  = lastIdx  >= 0 ? (cols[lastIdx]  || "") : "";
 
+      // Only count genuinely new subscribers against the quota
+      const existing = await db.newsletterSubscriber.findUnique({ where: { shop_email: { shop, email } } });
+      const isNew = !existing || existing.status === "unsubscribed";
+      if (isNew && newlyAdded >= remaining) { skipped++; continue; }
+
       try {
         await db.newsletterSubscriber.upsert({
           where: { shop_email: { shop, email } },
@@ -141,12 +163,34 @@ export async function action({ request }: ActionFunctionArgs) {
           update: { status: "subscribed" },
         });
         imported++;
+        if (isNew) newlyAdded++;
       } catch {
         skipped++;
       }
     }
 
     return json({ ok: true, intent, imported, skipped });
+  }
+
+  // ── Delete single subscriber ───────────────────────────────────────────────
+  if (intent === "delete-one") {
+    const email = form.get("email") as string;
+    await db.newsletterSubscriber.deleteMany({ where: { shop, email } });
+    return json({ ok: true, intent });
+  }
+
+  // ── Delete all unsubscribed ────────────────────────────────────────────────
+  if (intent === "delete-unsubscribed") {
+    const { count } = await db.newsletterSubscriber.deleteMany({
+      where: { shop, status: "unsubscribed" },
+    });
+    return json({ ok: true, intent, count });
+  }
+
+  // ── Delete ALL subscribers ────────────────────────────────────────────────
+  if (intent === "delete-all") {
+    const { count } = await db.newsletterSubscriber.deleteMany({ where: { shop } });
+    return json({ ok: true, intent, count });
   }
 
   return json({ ok: false, intent, error: "Unknown intent" }, { status: 400 });
@@ -183,6 +227,21 @@ export default function SubscriberList() {
   if (addDone && addOpen) {
     setAddOpen(false);
     setAddEmail(""); setAddFirst(""); setAddLast("");
+  }
+
+  // ── Delete-all confirmation modal ─────────────────────────────────────────
+  const [deleteAllOpen, setDeleteAllOpen] = useState(false);
+  const [deleteAllConfirm, setDeleteAllConfirm] = useState("");
+  const deleteAllDone = fetcher.data?.intent === "delete-all" && fetcher.state === "idle" && fetcher.data?.ok;
+  if (deleteAllDone && deleteAllOpen) {
+    setDeleteAllOpen(false);
+    setDeleteAllConfirm("");
+  }
+
+  function submitDeleteAll() {
+    const fd = new FormData();
+    fd.append("intent", "delete-all");
+    fetcher.submit(fd, { method: "post" });
   }
 
   // ── CSV import modal ───────────────────────────────────────────────────────
@@ -230,9 +289,15 @@ export default function SubscriberList() {
       <fetcher.Form method="post">
         <input type="hidden" name="intent" value="unsubscribe" />
         <input type="hidden" name="email" value={s.email} />
-        <Button variant="plain" tone="critical" submit>Remove</Button>
+        <Button variant="plain" tone="critical" submit>Unsubscribe</Button>
       </fetcher.Form>
-    ) : "—",
+    ) : (
+      <fetcher.Form method="post">
+        <input type="hidden" name="intent" value="delete-one" />
+        <input type="hidden" name="email" value={s.email} />
+        <Button variant="plain" tone="critical" submit>Delete</Button>
+      </fetcher.Form>
+    ),
   ]);
 
   return (
@@ -252,6 +317,19 @@ export default function SubscriberList() {
                 external
               >
                 Export CSV
+              </Button>
+              {status === "unsubscribed" && total > 0 && (
+                <fetcher.Form method="post">
+                  <input type="hidden" name="intent" value="delete-unsubscribed" />
+                  <Button variant="plain" tone="critical" submit
+                    loading={fetcher.state !== "idle" && fetcher.formData?.get("intent") === "delete-unsubscribed"}
+                  >
+                    Delete all unsubscribed ({total.toLocaleString()})
+                  </Button>
+                </fetcher.Form>
+              )}
+              <Button variant="plain" tone="critical" onClick={() => { setDeleteAllConfirm(""); setDeleteAllOpen(true); }}>
+                Delete all subscribers
               </Button>
             </InlineStack>
           </InlineStack>
@@ -299,6 +377,12 @@ export default function SubscriberList() {
           Imported <strong>{fetcher.data.imported}</strong> subscribers
           {fetcher.data.skipped > 0 ? ` (${fetcher.data.skipped} skipped — invalid or duplicate)` : ""}.
         </Banner>
+      )}
+      {fetcher.data?.intent === "delete-unsubscribed" && fetcher.state === "idle" && fetcher.data?.ok && (
+        <Banner tone="success">Deleted {fetcher.data.count} unsubscribed contacts.</Banner>
+      )}
+      {fetcher.data?.intent === "delete-all" && fetcher.state === "idle" && fetcher.data?.ok && (
+        <Banner tone="success">Deleted {fetcher.data.count} subscribers.</Banner>
       )}
       {fetcher.data?.error && fetcher.state === "idle" && (
         <Banner tone="critical">{fetcher.data.error}</Banner>
@@ -449,6 +533,39 @@ export default function SubscriberList() {
                 </BlockStack>
               </>
             )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* ── Delete-all confirmation modal ── */}
+      <Modal
+        open={deleteAllOpen}
+        onClose={() => { setDeleteAllOpen(false); setDeleteAllConfirm(""); }}
+        title="Delete all subscribers?"
+        primaryAction={{
+          content: "Yes, delete all",
+          destructive: true,
+          loading: fetcher.state !== "idle" && fetcher.formData?.get("intent") === "delete-all",
+          disabled: deleteAllConfirm.toUpperCase() !== "DELETE",
+          onAction: submitDeleteAll,
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => { setDeleteAllOpen(false); setDeleteAllConfirm(""); } }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            <Banner tone="critical">
+              <Text as="p">
+                This will permanently delete <strong>all subscribers</strong> from your list — including subscribed, unsubscribed, and all sources. This cannot be undone.
+              </Text>
+            </Banner>
+            <TextField
+              label='Type DELETE to confirm'
+              value={deleteAllConfirm}
+              onChange={setDeleteAllConfirm}
+              autoComplete="off"
+              placeholder="DELETE"
+              error={deleteAllConfirm.length > 0 && deleteAllConfirm.toUpperCase() !== "DELETE" ? "Type DELETE in capitals to confirm" : undefined}
+            />
           </BlockStack>
         </Modal.Section>
       </Modal>

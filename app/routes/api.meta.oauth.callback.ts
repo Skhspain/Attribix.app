@@ -128,15 +128,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const platform = (decoded as any)?.platform || "";
   const isWooCommerce = platform === "woocommerce" || !shop.includes(".myshopify.com");
+  const isOnboarding = returnToRaw.includes("from=onboarding");
 
   const title = "Meta connected!";
   const subtitle = isWooCommerce
     ? "Your Meta account has been linked to Attribix.<br>You can close this window and refresh your WordPress admin."
+    : isOnboarding
+    ? "Your Meta account has been linked to Attribix.<br>Closing this window…"
     : `Your Meta account has been linked to Attribix.<br>Redirecting you to Shopify in a moment…`;
-  const buttonText = isWooCommerce ? "Close this window" : "Return to Shopify Admin";
-  const buttonHref = isWooCommerce ? "#" : `https://${shop}/admin`;
-  const buttonOnClick = isWooCommerce ? "window.close(); return false;" : "";
-  const autoRedirect = isWooCommerce ? "" : `<meta http-equiv="refresh" content="3;url=https://${shop}/admin" />`;
+  const buttonText = isWooCommerce || isOnboarding ? "Close this window" : "Return to Shopify Admin";
+  const buttonHref = "#";
+  const buttonOnClick = "window.close(); return false;";
+  const autoRedirect = isOnboarding
+    ? `<script>window.close();</script>`
+    : isWooCommerce
+    ? ""
+    : `<meta http-equiv="refresh" content="3;url=https://${shop}/admin" />`;
 
   return new Response(
     `<!DOCTYPE html>
@@ -165,7 +172,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     <div class="icon">✅</div>
     <h1>${title}</h1>
     <p>${subtitle}</p>
-    <a href="${buttonHref}" ${buttonOnClick ? `onclick="${buttonOnClick}"` : ""}>${buttonText}</a>
+    <a href="${buttonHref}" onclick="${buttonOnClick}">${buttonText}</a>
   </div>
 </body>
 </html>`,

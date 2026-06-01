@@ -1,4 +1,3 @@
-# node / build
 node_modules
 build
 .cache
@@ -6,34 +5,20 @@ build
 pnpm-lock.yaml
 yarn.lock
 npm-debug.log*
-
-# test / tooling
 coverage
 .husky
-
-# local env / secrets
 .env
 .env.*
 !.env.example
-
-# editor / os
 .vscode
 .idea
 .DS_Store
 Thumbs.db
-
-# git / misc
 .git
 .gitignore
-
-# fly / docker meta (don’t ship those)
 fly.toml
 docker-compose.yml
 Dockerfile.local
 .dockerignore.local
-
-# logs
 *.log
-
-# TypeScript artifacts (if any generated locally)
 *.tsbuildinfo

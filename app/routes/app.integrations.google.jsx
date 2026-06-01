@@ -1,7 +1,7 @@
 // app/routes/app.integrations.google.jsx
 import React, { useMemo, useState, useEffect, useCallback } from "react";
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, Form } from "@remix-run/react";
+import { useLoaderData, useNavigate, Form } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -84,6 +84,7 @@ export async function loader({ request }) {
 
   const shop = result.session.shop;
   const appOrigin = getAppOrigin(request);
+  const url = new URL(request.url);
 
   const conn = await db.googleConnection.findUnique({ where: { shop } }).catch(() => null);
 
@@ -91,6 +92,7 @@ export async function loader({ request }) {
   const expiresAt = conn?.expiresAt ? new Date(conn.expiresAt).toISOString() : null;
   const adCustomerId = conn?.adCustomerId ?? "";
   const developerTokenConfigured = !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+  const fromOnboarding = url.searchParams.get("from") === "onboarding";
 
   return json({
     shop,
@@ -99,11 +101,13 @@ export async function loader({ request }) {
     expiresAt,
     adCustomerId,
     developerTokenConfigured,
+    fromOnboarding,
   });
 }
 
 function GoogleIntegrationsInner({ data }) {
   const authFetch = useAuthenticatedFetch();
+  const navigate = useNavigate();
   const apiUrl = useCallback((path) => new URL(path, data.appOrigin).toString(), [data.appOrigin]);
 
   const [customers, setCustomers] = useState([]);
@@ -125,8 +129,16 @@ function GoogleIntegrationsInner({ data }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.adCustomerId]);
 
+  // Auto-close onboarding when Google becomes connected
+  useEffect(() => {
+    if (data.fromOnboarding && data.connected) {
+      navigate("/app");
+    }
+  }, [data.connected, data.fromOnboarding]);
+
   function startGoogleOAuth() {
-    const returnTo = "/app/integrations/google";
+    const fromParam = data.fromOnboarding ? "?from=onboarding" : "";
+    const returnTo = `/app/integrations/google${fromParam}`;
     // Route through www.attribix.app to avoid Chrome lookalike warning on attribix-app.fly.dev
     const startUrl = `https://www.attribix.app/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(returnTo)}`;
 

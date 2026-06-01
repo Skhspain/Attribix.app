@@ -215,6 +215,9 @@ model TrackingSettings {
   leadsSeenAt      DateTime?
   newsletterSeenAt DateTime?
 
+  // Onboarding
+  onboardingCompletedAt DateTime?
+
   @@index([shop])
   @@index([trackingKey])
   @@index([trackingEnabled])
@@ -646,4 +649,13 @@ model TikTokAdDailyInsight {
   @@unique([shop, date, adId])
   @@index([shop])
   @@index([shop, date])
+}
+
+// ─── Shop plan cache (persisted for webhook quota checks) ────────────────────
+// Written by getShopPlan() whenever admin API is available.
+// Read by webhooks as a fallback when no admin session exists.
+model ShopPlan {
+  shop      String   @id
+  plan      String   // "starter" | "growth" | "pro"
+  updatedAt DateTime @updatedAt
 }

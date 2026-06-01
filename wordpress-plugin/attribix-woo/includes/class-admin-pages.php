@@ -65,6 +65,13 @@ class Admin_Pages {
 			);
 		}
 
+		// Remove hidden pages from the sidebar (they remain accessible by URL)
+		foreach ( $pages as $p ) {
+			if ( ! empty( $p['hidden'] ) ) {
+				remove_submenu_page( self::PARENT, $p['slug'] );
+			}
+		}
+
 		// Settings is last
 		add_submenu_page(
 			self::PARENT,

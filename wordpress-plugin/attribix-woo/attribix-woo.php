@@ -24,7 +24,6 @@ define( 'ATTRIBIX_WOO_DIR', plugin_dir_path( __FILE__ ) );
 define( 'ATTRIBIX_WOO_URL', plugin_dir_url( __FILE__ ) );
 define( 'ATTRIBIX_WOO_OPTION', 'attribix_woo_settings' );
 define( 'ATTRIBIX_WOO_DEFAULT_ENDPOINT', 'https://api.attribix.app/api/track' );
-define( 'ATTRIBIX_WOO_VERSION_LABEL', '1.1.0' );
 
 // Core classes
 require_once ATTRIBIX_WOO_DIR . 'includes/class-http.php';
@@ -40,6 +39,13 @@ require_once ATTRIBIX_WOO_DIR . 'includes/class-pixel-loader.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-api.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-admin-pages.php';
 require_once ATTRIBIX_WOO_DIR . 'includes/class-setup.php';
+
+// Declare WooCommerce HPOS compatibility
+add_action( 'before_woocommerce_init', function () {
+	if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', ATTRIBIX_WOO_FILE, true );
+	}
+} );
 
 add_action( 'plugins_loaded', function () {
 	// Core

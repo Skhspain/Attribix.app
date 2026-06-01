@@ -229,6 +229,21 @@ export async function loader({ request }) {
   const metaConnected = !!(metaConn?.accessToken && metaConn.accessToken !== "__PENDING__" && metaConn.adAccountId);
   const googleConnected = !!(googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && googleConn.adCustomerId);
 
+  const reqUrl = new URL(request.url);
+
+  // Mark onboarding complete when user explicitly clicks "Go to dashboard" or "Skip"
+  if (reqUrl.searchParams.get("skip") === "1") {
+    await db.trackingSettings.upsert({
+      where: { shop },
+      create: { shop, onboardingCompletedAt: new Date() },
+      update: { onboardingCompletedAt: new Date() },
+    }).catch(() => null);
+  }
+
+  const onboardingCompleted = !!(settings?.onboardingCompletedAt);
+  // Show onboarding when: nothing connected, no orders, pixel never fired, and not dismissed
+  const isNewInstall = !onboardingCompleted && !metaConnected && !googleConnected && orders30 === 0 && pixelStatus === "never";
+
   // Unique visitors per source for CVR
   const visitorMap = new Map();
   for (const e of trackedEvents30) {
@@ -310,6 +325,7 @@ export async function loader({ request }) {
     pixelLastSeen: pixelLastSeen?.toISOString() ?? null,
     metaConnected,
     googleConnected,
+    isNewInstall,
     recentPurchases,
     attributionModel: settings?.attributionModel ?? "last_touch",
     attributionWindowDays: settings?.attributionWindowDays ?? 7,
@@ -386,6 +402,104 @@ export default function AppIndex() {
   const data = useLoaderData();
   const navigate = useNavigate();
   const currency = data.storeCurrency || "NOK";
+
+  if (data.isNewInstall) {
+    const steps = [
+      {
+        icon: "📘",
+        title: "Connect Meta Ads",
+        body: "Sync ad spend, enable server-side Conversions API, and see ROAS.",
+        url: "/app/integrations/meta?from=onboarding",
+        cta: "Connect Meta",
+        done: data.metaConnected,
+      },
+      {
+        icon: "📈",
+        title: "Connect Google Ads",
+        body: "Sync Google campaign spend and upload offline conversions.",
+        url: "/app/integrations/google?from=onboarding",
+        cta: "Connect Google",
+        done: data.googleConnected,
+      },
+      {
+        icon: "🔌",
+        title: "Install Tracking Pixel",
+        body: "Captures UTM parameters and click IDs so every order is attributed.",
+        url: "/app/settings/tracking",
+        cta: "View pixel settings",
+        done: data.pixelStatus === "healthy",
+      },
+    ];
+    const completedCount = steps.filter(s => s.done).length;
+
+    return (
+      <Page title="Welcome to Attribix" subtitle="Connect your tools to start tracking sales and ad performance.">
+        <BlockStack gap="500">
+          <Card>
+            <BlockStack gap="500">
+              {/* Progress bar */}
+              <BlockStack gap="150">
+                <InlineStack align="space-between">
+                  <Text as="p" variant="bodySm" tone="subdued">{completedCount} of {steps.length} steps completed</Text>
+                  {completedCount > 0 && (
+                    <Text as="p" variant="bodySm" tone="subdued">{Math.round((completedCount / steps.length) * 100)}%</Text>
+                  )}
+                </InlineStack>
+                <div style={{ background: "#e1e3e5", borderRadius: 999, height: 6 }}>
+                  <div style={{ background: "#008060", borderRadius: 999, height: 6, width: `${Math.round((completedCount / steps.length) * 100)}%`, transition: "width 0.4s ease" }} />
+                </div>
+              </BlockStack>
+
+              {/* Steps */}
+              <BlockStack gap="300">
+                {steps.map((step) => (
+                  <div key={step.title} style={{
+                    display: "grid",
+                    gridTemplateColumns: "44px 1fr auto",
+                    alignItems: "center",
+                    gap: 16,
+                    padding: "16px 18px",
+                    border: `1px solid ${step.done ? "#bbf7d0" : "#e1e3e5"}`,
+                    borderRadius: 10,
+                    background: step.done ? "#f0fdf4" : "#fff",
+                  }}>
+                    <div style={{
+                      width: 44, height: 44, borderRadius: "50%",
+                      background: step.done ? "#008060" : "#f1f3f5",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: step.done ? 20 : 22, flexShrink: 0,
+                    }}>
+                      {step.done ? "✓" : step.icon}
+                    </div>
+                    <BlockStack gap="050">
+                      <Text as="p" variant="headingSm">{step.title}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{step.body}</Text>
+                    </BlockStack>
+                    {step.done
+                      ? <Badge tone="success">Connected</Badge>
+                      : <Button size="slim" onClick={() => navigate(step.url)}>{step.cta}</Button>
+                    }
+                  </div>
+                ))}
+              </BlockStack>
+            </BlockStack>
+          </Card>
+
+          {/* CTA row */}
+          <InlineStack align="space-between" blockAlign="center">
+            <Button variant="plain" tone="subdued" onClick={() => navigate("/app?skip=1")}>
+              Skip setup
+            </Button>
+            {completedCount > 0 && (
+              <Button variant="primary" onClick={() => navigate("/app?skip=1")}>
+                Go to dashboard →
+              </Button>
+            )}
+          </InlineStack>
+        </BlockStack>
+      </Page>
+    );
+  }
 
   const roas = data.totalSpend > 0 ? data.rev30 / data.totalSpend : null;
   const metaRoas = data.metaKpis.spend > 0 ? data.metaKpis.value / data.metaKpis.spend : null;
@@ -478,9 +592,23 @@ export default function AppIndex() {
     <Page
       title="Overview"
       subtitle={data.shop}
-      primaryAction={{ content: "View analytics", onAction: () => navigate("/app/analytics") }}
     >
-      <BlockStack gap="600">
+      <BlockStack gap="500">
+
+        {/* Status bar */}
+        <Card>
+          <InlineStack align="space-between" blockAlign="center" wrap={false}>
+            <InlineStack gap="300" blockAlign="center">
+              <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">STATUS</Text>
+              <Badge tone={pixelBadge.tone}>{pixelBadge.label}</Badge>
+              <Badge tone={data.metaConnected ? "success" : "new"}>Meta {data.metaConnected ? "connected" : "not connected"}</Badge>
+              <Badge tone={data.googleConnected ? "success" : "new"}>Google {data.googleConnected ? "connected" : "not connected"}</Badge>
+            </InlineStack>
+            {(data.pixelStatus !== "healthy" || !data.metaConnected || !data.googleConnected) && (
+              <Button size="slim" variant="plain" onClick={() => navigate("/app/ads")}>Set up →</Button>
+            )}
+          </InlineStack>
+        </Card>
 
         {/* KPI row */}
         <Grid>
@@ -554,146 +682,11 @@ export default function AppIndex() {
           </Card>
         )}
 
-        {/* Feature Hub */}
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">Your Attribix Tools</Text>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
-              {(() => {
-                const metaSalesText = `Sales: ${fmt(data.metaRev7 || 0)}`;
-                const googleSalesText = `Sales: ${fmt(data.googleRev7 || 0)}`;
-                const items = [
-                  // --- Ads platforms first (most important) ---
-                  {
-                    icon: "📘",
-                    title: "Meta Ads",
-                    lines: [
-                      { text: `${fmt(data.metaSpend)} spend`, strong: true },
-                      { text: metaSalesText, muted: true },
-                    ],
-                    delta: data.metaSpendDelta,
-                    deltaPrevZero: (data.metaSpendPrev || 0) === 0,
-                    url: "/app/meta-ads",
-                  },
-                  {
-                    icon: "📈",
-                    title: "Google Ads",
-                    lines: [
-                      { text: `${fmt(data.googleSpend)} spend`, strong: true },
-                      { text: googleSalesText, muted: true },
-                    ],
-                    delta: data.googleSpendDelta,
-                    deltaPrevZero: (data.googleSpendPrev || 0) === 0,
-                    url: "/app/google-ads",
-                  },
-                  // { icon: "🎵", title: "TikTok Ads" ... hidden until approved
-                  { icon: "📊", title: "Analytics", lines: [{ text: "Revenue & attribution", muted: true }], url: "/app/analytics" },
-                  { icon: "📦", title: "Orders", lines: [{ text: `${data.orders30} in 30 days`, muted: true }], url: "/app/orders" },
-                  {
-                    icon: "📧",
-                    title: "Newsletter",
-                    lines: [{ text: `${data.featureHub?.subscriberCount || 0} subs · ${data.featureHub?.campaignCount || 0} sent`, muted: true }],
-                    badge: data.featureHub?.newSubscribersUnseen || 0,
-                    url: "/app/newsletter",
-                  },
-                  {
-                    icon: "⭐",
-                    title: "Reviews",
-                    lines: [{ text: `${data.featureHub?.totalReviews || 0} reviews${data.featureHub?.pendingReviews > 0 ? ` · ${data.featureHub.pendingReviews} pending` : ""}`, muted: true }],
-                    badge: data.featureHub?.newReviewsUnseen || 0,
-                    url: "/app/reviews",
-                  },
-                  {
-                    icon: "👥",
-                    title: "Lead Center",
-                    lines: [{ text: `${data.featureHub?.leadCount || 0} leads`, muted: true }],
-                    badge: data.featureHub?.newLeadsUnseen || 0,
-                    url: "/app/leads",
-                  },
-                  { icon: "🔍", title: "SEO Audit", lines: [{ text: "Score products", muted: true }], url: "/app/seo" },
-                  { icon: "🔗", title: "Product Feeds", lines: [{ text: "Google & Meta", muted: true }], url: "/app/feeds" },
-                  { icon: "🔌", title: "Integrations", lines: [{ text: "Meta, Google, Stripe", muted: true }], url: "/app/ads" },
-                  { icon: "🏷️", title: "UTM Builder", lines: [{ text: "Create tracked links", muted: true }], url: "/app/settings" },
-                  { icon: "🛒", title: "Buy Now Button", lines: [{ text: data.pixelStatus === "healthy" ? "Active" : "Inactive", muted: true }], url: "/app/buy-now" },
-                ];
-
-                return items.map(item => {
-                  const hasDelta = typeof item.delta === "number";
-                  const deltaPositive = hasDelta && item.delta > 0;
-                  const deltaNegative = hasDelta && item.delta < 0;
-                  const deltaColor = deltaPositive ? "#16a34a" : deltaNegative ? "#dc2626" : "#6b7280";
-                  const deltaArrow = deltaPositive ? "▲" : deltaNegative ? "▼" : "—";
-                  const deltaLabel = item.deltaPrevZero && (item.delta ?? 0) === 0
-                    ? "No data last week"
-                    : `${deltaArrow} ${Math.abs(item.delta ?? 0)}% vs last week`;
-
-                  return (
-                    <div
-                      key={item.title}
-                      onClick={() => navigate(item.url)}
-                      style={{
-                        position: "relative",
-                        border: "1px solid #e1e3e5",
-                        borderRadius: 10,
-                        padding: "14px 16px",
-                        background: "#fff",
-                        cursor: "pointer",
-                        transition: "box-shadow 0.15s",
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.08)")}
-                      onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-                    >
-                      {/* Notification badge */}
-                      {item.badge > 0 && (
-                        <div style={{
-                          position: "absolute",
-                          top: -6,
-                          right: -6,
-                          background: "#dc2626",
-                          color: "#fff",
-                          borderRadius: 999,
-                          minWidth: 22,
-                          height: 22,
-                          padding: "0 7px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 11,
-                          fontWeight: 700,
-                          boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-                          border: "2px solid #fff",
-                        }}>
-                          +{item.badge}
-                        </div>
-                      )}
-
-                      <div style={{ fontSize: 22, marginBottom: 6 }}>{item.icon}</div>
-                      <Text as="h3" variant="headingSm">{item.title}</Text>
-                      {item.lines.map((line, i) => (
-                        <div key={i} style={{ marginTop: i === 0 ? 4 : 2 }}>
-                          <Text as="p" variant="bodySm" tone={line.muted ? "subdued" : undefined} fontWeight={line.strong ? "semibold" : undefined}>
-                            {line.text}
-                          </Text>
-                        </div>
-                      ))}
-                      {hasDelta && (
-                        <div style={{ marginTop: 4, fontSize: 11, fontWeight: 600, color: deltaColor }}>
-                          {deltaLabel}
-                        </div>
-                      )}
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </BlockStack>
-        </Card>
-
         {/* Insights */}
         {insights.length > 0 && (
           <Card>
             <BlockStack gap="300">
-              <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">ATTRIBIX INSIGHTS</Text>
+              <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">NEEDS ATTENTION</Text>
               <BlockStack gap="200">
                 {insights.map((ins, i) => <InsightRow key={i} {...ins} />)}
               </BlockStack>
@@ -727,52 +720,6 @@ export default function AppIndex() {
             </BlockStack>
           </Card>
         )}
-
-        {/* Integration status */}
-        <Grid>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 2, md: 2, lg: 4, xl: 4 }}>
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingSm">Pixel tracking</Text>
-                  <Badge tone={pixelBadge.tone}>{pixelBadge.label}</Badge>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {data.pixelLastSeen ? `Last event: ${formatDate(data.pixelLastSeen)}` : "No pixel events recorded yet"}
-                </Text>
-                <Button size="slim" onClick={() => navigate("/app/settings")}>View settings</Button>
-              </BlockStack>
-            </Card>
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 2, md: 2, lg: 4, xl: 4 }}>
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingSm">Meta Ads</Text>
-                  <Badge tone={data.metaConnected ? "success" : "new"}>{data.metaConnected ? "Connected" : "Not connected"}</Badge>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {data.metaConnected ? `Spend ${fmtDec(data.metaSpend, currency)} · ROAS ${metaRoas !== null ? Math.round(metaRoas * 100) + "%" : "—"}` : "Connect Meta to sync ad spend and enable server-side CAPI."}
-                </Text>
-                <Button size="slim" onClick={() => navigate("/app/ads")}>{data.metaConnected ? "Manage" : "Connect"}</Button>
-              </BlockStack>
-            </Card>
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 2, md: 2, lg: 4, xl: 4 }}>
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <Text as="h3" variant="headingSm">Google Ads</Text>
-                  <Badge tone={data.googleConnected ? "success" : "new"}>{data.googleConnected ? "Connected" : "Not connected"}</Badge>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {data.googleConnected ? `Spend ${fmtDec(data.googleSpend, currency)} syncing.` : "Connect Google Ads to sync spend and upload conversions."}
-                </Text>
-                <Button size="slim" onClick={() => navigate("/app/ads")}>{data.googleConnected ? "Manage" : "Connect"}</Button>
-              </BlockStack>
-            </Card>
-          </Grid.Cell>
-        </Grid>
 
         {/* Recent orders */}
         <Card>

@@ -3,6 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { db } from "~/db.server";
 import { authenticateStandalone, standaloneCors, standaloneOptions } from "~/utils/standalone-auth.server";
+import { getShopPlan, checkSubscribersQuota } from "~/services/plan.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const preflight = standaloneOptions(request);
@@ -60,6 +61,17 @@ export async function action({ request }: ActionFunctionArgs) {
   // ADD subscriber
   if (action === "add-subscriber") {
     if (!body.email) return standaloneCors(request, json({ ok: false, error: "Email required" }, { status: 400 }));
+
+    // Quota check — only for new subscribers (not re-subscribing)
+    const existing = await db.newsletterSubscriber.findUnique({ where: { shop_email: { shop, email: body.email } } });
+    if (!existing || existing.status === "unsubscribed") {
+      const plan = await getShopPlan(shop);
+      const quota = await checkSubscribersQuota(shop, plan);
+      if (!quota.allowed) {
+        return standaloneCors(request, json({ ok: false, error: `Subscriber limit reached (${quota.used}/${quota.limit}). Upgrade your plan to add more subscribers.` }, { status: 403 }));
+      }
+    }
+
     const subscriber = await db.newsletterSubscriber.upsert({
       where: { shop_email: { shop, email: body.email } },
       create: {

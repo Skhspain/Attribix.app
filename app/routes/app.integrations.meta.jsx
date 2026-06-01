@@ -1,7 +1,7 @@
 // app/routes/app.integrations.meta.jsx
 import React, { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData, useRevalidator, Form } from "@remix-run/react";
+import { useLoaderData, useRevalidator, useNavigate, Form } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -115,6 +115,8 @@ export async function loader({ request }) {
     }
   }
 
+  const fromOnboarding = url.searchParams.get("from") === "onboarding";
+
   return json({
     shop,
     host,
@@ -127,6 +129,7 @@ export async function loader({ request }) {
     connectedAssets,
     fbPixelId: trackingSettings?.fbPixelId || "",
     fbToken: trackingSettings?.fbToken || "",
+    fromOnboarding,
   });
 }
 
@@ -135,6 +138,7 @@ export async function loader({ request }) {
 function MetaIntegrationsInner({ data }) {
   const authFetch = useAuthenticatedFetch();
   const revalidator = useRevalidator();
+  const navigate = useNavigate();
 
   const [accounts, setAccounts] = useState([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
@@ -175,6 +179,13 @@ function MetaIntegrationsInner({ data }) {
   }
 
   const connected = !!data.connected;
+
+  // Auto-close onboarding when Meta becomes connected
+  useEffect(() => {
+    if (data.fromOnboarding && connected) {
+      navigate("/app");
+    }
+  }, [connected, data.fromOnboarding]);
 
   // Auto-fetch pixels from Meta
   useEffect(() => {
@@ -290,7 +301,8 @@ function MetaIntegrationsInner({ data }) {
   }
 
   function startMetaOAuth() {
-    const returnTo = "/app/integrations/meta";
+    const fromParam = data.fromOnboarding ? "?from=onboarding" : "";
+    const returnTo = `/app/integrations/meta${fromParam}`;
     const base = "https://attribix.app";
 
     const startUrl =
@@ -629,6 +641,8 @@ function MetaIntegrationsInner({ data }) {
             </Banner>
           </Layout.Section>
         )}
+
+
       </Layout>
     </Page>
   );

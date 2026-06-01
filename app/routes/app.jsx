@@ -35,10 +35,40 @@ async function ensureScriptTags(admin) {
   }
 }
 
+// Partner / development stores that bypass the billing gate.
+// Their plans are managed directly via the Shopify Partner Dashboard.
+// Once their subscription is active, getShopPlan() detects it automatically.
+// NOTE: Only add stores here if they are true Shopify Partner/dev stores where
+// the pricing_plans URL doesn't work. Real merchants should NOT be listed here.
+// Dev stores that can't go through Shopify managed pricing.
+// Their plan tier is controlled via MANUAL_PLAN_<shop> Fly.io secrets.
+// To cut off access: remove from this set AND delete the secret.
+const PARTNER_SHOPS = new Set([
+]);
+
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
   await shopify.registerWebhooks({ session });
   await ensureScriptTags(admin);
+
+  // Gate: require an active plan — redirect to billing page if none selected.
+  // Partner shops bypass this gate; their billing is managed via Partner Dashboard.
+  const url = new URL(request.url);
+  const isBillingPage = url.pathname.startsWith("/app/billing") || url.pathname.startsWith("/app/stripe");
+  const isPartner = PARTNER_SHOPS.has(session.shop);
+  if (!isBillingPage && !isPartner) {
+    const { getShopPlan } = await import("~/services/plan.server");
+    const plan = await getShopPlan(session.shop, admin);
+    if (plan === "none") {
+      const { redirect } = await import("@remix-run/node");
+      // Preserve embedded auth params so billing page can authenticate
+      const billingUrl = new URL("/app/billing", url.origin);
+      for (const [key, val] of url.searchParams.entries()) {
+        billingUrl.searchParams.set(key, val);
+      }
+      return redirect(billingUrl.toString());
+    }
+  }
 
   return json({
     apiKey:
@@ -72,16 +102,20 @@ export default function AppRoute() {
       {/* ui-nav-menu is an App Bridge web component — renders the embedded app sidebar nav */}
       <ui-nav-menu>
         <a href="/app" rel="home">Overview</a>
+        {/* Ads & Attribution */}
         <a href="/app/analytics">Analytics</a>
         <a href="/app/meta-ads">Meta Ads</a>
         <a href="/app/google-ads">Google Ads</a>
         {/* <a href="/app/tiktok-ads">TikTok Ads</a> — hidden until TikTok dev app approved */}
+        {/* Marketing */}
+        <a href="/app/newsletter">Newsletter</a>
         <a href="/app/leads">Lead Center</a>
         <a href="/app/reviews">Reviews</a>
+        {/* Tools */}
         <a href="/app/orders">Orders</a>
-        <a href="/app/newsletter">Newsletter</a>
         <a href="/app/seo">SEO Audit</a>
         <a href="/app/feeds">Feeds</a>
+        {/* Setup */}
         <a href="/app/integrations/meta">Integrations</a>
         <a href="/app/settings">Settings</a>
       </ui-nav-menu>

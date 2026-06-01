@@ -636,3 +636,10 @@ model TikTokAdDailyInsight {
   @@index([shop])
   @@index([shop, date])
 }
+
+// ─── Shop plan cache (persisted for webhook quota checks) ────────────────────
+model ShopPlan {
+  shop      String   @id
+  plan      String   // "starter" | "growth" | "pro"
+  updatedAt DateTime @updatedAt
+}
