@@ -3,11 +3,13 @@
 // Returns a Google Product Ratings XML feed (schema 2.3) for all approved reviews.
 // Token is HMAC-SHA256(shop, SHOPIFY_API_SECRET) — no DB lookup needed.
 
-import { createHmac } from "node:crypto";
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import db from "~/db.server";
 
-export function makeFeedToken(shop: string): string {
+// Dynamic import keeps node:crypto out of the browser bundle (Vite treats
+// top-level Node built-in imports as browser-incompatible in route files).
+async function makeFeedToken(shop: string): Promise<string> {
+  const { createHmac } = await import("node:crypto");
   const secret = process.env.SHOPIFY_API_SECRET ?? "attribix-feed-fallback";
   return createHmac("sha256", secret).update(shop).digest("hex").slice(0, 32);
 }
@@ -30,7 +32,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = url.searchParams.get("shop") ?? "";
   const token = url.searchParams.get("token") ?? "";
 
-  if (!shop || !token || token !== makeFeedToken(shop)) {
+  if (!shop || !token || token !== await makeFeedToken(shop)) {
     return new Response("Unauthorized", { status: 401 });
   }
 
