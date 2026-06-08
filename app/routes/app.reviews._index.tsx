@@ -1,5 +1,4 @@
 // app/routes/app.reviews._index.tsx
-import { createHmac } from "node:crypto";
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useFetcher } from "@remix-run/react";
 import { useState } from "react";
@@ -8,13 +7,6 @@ import {
   EmptyState, Grid, InlineStack, Page, Select, Text, TextField, Modal,
 } from "@shopify/polaris";
 import db from "../db.server";
-
-// ─── Feed token (mirrors api.reviews.feed.ts) ────────────────────────────────
-
-function makeFeedToken(shop: string): string {
-  const secret = process.env.SHOPIFY_API_SECRET ?? "attribix-feed-fallback";
-  return createHmac("sha256", secret).update(shop).digest("hex").slice(0, 32);
-}
 
 // ─── Color presets ────────────────────────────────────────────────────────────
 
@@ -91,7 +83,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   for (const c of counts ?? []) statusCounts[c.status] = c._count.id;
 
   const APP_URL = (process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev").replace(/\/$/, "");
-  const feedUrl = `${APP_URL}/api/reviews/feed?shop=${shop}&token=${makeFeedToken(shop)}`;
+  const { createHmac } = await import("node:crypto");
+  const feedToken = createHmac("sha256", process.env.SHOPIFY_API_SECRET ?? "attribix-feed-fallback").update(shop).digest("hex").slice(0, 32);
+  const feedUrl = `${APP_URL}/api/reviews/feed?shop=${shop}&token=${feedToken}`;
 
   return json({
     shop,
