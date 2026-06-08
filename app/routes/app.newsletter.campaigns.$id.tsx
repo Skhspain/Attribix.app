@@ -57,7 +57,26 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 // ─── Action ──────────────────────────────────────────────────────────────────
 
 export async function action({ request, params }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  // With unstable_newEmbeddedAuthStrategy the adapter throws a redirect Response
+  // when the Bearer token is missing/invalid. Catch it so AJAX callers get JSON
+  // instead of an HTML page that the client can't parse.
+  let session: any;
+  let admin: any;
+  try {
+    ({ session, admin } = await authenticate.admin(request));
+  } catch (e: any) {
+    if (
+      e instanceof Response &&
+      (request.headers.get("content-type")?.includes("application/json") ||
+        request.headers.get("accept")?.includes("application/json"))
+    ) {
+      return json(
+        { ok: false, error: "Session expired — please refresh the page and try again" },
+        { status: 401 },
+      );
+    }
+    throw e;
+  }
   const shop = session.shop;
   const anyDb = db as any;
   const body = await request.json().catch(() => ({}));
@@ -167,7 +186,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
     const recipientCount = await countSubscribersForSegment(shop, campaign?.segmentFilter ?? {});
 
-    const { admin } = await authenticate.admin(request);
     const plan = await getShopPlan(shop, admin);
     const quota = await checkNewsletterSendsQuota(shop, plan, recipientCount);
 

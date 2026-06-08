@@ -31,9 +31,7 @@ const shopify = shopifyApp({
       callbackUrl: "/webhooks/orders_create",
     },
   },
-  future: {
-    unstable_newEmbeddedAuthStrategy: true,
-  },
+  future: {},
 });
 
 export default shopify;

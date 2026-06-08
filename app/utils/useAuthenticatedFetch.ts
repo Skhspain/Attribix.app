@@ -28,14 +28,21 @@ export function useAuthenticatedFetch(): Fetcher {
 
     const response = await fetch(input, { ...init, headers });
 
-    // If we got HTML back instead of JSON the session token likely expired.
-    // Try once more with a freshly-fetched token.
+    // Retry once with a fresh token when auth appears to have failed:
+    //  • HTTP 401 — server now returns JSON 401 for AJAX auth failures
+    //  • Non-JSON/XML content-type — the old HTML-redirect fallback
     const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.includes("json") && !contentType.includes("xml")) {
+    const authFailed =
+      response.status === 401 ||
+      (!contentType.includes("json") && !contentType.includes("xml"));
+
+    if (authFailed) {
       const freshToken = await getToken();
       if (freshToken && freshToken !== token) {
-        headers.set("Authorization", `Bearer ${freshToken}`);
-        return fetch(input, { ...init, headers });
+        const retryHeaders = new Headers(init.headers || {});
+        retryHeaders.set("Authorization", `Bearer ${freshToken}`);
+        retryHeaders.set("Accept", "application/json");
+        return fetch(input, { ...init, headers: retryHeaders });
       }
     }
 
