@@ -400,8 +400,13 @@ export default function CampaignEditor() {
     if (editMode === "preview") {
       await saveData(campaign.htmlContent || "", null);
     } else if (window.unlayer && unlayerReady) {
-      window.unlayer.exportHtml(async (data: { design: object; html: string }) => {
-        await saveData(data.html, data.design);
+      // exportHtml is callback-based — wrap in a Promise so callers can
+      // await the full save before navigating away.
+      await new Promise<void>((resolve) => {
+        window.unlayer.exportHtml(async (data: { design: object; html: string }) => {
+          await saveData(data.html, data.design);
+          resolve();
+        });
       });
     } else {
       // Unlayer not ready — save what we have
@@ -446,9 +451,12 @@ export default function CampaignEditor() {
       await saveData(campaign.htmlContent || "", null);
       await doSend();
     } else if (window.unlayer && unlayerReady) {
-      window.unlayer.exportHtml(async (data: { design: object; html: string }) => {
-        await saveData(data.html, data.design);
-        await doSend();
+      await new Promise<void>((resolve) => {
+        window.unlayer.exportHtml(async (data: { design: object; html: string }) => {
+          await saveData(data.html, data.design);
+          await doSend();
+          resolve();
+        });
       });
     } else {
       await saveData(campaign.htmlContent || "", null);
