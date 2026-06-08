@@ -225,7 +225,23 @@ export default function AttributionPage() {
       title="Attribution"
       subtitle="Real multi-touch journey data from your pixel"
       backAction={{ content: "Analytics", url: "/app/analytics" }}
-      primaryAction={{ content: "Export CSV", onAction: () => {} }}
+      primaryAction={{
+        content: "Export CSV",
+        onAction: () => {
+          const sorted = [...channelRows].sort((a, b) => revenueForModel(b, model) - revenueForModel(a, model));
+          const header = "channel,revenue,orders,share\n";
+          const totalRev = totalForModel(totalRevenue, model);
+          const rows = sorted.map(r => {
+            const rev = revenueForModel(r, model);
+            const share = totalRev > 0 ? ((rev / totalRev) * 100).toFixed(1) : "0";
+            return `"${r.channel}",${rev.toFixed(2)},${r.orders},"${share}%"`;
+          }).join("\n");
+          const blob = new Blob([header + rows], { type: "text/csv" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a"); a.href = url; a.download = `attribution-${model}-${days}d.csv`; a.click();
+          URL.revokeObjectURL(url);
+        },
+      }}
     >
       <BlockStack gap="500">
 

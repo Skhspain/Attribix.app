@@ -193,10 +193,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Sort by score ascending (worst first) for the issues table
   const sorted = [...audits].sort((a, b) => a.score - b.score);
 
+  // Estimated score after fixing all flagged issues
+  const estimatedAvgScore = totalProducts > 0
+    ? Math.min(100, Math.round(avgScore + (missingMetaDesc * 25 + thinContent * 20 + missingAltText * 15 + missingMetaTitle * 10) / totalProducts))
+    : 0;
+
   return json({
     shop,
     totalProducts,
     avgScore,
+    estimatedAvgScore,
     missingMetaDesc,
     missingAltText,
     thinContent,
@@ -211,12 +217,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function scoreBadge(score: number) {
-  if (score >= 80) return <Badge tone="success">{score}</Badge>;
-  if (score >= 50) return <Badge tone="attention">{score}</Badge>;
-  return <Badge tone="critical">{score}</Badge>;
-}
-
 function scoreColor(score: number) {
   if (score >= 80) return "#22c55e";
   if (score >= 50) return "#f59e0b";
@@ -229,20 +229,31 @@ function severityIcon(s: "error" | "warning" | "info") {
   return "🔵";
 }
 
+function statusLabel(score: number): { label: string; color: string; bg: string } {
+  if (score >= 80) return { label: "Good", color: "#15803D", bg: "#DCFCE7" };
+  if (score >= 50) return { label: "Needs work", color: "#92400E", bg: "#FEF3C7" };
+  return { label: "Critical", color: "#991B1B", bg: "#FEE2E2" };
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function SeoIndex() {
   const {
-    shop, totalProducts, avgScore,
+    shop, totalProducts, avgScore, estimatedAvgScore,
     missingMetaDesc, missingAltText, thinContent, missingMetaTitle,
     errorCount, warningCount, goodCount,
     products, metafieldLimit,
   } = useLoaderData<typeof loader>();
 
-  const navigate = useNavigate();
   const { revalidate, state } = useRevalidator();
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "error" | "warning" | "good">("all");
+  const [selectedId, setSelectedId] = useState<string | null>(products[0]?.id ? products[0].id.split("/").pop() ?? null : null);
+
+  const numericId = (gid: string) => gid.split("/").pop() ?? gid;
+
+  const storeGrade = avgScore >= 80 ? "A" : avgScore >= 65 ? "B" : avgScore >= 50 ? "C" : avgScore >= 35 ? "D" : "F";
+  const gradeColor = avgScore >= 80 ? "#22c55e" : avgScore >= 65 ? "#84cc16" : avgScore >= 50 ? "#f59e0b" : avgScore >= 35 ? "#f97316" : "#ef4444";
+  const scoreDesc = avgScore >= 80 ? "Your store's SEO is in great shape!" : avgScore >= 50 ? "Your SEO needs some work." : "Your SEO needs attention.";
 
   const filtered = products.filter(p => {
     if (filter === "error")   return p.score < 50;
@@ -251,274 +262,344 @@ export default function SeoIndex() {
     return true;
   });
 
-  const toggle = useCallback((id: string) => {
-    setExpanded(prev => prev === id ? null : id);
-  }, []);
+  const selectedProduct = products.find(p => numericId(p.id) === selectedId) ?? null;
 
-  const storeGrade =
-    avgScore >= 80 ? "A" :
-    avgScore >= 65 ? "B" :
-    avgScore >= 50 ? "C" :
-    avgScore >= 35 ? "D" : "F";
-
-  const gradeColor =
-    avgScore >= 80 ? "#22c55e" :
-    avgScore >= 65 ? "#84cc16" :
-    avgScore >= 50 ? "#f59e0b" :
-    avgScore >= 35 ? "#f97316" : "#ef4444";
+  const fixes = [
+    missingMetaDesc > 0 && { icon: "⭐", title: `Add meta descriptions to ${missingMetaDesc} product${missingMetaDesc > 1 ? "s" : ""}`, desc: `Meta descriptions directly affect CTR — each one you add can increase clicks by 5–10%.`, impact: "High impact", color: "#EF4444" },
+    thinContent > 0 && { icon: "⭐", title: `Expand descriptions on ${thinContent} product${thinContent > 1 ? "s" : ""}`, desc: "Products with 100+ word descriptions rank significantly better.", impact: "Medium impact", color: "#F59E0B" },
+    missingAltText > 0 && { icon: "☆", title: `Add alt text to images on ${missingAltText} product${missingAltText > 1 ? "s" : ""}`, desc: "Helps Google Images index your products.", impact: "Medium impact", color: "#F59E0B" },
+    missingMetaTitle > 0 && { icon: "☆", title: `Set custom meta titles on ${missingMetaTitle} product${missingMetaTitle > 1 ? "s" : ""}`, desc: "Shopify uses the product title as fallback — custom titles are better.", impact: "Low impact", color: "#9CA3AF" },
+  ].filter(Boolean) as Array<{ icon: string; title: string; desc: string; impact: string; color: string }>;
 
   return (
     <Page
       title="SEO Audit"
-      subtitle={`${totalProducts} products scanned`}
-      primaryAction={{ content: state === "loading" ? "Scanning…" : "Re-scan", onAction: revalidate, loading: state === "loading" }}
+      subtitle={`Last scan: Just now • ${totalProducts} product${totalProducts !== 1 ? "s" : ""} scanned`}
+      primaryAction={{ content: state === "loading" ? "Scanning…" : "Re-scan", onAction: revalidate, loading: state === "loading", icon: undefined }}
+      secondaryActions={[{
+        content: "Export report",
+        onAction: () => {
+          const csv = ["Product,Score,Issues,Status"].concat(products.map(p => `"${p.title}",${p.score},"${p.issues.map(i => i.field).join("; ")}","${statusLabel(p.score).label}"`)).join("\n");
+          const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = "seo-audit.csv"; a.click();
+        }
+      }]}
     >
-      <BlockStack gap="500">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 20, alignItems: "start" }}>
 
-        {/* ── Store Score ── */}
-        <Card>
-          <InlineStack gap="800" align="start" blockAlign="center" wrap={false}>
-            {/* Grade circle */}
-            <div style={{
-              width: 96, height: 96, borderRadius: "50%",
-              background: gradeColor,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0,
-            }}>
-              <span style={{ fontSize: 40, fontWeight: 800, color: "#fff" }}>{storeGrade}</span>
-            </div>
+        {/* ── MAIN CONTENT ───────────────────────────────────── */}
+        <BlockStack gap="400">
 
-            <BlockStack gap="200" inlineSize="100%">
-              <InlineStack align="space-between">
-                <Text variant="headingMd" as="h2">Overall SEO Score</Text>
-                <Text variant="headingLg" as="p" tone={avgScore >= 80 ? "success" : avgScore >= 50 ? "caution" : "critical"}>
-                  {avgScore} / 100
-                </Text>
-              </InlineStack>
-              <ProgressBar progress={avgScore} tone={avgScore >= 80 ? "success" : avgScore >= 50 ? "warning" : "critical"} size="medium" />
-              <InlineStack gap="400">
-                <Text variant="bodySm" tone="critical">🔴 {errorCount} critical</Text>
-                <Text variant="bodySm" tone="caution">🟡 {warningCount} needs work</Text>
-                <Text variant="bodySm" tone="success">🟢 {goodCount} good</Text>
-              </InlineStack>
-            </BlockStack>
-          </InlineStack>
-        </Card>
-
-        {/* ── Issue Summary ── */}
-        <Grid columns={{ xs: 2, sm: 2, md: 4, lg: 4, xl: 4 }}>
-          {[
-            { label: "Missing Meta Description", count: missingMetaDesc, color: "#ef4444", tip: "Critical — directly impacts click-through rate" },
-            { label: "Missing Alt Text",         count: missingAltText,  color: "#f97316", tip: "Image alt text helps Google understand your products" },
-            { label: "Thin Content",             count: thinContent,     color: "#f59e0b", tip: "Less than 50 words — Google prefers detailed descriptions" },
-            { label: "No Custom Meta Title",     count: missingMetaTitle,color: "#eab308", tip: "Shopify uses product title as fallback — not always ideal" },
-          ].map(({ label, count, color, tip }) => (
-            <Grid.Cell key={label}>
-              <Card>
-                <BlockStack gap="100">
-                  <Text variant="headingXl" as="p" fontWeight="bold">
-                    <span style={{ color }}>{count}</span>
-                  </Text>
-                  <Text variant="bodyMd" as="p">{label}</Text>
-                  <Text variant="bodySm" tone="subdued">{tip}</Text>
-                </BlockStack>
-              </Card>
-            </Grid.Cell>
-          ))}
-        </Grid>
-
-        {/* ── Quick Wins ── */}
-        {missingMetaDesc > 0 && (
+          {/* Score card (3 columns) */}
           <Card>
-            <BlockStack gap="300">
-              <Text variant="headingMd" as="h2">⚡ Quick Wins</Text>
-              <Text variant="bodySm" tone="subdued">Fix these first — highest impact on organic traffic</Text>
-              <Divider />
-              <BlockStack gap="200">
-                {missingMetaDesc > 0 && (
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="050">
-                      <Text variant="bodyMd" fontWeight="semibold">Add meta descriptions to {missingMetaDesc} product{missingMetaDesc > 1 ? "s" : ""}</Text>
-                      <Text variant="bodySm" tone="subdued">Meta descriptions directly affect CTR — each one you add can increase clicks by 5–10%</Text>
-                    </BlockStack>
-                    <Badge tone="critical">High impact</Badge>
-                  </InlineStack>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 0 }}>
+              {/* Column 1: grade + score */}
+              <div style={{ display: "flex", gap: 20, alignItems: "center", paddingRight: 24, borderRight: "1px solid #F3F4F6" }}>
+                <div style={{ width: 80, height: 80, borderRadius: "50%", background: gradeColor, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <span style={{ fontSize: 36, fontWeight: 800, color: "#fff" }}>{storeGrade}</span>
+                </div>
+                <BlockStack gap="100">
+                  <Text as="p" variant="bodySm" tone="subdued">Overall SEO Score</Text>
+                  <Text as="p" variant="headingXl" fontWeight="bold"><span style={{ color: gradeColor }}>{avgScore} / 100</span></Text>
+                  <div style={{ width: "100%", background: "#F3F4F6", borderRadius: 4, height: 6 }}>
+                    <div style={{ width: `${avgScore}%`, background: gradeColor, borderRadius: 4, height: "100%", transition: "width 0.5s" }} />
+                  </div>
+                  <Text as="p" variant="bodySm" tone="subdued">{scoreDesc}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">Fix the issues below to improve your rankings and get more traffic to your store.</Text>
+                </BlockStack>
+              </div>
+
+              {/* Column 2: estimated after fixes */}
+              <div style={{ padding: "0 24px", borderRight: "1px solid #F3F4F6" }}>
+                <Text as="p" variant="bodySm" tone="subdued">Estimated score after fixes</Text>
+                <Text as="p" variant="headingXl" fontWeight="bold"><span style={{ color: "#22c55e" }}>{estimatedAvgScore} / 100</span></Text>
+                <div style={{ width: "100%", background: "#F3F4F6", borderRadius: 4, height: 6, marginTop: 4, marginBottom: 8 }}>
+                  <div style={{ width: `${estimatedAvgScore}%`, background: "#22c55e", borderRadius: 4, height: "100%", transition: "width 0.5s" }} />
+                </div>
+                <Text as="p" variant="bodySm" tone="success"><strong>Great!</strong> Fixing the critical issues can significantly improve your SEO score.</Text>
+              </div>
+
+              {/* Column 3: what is SEO score */}
+              <div style={{ paddingLeft: 24 }}>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">What is SEO Score?</Text>
+                <Text as="p" variant="bodySm" tone="subdued">We analyze key on-page SEO factors that impact your search rankings.</Text>
+                <div style={{ marginTop: 10 }}>
+                  {["Meta titles & descriptions", "Content quality", "Image alt text", "Technical basics"].map(item => (
+                    <div key={item} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ color: "#16A34A", fontSize: 14 }}>✓</span>
+                      <Text as="p" variant="bodySm">{item}</Text>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <Text as="p" variant="bodySm"><a href="#" style={{ color: "#008060" }}>Learn more about SEO scoring ↗</a></Text>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          {/* Issue cards row */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+            {[
+              { field: "Missing Meta Description", count: missingMetaDesc, severity: "Critical", color: "#EF4444", bg: "#FEF2F2", icon: "📝", desc: "Directly impacts click-through rate" },
+              { field: "Missing Alt Text", count: missingAltText, severity: "Needs work", color: "#F97316", bg: "#FFF7ED", icon: "🖼️", desc: "Helps search engines understand your images" },
+              { field: "Thin Content", count: thinContent, severity: "Needs work", color: "#F59E0B", bg: "#FFFBEB", icon: "✏️", desc: "Less than 50 words — Google prefers detailed descriptions" },
+              { field: "This is not a Meta Title", count: missingMetaTitle, severity: "Critical", color: "#EF4444", bg: "#FEF2F2", icon: "🏷️", desc: "Your product title is used as fallback, not always ideal" },
+            ].map((card, i) => (
+              <div key={i} style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, padding: "16px", position: "relative" }}>
+                <div style={{ display: "flex", alignItems: "start", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 20 }}>{card.icon}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: card.bg, color: card.color }}>{card.severity}</span>
+                </div>
+                <Text as="p" variant="headingXl" fontWeight="bold">{card.count}</Text>
+                <Text as="p" variant="bodyMd" fontWeight="semibold">{card.field}</Text>
+                <Text as="p" variant="bodySm" tone="subdued">{card.desc}</Text>
+                {card.count > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    <span style={{ fontSize: 12, color: "#008060", fontWeight: 600, cursor: "pointer" }}>
+                      {card.count} product{card.count !== 1 ? "s" : ""} affected
+                    </span>
+                  </div>
                 )}
-                {missingAltText > 0 && (
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="050">
-                      <Text variant="bodyMd" fontWeight="semibold">Add alt text to images on {missingAltText} product{missingAltText > 1 ? "s" : ""}</Text>
-                      <Text variant="bodySm" tone="subdued">Helps Google Images index your products and improves accessibility</Text>
-                    </BlockStack>
-                    <Badge tone="attention">Medium impact</Badge>
-                  </InlineStack>
-                )}
-                {thinContent > 0 && (
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="050">
-                      <Text variant="bodyMd" fontWeight="semibold">Expand descriptions on {thinContent} product{thinContent > 1 ? "s" : ""}</Text>
-                      <Text variant="bodySm" tone="subdued">Products with 100+ word descriptions rank significantly better</Text>
-                    </BlockStack>
-                    <Badge tone="attention">Medium impact</Badge>
-                  </InlineStack>
+              </div>
+            ))}
+          </div>
+
+          {/* Recommended fixes */}
+          {fixes.length > 0 && (
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack gap="200" blockAlign="center">
+                  <span style={{ fontSize: 18 }}>📈</span>
+                  <BlockStack gap="025">
+                    <Text as="h2" variant="headingMd">Recommended fixes</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">Start with these improvements for the biggest SEO impact.</Text>
+                  </BlockStack>
+                </InlineStack>
+                <Divider />
+                <BlockStack gap="200">
+                  {fixes.slice(0, 4).map((fix, i) => (
+                    <InlineStack key={i} align="space-between" blockAlign="center">
+                      <InlineStack gap="300" blockAlign="start">
+                        <span style={{ fontSize: 18, marginTop: 2 }}>{fix.icon}</span>
+                        <BlockStack gap="025">
+                          <Text as="p" variant="bodyMd" fontWeight="semibold">{fix.title}</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">{fix.desc}</Text>
+                        </BlockStack>
+                      </InlineStack>
+                      <InlineStack gap="200" blockAlign="center">
+                        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 99, background: fix.color + "18", color: fix.color, whiteSpace: "nowrap" }}>
+                          {fix.impact}
+                        </span>
+                        <Button size="slim" onClick={() => selectedProduct && window.open(`https://${shop}/admin/products/${numericId(selectedProduct.id)}`, "_blank")}>
+                          Fix now
+                        </Button>
+                      </InlineStack>
+                    </InlineStack>
+                  ))}
+                </BlockStack>
+                {fixes.length > 0 && (
+                  <div style={{ textAlign: "center", paddingTop: 4 }}>
+                    <span style={{ fontSize: 13, color: "#008060", fontWeight: 600, cursor: "pointer" }}>View all issues →</span>
+                  </div>
                 )}
               </BlockStack>
-            </BlockStack>
-          </Card>
-        )}
+            </Card>
+          )}
 
-        {/* ── Product Table ── */}
-        <Card>
-          <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text variant="headingMd" as="h2">Products</Text>
-              <InlineStack gap="200">
-                {(["all", "error", "warning", "good"] as const).map(f => (
-                  <button
-                    key={f}
-                    onClick={() => setFilter(f)}
-                    style={{
-                      padding: "4px 12px",
-                      borderRadius: 6,
-                      border: "1px solid",
-                      borderColor: filter === f ? "#4f46e5" : "#e5e7eb",
-                      background: filter === f ? "#4f46e5" : "#fff",
+          {/* Products table */}
+          <Card padding="0">
+            {/* Header */}
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid #F3F4F6" }}>
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">Products</Text>
+                <InlineStack gap="100">
+                  {(["all", "error", "warning", "good"] as const).map(f => (
+                    <button key={f} onClick={() => setFilter(f)} style={{
+                      padding: "4px 12px", borderRadius: 8, border: "1.5px solid",
+                      borderColor: filter === f ? "#008060" : "#E5E7EB",
+                      background: filter === f ? "#008060" : "#fff",
                       color: filter === f ? "#fff" : "#374151",
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontWeight: 500,
-                    }}
-                  >
-                    {f === "all" ? `All (${products.length})` :
-                     f === "error" ? `🔴 Critical (${errorCount})` :
-                     f === "warning" ? `🟡 Needs work (${warningCount})` :
-                     `🟢 Good (${goodCount})`}
-                  </button>
-                ))}
+                      cursor: "pointer", fontSize: 12, fontWeight: 600,
+                    }}>
+                      {f === "all" ? `All (${products.length})` :
+                       f === "error" ? `🔴 Critical (${errorCount})` :
+                       f === "warning" ? `🟡 Needs work (${warningCount})` :
+                       `🟢 Good (${goodCount})`}
+                    </button>
+                  ))}
+                </InlineStack>
               </InlineStack>
-            </InlineStack>
+            </div>
 
-            <Divider />
+            {/* Table header */}
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 130px 140px 90px 100px 100px", padding: "8px 20px", background: "#FAFAFA", borderBottom: "1px solid #F3F4F6" }}>
+              {["Product", "SEO Score", "Issues", "Status", "Last scanned", "Action"].map(h => (
+                <Text key={h} as="p" variant="bodySm" fontWeight="semibold" tone="subdued">{h}</Text>
+              ))}
+            </div>
 
-            {filtered.length === 0 && (
-              <Box padding="600">
-                <Text alignment="center" tone="subdued">No products in this category.</Text>
-              </Box>
-            )}
-
-            <BlockStack gap="0">
-              {filtered.map((product, idx) => (
-                <div key={product.id}>
-                  {idx > 0 && <Divider />}
-                  <div
-                    onClick={() => toggle(product.id)}
-                    style={{ padding: "12px 0", cursor: "pointer" }}
-                  >
-                    <InlineStack align="space-between" blockAlign="center" wrap={false} gap="400">
-                      <InlineStack gap="300" blockAlign="center" wrap={false}>
-                        {/* Score ring */}
-                        <div style={{
-                          width: 44, height: 44, borderRadius: "50%",
-                          border: `3px solid ${scoreColor(product.score)}`,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          flexShrink: 0,
-                        }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: scoreColor(product.score) }}>
-                            {product.score}
-                          </span>
-                        </div>
-
-                        {/* Product image */}
-                        {product.image && (
-                          <img
-                            src={product.image}
-                            alt=""
-                            style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 4, flexShrink: 0 }}
-                          />
-                        )}
-
-                        <BlockStack gap="050">
-                          <Text variant="bodyMd" fontWeight="semibold">{product.title}</Text>
-                          <Text variant="bodySm" tone="subdued">/{product.handle}</Text>
+            {filtered.length === 0 ? (
+              <div style={{ padding: "32px 20px", textAlign: "center" }}>
+                <Text as="p" tone="subdued">No products in this category.</Text>
+              </div>
+            ) : (
+              filtered.map((product, idx) => {
+                const pid = numericId(product.id);
+                const errors = product.issues.filter(i => i.severity === "error").length;
+                const warnings = product.issues.filter(i => i.severity === "warning").length;
+                const status = statusLabel(product.score);
+                const isSelected = selectedId === pid;
+                return (
+                  <div key={pid}>
+                    {idx > 0 && <div style={{ height: 1, background: "#F3F4F6" }} />}
+                    <div
+                      onClick={() => setSelectedId(pid)}
+                      style={{ display: "grid", gridTemplateColumns: "2fr 130px 140px 90px 100px 100px", padding: "14px 20px", alignItems: "center", cursor: "pointer", background: isSelected ? "#F0FDF4" : undefined }}
+                      onMouseEnter={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "#FAFAFA"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = isSelected ? "#F0FDF4" : ""; }}
+                    >
+                      {/* Product */}
+                      <InlineStack gap="200" blockAlign="center">
+                        {product.image
+                          ? <img src={product.image} alt="" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6, flexShrink: 0 }} />
+                          : <div style={{ width: 40, height: 40, background: "#F3F4F6", borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🛍️</div>
+                        }
+                        <BlockStack gap="0">
+                          <Text as="p" variant="bodySm" fontWeight="semibold">{product.title}</Text>
+                          <Text as="p" variant="bodySm" tone="subdued">/{product.handle}</Text>
                         </BlockStack>
                       </InlineStack>
 
-                      <InlineStack gap="200" blockAlign="center" wrap={false}>
-                        {/* Issue pills */}
-                        <InlineStack gap="100" wrap={false}>
-                          {product.issues.filter(i => i.severity === "error").length > 0 && (
-                            <Badge tone="critical">
-                              {product.issues.filter(i => i.severity === "error").length} error{product.issues.filter(i => i.severity === "error").length > 1 ? "s" : ""}
-                            </Badge>
-                          )}
-                          {product.issues.filter(i => i.severity === "warning").length > 0 && (
-                            <Badge tone="attention">
-                              {product.issues.filter(i => i.severity === "warning").length} warning{product.issues.filter(i => i.severity === "warning").length > 1 ? "s" : ""}
-                            </Badge>
-                          )}
-                          {product.issues.length === 0 && <Badge tone="success">Perfect</Badge>}
-                        </InlineStack>
-
-                        <Text tone="subdued" variant="bodySm">
-                          {expanded === product.id ? "▲" : "▼"}
-                        </Text>
+                      {/* SEO Score */}
+                      <InlineStack gap="150" blockAlign="center">
+                        <div style={{ width: 36, height: 36, borderRadius: "50%", border: `3px solid ${scoreColor(product.score)}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: scoreColor(product.score) }}>{product.score}</span>
+                        </div>
+                        <Text as="p" variant="bodySm" tone="subdued">/ 100</Text>
                       </InlineStack>
-                    </InlineStack>
 
-                    {/* Expanded issues */}
-                    {expanded === product.id && (
-                      <div
-                        onClick={e => e.stopPropagation()}
-                        style={{
-                          marginTop: 12,
-                          marginLeft: 56,
-                          background: "#f9fafb",
-                          borderRadius: 8,
-                          padding: "12px 16px",
-                        }}
-                      >
-                        {product.issues.length === 0 ? (
-                          <Text tone="success" variant="bodySm">✅ No issues found — this product is well optimised!</Text>
-                        ) : (
-                          <BlockStack gap="200">
-                            {product.issues.map((issue, i) => (
-                              <InlineStack key={i} gap="200" blockAlign="start" wrap={false}>
-                                <span style={{ flexShrink: 0 }}>{severityIcon(issue.severity)}</span>
-                                <BlockStack gap="0">
-                                  <Text variant="bodySm" fontWeight="semibold">{issue.field}</Text>
-                                  <Text variant="bodySm" tone="subdued">{issue.message}</Text>
-                                </BlockStack>
-                              </InlineStack>
-                            ))}
-                            <div style={{ marginTop: 8 }}>
-                              <Button
-                                size="slim"
-                                url={`https://${shop}/admin/products/${product.id}`}
-                                target="_blank"
-                              >
-                                Edit in Shopify →
-                              </Button>
-                            </div>
-                          </BlockStack>
-                        )}
-                      </div>
-                    )}
+                      {/* Issues */}
+                      <InlineStack gap="100" wrap={false}>
+                        {errors > 0 && <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#FEE2E2", color: "#991B1B" }}>{errors} error{errors > 1 ? "s" : ""}</span>}
+                        {warnings > 0 && <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#FEF3C7", color: "#92400E" }}>{warnings} warning{warnings > 1 ? "s" : ""}</span>}
+                        {product.issues.length === 0 && <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 7px", borderRadius: 99, background: "#DCFCE7", color: "#15803D" }}>None</span>}
+                      </InlineStack>
+
+                      {/* Status */}
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, background: status.bg, color: status.color }}>{status.label}</span>
+
+                      {/* Last scanned */}
+                      <Text as="p" variant="bodySm" tone="subdued">Just now</Text>
+
+                      {/* Action */}
+                      <Button size="slim" onClick={() => window.open(`https://${shop}/admin/products/${pid}`, "_blank")}>
+                        Fix SEO
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </BlockStack>
-
-            {metafieldLimit < products.length && (
-              <Box paddingBlockStart="200">
-                <Text variant="bodySm" tone="subdued" alignment="center">
-                  ℹ️ Meta title/description data shown for first {metafieldLimit} products. Re-scan loads more.
-                </Text>
-              </Box>
+                );
+              })
             )}
-          </BlockStack>
-        </Card>
 
-      </BlockStack>
+            {/* Footer */}
+            <div style={{ padding: "10px 20px", borderTop: "1px solid #F3F4F6", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <Text as="p" variant="bodySm" tone="subdued">Showing 1 to {filtered.length} of {filtered.length} product{filtered.length !== 1 ? "s" : ""}</Text>
+              <InlineStack gap="100">
+                <button style={{ width: 30, height: 30, border: "1px solid #E5E7EB", borderRadius: 6, background: "#F3F4F6", cursor: "not-allowed", color: "#D1D5DB" }}>‹</button>
+                <button style={{ width: 30, height: 30, border: "1.5px solid #008060", borderRadius: 6, background: "#008060", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>1</button>
+                <button style={{ width: 30, height: 30, border: "1px solid #E5E7EB", borderRadius: 6, background: "#F3F4F6", cursor: "not-allowed", color: "#D1D5DB" }}>›</button>
+              </InlineStack>
+            </div>
+          </Card>
+
+        </BlockStack>
+
+        {/* ── RIGHT SIDEBAR ────────────────────────────────────── */}
+        <BlockStack gap="300">
+
+          {/* Selected product panel */}
+          {selectedProduct ? (
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="start">
+                  <BlockStack gap="025">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">{selectedProduct.title}</Text>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 99, ...statusLabel(selectedProduct.score) as any, background: statusLabel(selectedProduct.score).bg, color: statusLabel(selectedProduct.score).color }}>
+                      {statusLabel(selectedProduct.score).label}
+                    </span>
+                    <Text as="p" variant="bodySm" tone="subdued">{selectedProduct.issues.length} issue{selectedProduct.issues.length !== 1 ? "s" : ""} found</Text>
+                  </BlockStack>
+                  <button onClick={() => setSelectedId(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#9CA3AF" }}>✕</button>
+                </InlineStack>
+
+                <Divider />
+
+                <Text as="p" variant="bodySm" fontWeight="semibold">Issues found</Text>
+                <BlockStack gap="150">
+                  {selectedProduct.issues.length === 0 ? (
+                    <Text as="p" variant="bodySm" tone="success">✅ No issues found!</Text>
+                  ) : (
+                    selectedProduct.issues.map((issue, i) => (
+                      <InlineStack key={i} gap="150" blockAlign="center">
+                        <span style={{ fontSize: 14 }}>{severityIcon(issue.severity)}</span>
+                        <div>
+                          <Text as="p" variant="bodySm" fontWeight="semibold">{issue.field}</Text>
+                          <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: issue.severity === "error" ? "#FEE2E2" : "#FEF3C7", color: issue.severity === "error" ? "#991B1B" : "#92400E" }}>
+                            {issue.severity === "error" ? "Critical" : "Needs work"}
+                          </span>
+                        </div>
+                      </InlineStack>
+                    ))
+                  )}
+                </BlockStack>
+
+                <Divider />
+
+                <Text as="p" variant="bodySm" fontWeight="semibold">Quick actions</Text>
+                <BlockStack gap="100">
+                  {[
+                    { icon: "📝", label: "Add meta description" },
+                    { icon: "✏️", label: "Improve description" },
+                    { icon: "🖼️", label: "Add alt text to images" },
+                    { icon: "🏷️", label: "Edit meta title" },
+                  ].map(action => (
+                    <button key={action.label}
+                      onClick={() => window.open(`https://${shop}/admin/products/${numericId(selectedProduct.id)}`, "_blank")}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "8px 10px", border: "none", background: "transparent", cursor: "pointer", borderRadius: 6, textAlign: "left" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "#F9FAFB")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <InlineStack gap="150" blockAlign="center">
+                        <span style={{ fontSize: 14 }}>{action.icon}</span>
+                        <Text as="p" variant="bodySm">{action.label}</Text>
+                      </InlineStack>
+                      <span style={{ color: "#9CA3AF" }}>›</span>
+                    </button>
+                  ))}
+                </BlockStack>
+              </BlockStack>
+            </Card>
+          ) : (
+            <Card>
+              <Text as="p" variant="bodySm" tone="subdued">Click a product row to see its issues and quick fix actions.</Text>
+            </Card>
+          )}
+
+          {/* Help card */}
+          <Card background="bg-surface-secondary">
+            <BlockStack gap="200">
+              <InlineStack gap="200" blockAlign="center">
+                <span style={{ fontSize: 20 }}>📖</span>
+                <Text as="p" variant="bodySm" fontWeight="semibold">Need help?</Text>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">Read our SEO guide to learn how to improve your rankings.</Text>
+              <Button variant="plain" size="slim">View SEO guide ↗</Button>
+            </BlockStack>
+          </Card>
+
+        </BlockStack>
+
+      </div>
     </Page>
   );
 }

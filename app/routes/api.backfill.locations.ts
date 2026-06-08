@@ -12,8 +12,8 @@ const ORDERS_QUERY = `
       nodes {
         id
         legacyResourceId
-        billingAddress { countryCode city }
-        shippingAddress { countryCode city }
+        billingAddress { countryCodeV2 city }
+        shippingAddress { countryCodeV2 city }
       }
     }
   }
@@ -67,8 +67,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
     for (const order of orders.nodes) {
       const country =
-        order.billingAddress?.countryCode ||
-        order.shippingAddress?.countryCode ||
+        order.billingAddress?.countryCodeV2 ||
+        order.shippingAddress?.countryCodeV2 ||
         null;
       const city =
         order.billingAddress?.city ||

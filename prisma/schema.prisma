@@ -100,6 +100,7 @@ model Purchase {
   landingPage String?
   country     String?
   city        String?
+  customerName String?
 
   @@index([createdAt])
   @@index([shop])

@@ -119,10 +119,52 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 
   if (intent === "send") {
+    const testMode = !!(body as any).testMode;
+    const testEmail = ((body as any).testEmail as string | undefined)?.trim();
+
+    if (testMode && testEmail) {
+      if (!process.env.SMTP_HOST) {
+        return json({ ok: false, error: "Email sending is not configured (SMTP_HOST missing). Contact support to enable sending." });
+      }
+      const { sendEmail } = await import("~/services/resend.server");
+      const campaign = await anyDb.newsletterCampaign?.findUnique?.({ where: { id: params.id } });
+      if (!campaign?.htmlContent) {
+        return json({ ok: false, error: "No email content yet — design your email first, then send a test." });
+      }
+      const fromName = campaign.fromName || "Newsletter";
+      const fromEmail = campaign.fromEmail || process.env.SMTP_FROM_EMAIL || "";
+      if (!fromEmail) {
+        return json({ ok: false, error: "Sender email not configured. Go to Newsletter → Settings and set a From email address first." });
+      }
+      const shopDomain = shop.replace(".myshopify.com", "");
+      const html = campaign.htmlContent
+        .replace(/\{\{first_name\}\}/gi, "Test Subscriber")
+        .replace(/\{\{name\}\}/gi, "Test Subscriber")
+        .replace(/\{\{email\}\}/gi, testEmail)
+        .replace(/\{\{shop_url\}\}/gi, `https://${shop}`)
+        .replace(/\{\{shop\}\}/gi, shopDomain)
+        .replace(/\{\{unsubscribe_url\}\}/gi, "#");
+      const result = await sendEmail({
+        from: `${fromName} <${fromEmail}>`,
+        to: testEmail,
+        subject: `[TEST] ${campaign.subject || "(no subject)"}`,
+        html,
+        replyTo: campaign.replyTo || undefined,
+      });
+      return json(result.ok
+        ? { ok: true, message: `Test email sent to ${testEmail}` }
+        : { ok: false, error: `Send failed: ${(result as any).error}` });
+    }
+
     const { getShopPlan, checkNewsletterSendsQuota } = await import("~/services/plan.server");
     const { sendCampaign, countSubscribersForSegment } = await import("~/services/newsletter.server");
 
     const campaign = await anyDb.newsletterCampaign?.findUnique?.({ where: { id: params.id } });
+
+    if (!campaign?.subject?.trim()) {
+      return json({ ok: false, error: "Cannot send: subject line is missing. Go to the Settings tab and add a subject first." }, { status: 400 });
+    }
+
     const recipientCount = await countSubscribersForSegment(shop, campaign?.segmentFilter ?? {});
 
     const { admin } = await authenticate.admin(request);
@@ -149,6 +191,9 @@ declare global {
   interface Window { unlayer?: any; }
 }
 
+type BuilderTab = "edit" | "settings" | "recipients" | "send";
+type DevicePreview = "desktop" | "tablet" | "mobile";
+
 export default function CampaignEditor() {
   const { campaign, shop, recipientPreview, smtpConfigured, defaultFromName, defaultFromEmail, defaultReplyTo } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
@@ -162,13 +207,18 @@ export default function CampaignEditor() {
   const [fromEmailVal, setFromEmailVal] = useState(campaign.fromEmail || defaultFromEmail || "newsletters@attribix.email");
   const [replyTo, setReplyTo] = useState(campaign.replyTo || defaultReplyTo || "");
 
-  // editMode: "preview" (shows iframe of HTML) or "unlayer" (drag-and-drop)
   const hasDesignJson = !!campaign.designJson;
   const [editMode, setEditMode] = useState<"preview" | "unlayer">(hasDesignJson ? "unlayer" : "preview");
   const [unlayerReady, setUnlayerReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [sendModalOpen, setSendModalOpen] = useState(false);
   const [sendResult, setSendResult] = useState<any>(null);
+  const [activeTab, setActiveTab] = useState<BuilderTab>("edit");
+  const [device, setDevice] = useState<DevicePreview>("desktop");
+  const [testEmail, setTestEmail] = useState("");
+  const [testModalOpen, setTestModalOpen] = useState(false);
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
   const isSent = campaign.status === "sent" || campaign.status === "sending";
 
   // Load Unlayer only when in unlayer mode
@@ -380,181 +430,315 @@ export default function CampaignEditor() {
     }
   }, [campaign.id, campaign.htmlContent, editMode, saveData, authFetch, navigate, unlayerReady]);
 
+  const handleTestSend = useCallback(async () => {
+    if (!testEmail) return;
+    setTestSending(true);
+    try {
+      const res = await authFetch(`/app/newsletter/campaigns/${campaign.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: "send", testMode: true, testEmail }),
+      });
+      // Read as text first so we can surface HTTP-level errors (auth redirects, 5xx HTML pages)
+      const text = await res.text().catch(() => "");
+      let result: any;
+      try {
+        result = JSON.parse(text);
+      } catch {
+        // Response wasn't JSON — show HTTP status or raw snippet
+        const snippet = text.slice(0, 120).replace(/<[^>]+>/g, "").trim();
+        result = { ok: false, error: res.ok ? `Unexpected server response${snippet ? `: ${snippet}` : ""}` : `Server error (HTTP ${res.status}) — check Fly.io logs` };
+      }
+      setTestResult({
+        ok: result.ok ?? false,
+        message: result.ok
+          ? (result.message ?? `Test sent to ${testEmail}`)
+          : (result.error ?? result.errors?.[0] ?? "Send failed — check your SMTP configuration in Fly.io secrets"),
+      });
+    } catch {
+      setTestResult({ ok: false, message: "Network error — could not reach server" });
+    } finally {
+      setTestSending(false);
+    }
+  }, [testEmail, campaign.id, authFetch]);
+
+  const STEPS: { key: BuilderTab; label: string }[] = [
+    { key: "edit", label: "Edit" },
+    { key: "settings", label: "Settings" },
+    { key: "recipients", label: "Recipients" },
+    { key: "send", label: "Send or schedule" },
+  ];
+
+  const previewWidth = device === "mobile" ? 375 : device === "tablet" ? 768 : undefined;
+
   return (
-    <Page
-      title={name || "Edit newsletter"}
-      backAction={{ content: "Newsletters", url: "/app/newsletter/campaigns" }}
-      primaryAction={{
-        content: saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved ✓" : "Save Draft",
-        onAction: handleSave,
-        disabled: saveStatus === "saving" || isSent,
-      }}
-      secondaryActions={[
-        {
-          content: "Send newsletter",
-          onAction: () => setSendModalOpen(true),
-          disabled: isSent || !smtpConfigured,
-          tone: "success",
-        },
-        {
-          content: "Save as template",
-          onAction: () => {
-            if (window.unlayer && unlayerReady) {
-              window.unlayer.exportHtml(async (data: { design: object; html: string }) => {
-                await authFetch(`/app/newsletter/campaigns/${campaign.id}`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ intent: "save-as-template", name, htmlContent: data.html, designJson: data.design, fromName, fromEmail: fromEmailVal }),
-                });
-                setSaveStatus("saved");
-                setTimeout(() => setSaveStatus("idle"), 2000);
-              });
-            }
-          },
-          disabled: isSent || !unlayerReady,
-        },
-      ]}
-    >
-      <BlockStack gap="500">
-        {!smtpConfigured && (
-          <Banner tone="warning" title="Sending not configured">
-            Add SMTP_HOST and SMTP_USER to your Fly.io secrets to enable sending.
-          </Banner>
-        )}
+    <Page fullWidth>
+      <BlockStack gap="0">
 
-        {sendResult && (
-          <Banner
-            tone={sendResult.ok ? "success" : "critical"}
-            title={sendResult.ok ? `Newsletter sent! ${sendResult.sent} delivered.` : `Send failed: ${sendResult.errors?.join(", ")}`}
-            onDismiss={() => setSendResult(null)}
-          />
-        )}
-
-        {/* Campaign details */}
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingSm">Campaign details</Text>
-            <InlineStack gap="400" wrap>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="Campaign name (internal)" value={name} onChange={setName} autoComplete="off" disabled={isSent} />
-              </div>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="Email subject" value={subject} onChange={setSubject} autoComplete="off" disabled={isSent} helpText="Appears as the subject line in the inbox" />
-              </div>
-            </InlineStack>
-            <InlineStack gap="400" wrap>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="Preview text" value={previewText} onChange={setPreviewText} autoComplete="off" disabled={isSent} helpText="Shown after the subject in some email clients" />
-              </div>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="From name" value={fromName} onChange={setFromName} autoComplete="off" disabled={isSent} />
-              </div>
-            </InlineStack>
-            <InlineStack gap="400" wrap>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="From email" value={fromEmailVal} onChange={setFromEmailVal} autoComplete="email" type="email" disabled={isSent} helpText="Must be a verified sending domain" />
-              </div>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="Reply-to (optional)" value={replyTo} onChange={setReplyTo} autoComplete="email" type="email" disabled={isSent} />
-              </div>
-            </InlineStack>
-          </BlockStack>
-        </Card>
-
-        {/* Recipients */}
-        <Card>
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="050">
-              <Text as="h2" variant="headingSm">Recipients</Text>
-              <Text as="p" variant="bodySm" tone="subdued">Sending to all active subscribers</Text>
-            </BlockStack>
-            <Badge tone="info">{recipientPreview.toLocaleString()} subscribers</Badge>
+        {/* ── Custom header ─────────────────────────────────────── */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "12px 0 16px", gap: 16, borderBottom: "1px solid #E5E7EB", marginBottom: 0,
+        }}>
+          <InlineStack gap="300" blockAlign="center">
+            <button onClick={() => navigate("/app/newsletter/campaigns")}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#6B7280", fontSize: 14, padding: "4px 0", display: "flex", alignItems: "center", gap: 4 }}>
+              ← Back to newsletters
+            </button>
+            <span style={{ color: "#E5E7EB" }}>|</span>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              disabled={isSent}
+              style={{ fontSize: 18, fontWeight: 700, border: "none", outline: "none", background: "transparent", color: "#111", minWidth: 140 }}
+            />
+            <Badge tone={isSent ? "success" : "new"}>{isSent ? "Sent" : "Draft"}</Badge>
+            <Text as="p" variant="bodySm" tone="subdued">
+              {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved ✓" : saveStatus === "error" ? "Save error" : "Last saved 2 minutes ago"}
+            </Text>
           </InlineStack>
-        </Card>
 
-        {/* Design editor */}
-        {!isSent && (
-          <Card>
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingSm">Email design</Text>
-              <InlineStack gap="200">
-                <Button url="/app/newsletter/campaigns/new" variant="secondary">Change template</Button>
-                {editMode === "preview" && (
-                  <Button onClick={() => setEditMode("unlayer")} variant="plain">Open in editor</Button>
-                )}
-                {editMode === "unlayer" && campaign.htmlContent && (
-                  <Button onClick={() => setEditMode("preview")} variant="plain">Preview only</Button>
-                )}
-              </InlineStack>
-            </InlineStack>
-          </Card>
+          <InlineStack gap="200" blockAlign="center">
+            {/* Device preview buttons */}
+            {activeTab === "edit" && (
+              <div style={{ display: "flex", border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden" }}>
+                {(["desktop", "tablet", "mobile"] as DevicePreview[]).map(d => (
+                  <button key={d} onClick={() => { setDevice(d); if (editMode !== "preview") setEditMode("preview"); }}
+                    title={d.charAt(0).toUpperCase() + d.slice(1)}
+                    style={{
+                      padding: "6px 10px", border: "none", cursor: "pointer", fontSize: 14,
+                      background: device === d ? "#F3F4F6" : "white",
+                      borderRight: d !== "mobile" ? "1px solid #E5E7EB" : "none",
+                    }}>
+                    {d === "desktop" ? "🖥" : d === "tablet" ? "📱" : "📱"}
+                    {d === "desktop" ? "🖥️" : d === "tablet" ? "⬛" : "📱"}
+                  </button>
+                ))}
+              </div>
+            )}
+            <Button size="slim" onClick={() => setTestModalOpen(true)}>
+              Preview & test
+            </Button>
+            <Button
+              size="slim"
+              variant="primary"
+              disabled={saveStatus === "saving" || isSent}
+              onClick={() => {
+                handleSave().then(() => {
+                  const cur = STEPS.findIndex(s => s.key === activeTab);
+                  if (cur < STEPS.length - 1) setActiveTab(STEPS[cur + 1].key);
+                });
+              }}
+            >
+              {saveStatus === "saving" ? "Saving…" : activeTab === "send" ? "Send newsletter" : "Save & continue"}
+            </Button>
+          </InlineStack>
+        </div>
+
+        {/* ── Step tabs ──────────────────────────────────────────── */}
+        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid #E5E7EB", marginBottom: 20 }}>
+          {STEPS.map(step => (
+            <button key={step.key} onClick={() => setActiveTab(step.key)} style={{
+              padding: "10px 20px", border: "none", background: "transparent", cursor: "pointer",
+              fontSize: 13, fontWeight: 600,
+              color: activeTab === step.key ? "#008060" : "#6B7280",
+              borderBottom: activeTab === step.key ? "2px solid #008060" : "2px solid transparent",
+              marginBottom: -1,
+            }}>
+              {step.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Tab content ────────────────────────────────────────── */}
+
+        {/* Banners */}
+        {!smtpConfigured && activeTab === "send" && (
+          <div style={{ marginBottom: 16 }}>
+            <Banner tone="warning" title="Sending not configured">
+              Add SMTP_HOST and SMTP_USER to your Fly.io secrets to enable sending.
+            </Banner>
+          </div>
         )}
-
-        {/* HTML preview (safe — all links disabled, no navigation possible) */}
-        {editMode === "preview" && campaign.htmlContent && (
-          <div style={{ border: "1px solid #e1e3e5", borderRadius: 8, overflow: "hidden", background: "#f4f4f4" }}>
-            <iframe
-              srcDoc={`<style>a{pointer-events:none!important;cursor:default!important;}body{margin:0;}</style>${
-                campaign.htmlContent
-                  .replace(/\{\{shop_url\}\}/gi, `https://${shop}`)
-                  .replace(/\{\{shop\}\}/gi, shop.replace(".myshopify.com", ""))
-                  .replace(/\{\{first_name\}\}/gi, "Customer")
-                  .replace(/\{\{name\}\}/gi, "Customer")
-                  .replace(/\{\{email\}\}/gi, "customer@example.com")
-                  .replace(/\{\{unsubscribe_url\}\}/gi, "#")
-                  .replace(/href="[^"]*"/g, 'href="#"')
-              }`}
-              sandbox=""
-              style={{ width: "100%", height: 640, border: "none", display: "block" }}
-              title="Email preview"
+        {sendResult && (
+          <div style={{ marginBottom: 16 }}>
+            <Banner
+              tone={sendResult.ok ? "success" : "critical"}
+              title={sendResult.ok ? `Newsletter sent! ${sendResult.sent} delivered.` : `Send failed: ${sendResult.errors?.join(", ")}`}
+              onDismiss={() => setSendResult(null)}
             />
           </div>
         )}
 
-        {editMode === "preview" && !campaign.htmlContent && (
+        {/* EDIT TAB */}
+        {activeTab === "edit" && (
+          <BlockStack gap="400">
+            {!isSent && (
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {editMode === "unlayer" ? "Drag and drop blocks to design your email." : "Preview mode — use the editor for full editing."}
+                </Text>
+                <InlineStack gap="200">
+                  {editMode === "preview" && (
+                    <Button size="slim" onClick={() => setEditMode("unlayer")}>Open in editor</Button>
+                  )}
+                  {editMode === "unlayer" && campaign.htmlContent && (
+                    <Button size="slim" variant="plain" onClick={() => setEditMode("preview")}>Preview mode</Button>
+                  )}
+                </InlineStack>
+              </InlineStack>
+            )}
+
+            {/* Fix Unlayer scroll + branding */}
+            <style dangerouslySetInnerHTML={{ __html: `
+              #unlayer-editor { overflow: hidden !important; }
+              #unlayer-editor iframe { border: none !important; }
+              #unlayer-editor > div > div:last-child { display: none !important; }
+            `}} />
+
+            {editMode === "preview" && campaign.htmlContent && (
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden", background: "#F8F9FA", display: "flex", justifyContent: "center", padding: device !== "desktop" ? 16 : 0 }}>
+                <iframe
+                  srcDoc={`<style>a{pointer-events:none!important;cursor:default!important;}body{margin:0;}</style>${
+                    campaign.htmlContent
+                      .replace(/\{\{shop_url\}\}/gi, `https://${shop}`)
+                      .replace(/\{\{shop\}\}/gi, shop.replace(".myshopify.com", ""))
+                      .replace(/\{\{first_name\}\}/gi, "Customer")
+                      .replace(/\{\{name\}\}/gi, "Customer")
+                      .replace(/\{\{email\}\}/gi, "customer@example.com")
+                      .replace(/\{\{unsubscribe_url\}\}/gi, "#")
+                      .replace(/href="[^"]*"/g, 'href="#"')
+                  }`}
+                  sandbox=""
+                  style={{ width: previewWidth ? `${previewWidth}px` : "100%", height: 680, border: "none", display: "block", transition: "width 0.3s" }}
+                  title="Email preview"
+                />
+              </div>
+            )}
+
+            {editMode === "preview" && !campaign.htmlContent && (
+              <div style={{ padding: 40, textAlign: "center", background: "#F9FAFB", borderRadius: 10, border: "1px dashed #D1D5DB" }}>
+                <div style={{ fontSize: 32, marginBottom: 12 }}>✉️</div>
+                <Text as="p" variant="bodyMd" tone="subdued">No content yet. Open in editor to design your email.</Text>
+                <div style={{ marginTop: 12 }}>
+                  <Button size="slim" onClick={() => setEditMode("unlayer")}>Open in editor</Button>
+                </div>
+              </div>
+            )}
+
+            <div
+              id="unlayer-editor"
+              ref={editorRef}
+              style={{
+                height: "80vh", minHeight: 700,
+                border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden",
+                display: editMode === "unlayer" && !isSent ? "block" : "none",
+              }}
+            />
+
+            {isSent && campaign.htmlContent && (
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
+                <iframe srcDoc={campaign.htmlContent} style={{ width: "100%", height: 640, border: "none", display: "block" }} title="Sent email" />
+              </div>
+            )}
+          </BlockStack>
+        )}
+
+        {/* SETTINGS TAB */}
+        {activeTab === "settings" && (
           <Card>
-            <div style={{ padding: 40, textAlign: "center", color: "#9ca3af" }}>
-              <div style={{ fontSize: 32, marginBottom: 12 }}>✉️</div>
-              <Text as="p" variant="bodyMd" tone="subdued">No content yet. Click "Open in editor" to design your email.</Text>
-            </div>
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Campaign settings</Text>
+              <InlineStack gap="400" wrap>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <TextField label="Campaign name (internal)" value={name} onChange={setName} autoComplete="off" disabled={isSent} />
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <TextField label="Email subject" value={subject} onChange={setSubject} autoComplete="off" disabled={isSent} helpText="Appears as the subject line in the inbox" />
+                </div>
+              </InlineStack>
+              <InlineStack gap="400" wrap>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <TextField label="Preview text" value={previewText} onChange={setPreviewText} autoComplete="off" disabled={isSent} helpText="Shown after the subject in some email clients" />
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <TextField label="From name" value={fromName} onChange={setFromName} autoComplete="off" disabled={isSent} />
+                </div>
+              </InlineStack>
+              <InlineStack gap="400" wrap>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <TextField label="From email" value={fromEmailVal} onChange={setFromEmailVal} autoComplete="email" type="email" disabled={isSent} helpText="Must be a verified sending domain" />
+                </div>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <TextField label="Reply-to (optional)" value={replyTo} onChange={setReplyTo} autoComplete="email" type="email" disabled={isSent} />
+                </div>
+              </InlineStack>
+            </BlockStack>
           </Card>
         )}
 
-        {/* Fix Unlayer scroll + branding */}
-        <style dangerouslySetInnerHTML={{ __html: `
-          #unlayer-editor { overflow: hidden !important; }
-          #unlayer-editor iframe { border: none !important; }
-          #unlayer-editor > div > div:last-child { display: none !important; }
-        `}} />
-
-        {/* Unlayer drag-and-drop editor */}
-        <div
-          id="unlayer-editor"
-          ref={editorRef}
-          style={{
-            height: "80vh",
-            minHeight: 700,
-            border: "1px solid #e1e3e5",
-            borderRadius: 8,
-            overflow: "hidden",
-            display: editMode === "unlayer" && !isSent ? "block" : "none",
-          }}
-        />
-
-        {/* Sent preview */}
-        {isSent && campaign.htmlContent && (
+        {/* RECIPIENTS TAB */}
+        {activeTab === "recipients" && (
           <Card>
-            <BlockStack gap="300">
-              <Text as="h2" variant="headingSm">Email preview (sent)</Text>
-              <div style={{ border: "1px solid #e1e3e5", borderRadius: 8, overflow: "hidden" }}>
-                <iframe srcDoc={campaign.htmlContent} style={{ width: "100%", height: 600, border: "none", display: "block" }} title="Sent email" />
+            <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Recipients</Text>
+              <InlineStack align="space-between" blockAlign="center">
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodyMd" fontWeight="semibold">All active subscribers</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">Everyone currently subscribed to your newsletter list.</Text>
+                </BlockStack>
+                <Badge tone="info">{recipientPreview.toLocaleString()} subscribers</Badge>
+              </InlineStack>
+              <div style={{ padding: "12px 16px", background: "#F9FAFB", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14 }}>ℹ️</span>
+                <Text as="p" variant="bodySm" tone="subdued">Unsubscribed contacts are automatically excluded.</Text>
               </div>
             </BlockStack>
           </Card>
         )}
+
+        {/* SEND TAB */}
+        {activeTab === "send" && (
+          <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">Ready to send?</Text>
+                <InlineStack gap="400" wrap>
+                  {[
+                    { icon: "📝", label: "Subject", value: subject || "(no subject)", ok: !!subject },
+                    { icon: "👥", label: "Recipients", value: `${recipientPreview.toLocaleString()} subscribers`, ok: recipientPreview > 0 },
+                    { icon: "✉️", label: "From", value: `${fromName} <${fromEmailVal}>`, ok: !!fromEmailVal },
+                  ].map(item => (
+                    <div key={item.label} style={{ flex: 1, minWidth: 180, padding: "12px 16px", background: item.ok ? "#F0FDF4" : "#FEF2F2", borderRadius: 8, border: `1px solid ${item.ok ? "#BBF7D0" : "#FECACA"}` }}>
+                      <InlineStack gap="150" blockAlign="center">
+                        <span>{item.icon}</span>
+                        <BlockStack gap="025">
+                          <Text as="p" variant="bodySm" tone="subdued">{item.label}</Text>
+                          <Text as="p" variant="bodySm" fontWeight="semibold">{item.value}</Text>
+                        </BlockStack>
+                        <span style={{ marginLeft: "auto", color: item.ok ? "#16A34A" : "#DC2626" }}>{item.ok ? "✓" : "!"}</span>
+                      </InlineStack>
+                    </div>
+                  ))}
+                </InlineStack>
+                <InlineStack gap="200">
+                  <Button
+                    variant="primary"
+                    disabled={isSent || !smtpConfigured || !subject || recipientPreview === 0}
+                    onClick={() => setSendModalOpen(true)}
+                  >
+                    Send to {recipientPreview.toLocaleString()} subscribers
+                  </Button>
+                  <Button onClick={() => setTestModalOpen(true)}>Send test email</Button>
+                </InlineStack>
+              </BlockStack>
+            </Card>
+          </BlockStack>
+        )}
+
       </BlockStack>
 
-      {/* Send confirmation */}
+      {/* Send confirmation modal */}
       <Modal
         open={sendModalOpen}
         onClose={() => setSendModalOpen(false)}
@@ -570,6 +754,47 @@ export default function CampaignEditor() {
           <BlockStack gap="300">
             <Text as="p">You're about to send <strong>{subject || "(no subject)"}</strong> to <strong>{recipientPreview.toLocaleString()} subscribers</strong>.</Text>
             <Text as="p" tone="subdued">This action cannot be undone. Make sure your email looks correct before sending.</Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
+      {/* Preview & test modal */}
+      <Modal
+        open={testModalOpen}
+        onClose={() => { setTestModalOpen(false); setTestResult(null); }}
+        title="Preview & test"
+        primaryAction={{
+          content: testSending ? "Sending…" : "Send test email",
+          onAction: handleTestSend,
+          loading: testSending,
+          disabled: !testEmail || testSending,
+        }}
+        secondaryActions={[{ content: "Close", onAction: () => { setTestModalOpen(false); setTestResult(null); } }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodySm" tone="subdued">Send a test version of this email to check how it looks in an inbox.</Text>
+            {!smtpConfigured && (
+              <Banner tone="warning">Email sending is not configured (SMTP missing). Contact support.</Banner>
+            )}
+            {smtpConfigured && !fromEmailVal && (
+              <Banner tone="warning">
+                No sender email set. Go to Newsletter → Settings to configure your From email address before sending.
+              </Banner>
+            )}
+            <TextField
+              label="Send test to"
+              value={testEmail}
+              onChange={setTestEmail}
+              type="email"
+              autoComplete="email"
+              placeholder="your@email.com"
+            />
+            {testResult && (
+              <Banner tone={testResult.ok ? "success" : "critical"}>
+                {testResult.message}
+              </Banner>
+            )}
           </BlockStack>
         </Modal.Section>
       </Modal>

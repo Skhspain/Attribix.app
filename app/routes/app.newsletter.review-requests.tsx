@@ -1,25 +1,17 @@
 // app/routes/app.newsletter.review-requests.tsx
-// Review request email settings with templates — lives under the Newsletter hub.
+// Review requests automation manager — shows all review request automations with performance metrics.
 
 import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import {
-  BlockStack,
-  Button,
-  Card,
-  Checkbox,
-  InlineStack,
-  Select,
-  Text,
-  TextField,
-  Divider,
-  Badge,
+  Badge, Banner, BlockStack, Button, Card, Checkbox, Divider,
+  Grid, InlineStack, Modal, Page, Select, Text, TextField,
 } from "@shopify/polaris";
 import { useState } from "react";
 
-// ─── Templates ───────────────────────────────────────────────────────────────
+// ─── Email templates (kept for edit modal) ───────────────────────────────────
 
 function wrapEmail(inner: string, bg = "#f4f4f4", surface = "#ffffff"): string {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -32,97 +24,25 @@ ${inner}
 
 const TEMPLATES = [
   {
-    id: "stars",
-    name: "Stars",
+    id: "stars", name: "Stars",
     subject: "How was your order from {shop}?",
     preview: "A clean indigo design with star rating prompt",
     body: wrapEmail(`
 <tr><td style="background:#4f46e5;padding:40px 40px 32px;text-align:center;">
   <p style="margin:0 0 8px;color:rgba(255,255,255,0.7);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">{shop}</p>
-  <h1 style="margin:0 0 10px;color:#fff;font-size:28px;font-weight:700;line-height:1.2;">How did we do? ⭐</h1>
-  <p style="margin:0;color:rgba(255,255,255,0.85);font-size:15px;">Your opinion matters more than you know.</p>
+  <h1 style="margin:0 0 10px;color:#fff;font-size:28px;font-weight:700;">How did we do? ⭐</h1>
 </td></tr>
 <tr><td style="padding:32px 40px 8px;">
   <p style="margin:0 0 16px;color:#374151;font-size:15px;line-height:1.7;">Hi {name},</p>
-  <p style="margin:0 0 16px;color:#374151;font-size:15px;line-height:1.7;">Thank you for your recent order of <strong>{product}</strong>. We hope you love it!</p>
-  <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.7;">Your review helps other shoppers and helps us keep improving. It only takes 30 seconds.</p>
+  <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.7;">Thank you for your recent order of <strong>{product}</strong>. Your review helps other shoppers.</p>
   <div style="text-align:center;margin:8px 0 28px;">
     <div style="font-size:36px;margin-bottom:16px;">★★★★★</div>
     <a href="{review_link}" style="display:inline-block;background:#4f46e5;color:#fff;font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;text-decoration:none;">Leave a review</a>
   </div>
 </td></tr>
 <tr><td style="border-top:1px solid #e5e7eb;padding:20px 40px 24px;text-align:center;">
-  <p style="margin:0;color:#9ca3af;font-size:12px;">You received this because you ordered from {shop}. Questions? Just reply to this email.</p>
-</td></tr>`, "#eef2ff"),
-  },
-  {
-    id: "grateful",
-    name: "Thank You",
-    subject: "Your feedback means the world to us, {name}",
-    preview: "Warm amber tone with a heartfelt thank-you message",
-    body: wrapEmail(`
-<tr><td style="background:#f59e0b;padding:44px 40px 36px;text-align:center;">
-  <p style="margin:0 0 8px;color:rgba(255,255,255,0.8);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">{shop}</p>
-  <h1 style="margin:0;color:#fff;font-size:30px;font-weight:800;line-height:1.2;">Your feedback means<br>the world to us 🙏</h1>
-</td></tr>
-<tr><td style="padding:0;"><img src="https://picsum.photos/seed/thankful99/600/180" width="600" height="180" alt="" style="width:100%;max-width:600px;height:180px;object-fit:cover;display:block;"></td></tr>
-<tr><td style="padding:32px 40px 8px;">
-  <p style="margin:0 0 16px;color:#374151;font-size:15px;line-height:1.7;">Hi {name},</p>
-  <p style="margin:0 0 16px;color:#374151;font-size:15px;line-height:1.7;">We hope you're loving your <strong>{product}</strong>. Customer reviews help us improve and help other shoppers make great decisions.</p>
-  <p style="margin:0 0 24px;color:#374151;font-size:15px;line-height:1.7;">If you have a moment, we'd be incredibly grateful for your honest thoughts — it only takes 30 seconds.</p>
-</td></tr>
-<tr><td align="center" style="padding:8px 40px 32px;">
-  <a href="{review_link}" style="display:inline-block;background:#f59e0b;color:#fff;font-size:15px;font-weight:600;padding:14px 32px;border-radius:8px;text-decoration:none;">Share your experience →</a>
-</td></tr>
-<tr><td style="border-top:1px solid #e5e7eb;padding:20px 40px 24px;text-align:center;">
-  <p style="margin:0;color:#9ca3af;font-size:12px;">With gratitude, the {shop} team. Questions? Just reply to this email.</p>
-</td></tr>`, "#fffbeb"),
-  },
-  {
-    id: "vip",
-    name: "VIP",
-    subject: "A quick favour from us, {name}",
-    preview: "Dark elegant design for a premium brand feel",
-    body: wrapEmail(`
-<tr><td style="background:#111827;padding:0;">
-  <div style="background:linear-gradient(135deg,#7c3aed,#4f46e5);height:5px;"></div>
-  <div style="padding:44px 40px 36px;text-align:center;">
-    <p style="margin:0 0 8px;color:#a78bfa;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:3px;">{shop}</p>
-    <h1 style="margin:0 0 10px;color:#fff;font-size:28px;font-weight:700;line-height:1.3;">Your opinion matters, {name}.</h1>
-    <p style="margin:0;color:#9ca3af;font-size:15px;line-height:1.6;">As one of our valued customers, we'd love to hear from you.</p>
-  </div>
-</td></tr>
-<tr><td style="background:#1f2937;padding:32px 40px;">
-  <p style="margin:0 0 16px;color:#d1d5db;font-size:15px;line-height:1.7;">We'd love to hear your honest thoughts on <strong style="color:#fff;">{product}</strong>. Your review helps us keep improving and helps other customers like you make the right choice.</p>
-  <p style="margin:0 0 28px;color:#d1d5db;font-size:15px;line-height:1.7;">It only takes 30 seconds — and it makes a real difference.</p>
-  <div style="text-align:center;">
-    <a href="{review_link}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;text-decoration:none;">Write a review ★</a>
-  </div>
-</td></tr>
-<tr><td style="background:#111827;border-top:1px solid #374151;padding:20px 40px 24px;text-align:center;">
-  <p style="margin:0;color:#6b7280;font-size:12px;">You received this because you ordered from {shop}. Questions? Just reply to this email.</p>
-</td></tr>`, "#0f172a", "#111827"),
-  },
-  {
-    id: "minimal",
-    name: "Minimal",
-    subject: "A quick review request from {shop}",
-    preview: "Clean, typography-led. Subtle and non-intrusive",
-    body: wrapEmail(`
-<tr><td style="padding:56px 40px 8px;text-align:center;">
-  <p style="margin:0 0 4px;color:#92765a;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:3px;">{shop}</p>
-  <div style="width:40px;height:2px;background:#92765a;margin:12px auto 24px;"></div>
-  <h1 style="margin:0 0 16px;color:#1f2937;font-size:24px;font-weight:300;font-style:italic;line-height:1.3;">How was your experience, {name}?</h1>
-</td></tr>
-<tr><td style="padding:8px 40px;">
-  <p style="margin:0 0 16px;color:#6b7280;font-size:15px;line-height:1.7;text-align:center;">We hope you're enjoying your <strong style="color:#374151;">{product}</strong>.<br>A short review would mean a lot to us.</p>
-</td></tr>
-<tr><td align="center" style="padding:16px 40px 40px;">
-  <a href="{review_link}" style="display:inline-block;background:#92765a;color:#fff;font-size:14px;font-weight:600;padding:12px 32px;border-radius:6px;text-decoration:none;letter-spacing:0.03em;">Leave a review</a>
-</td></tr>
-<tr><td style="border-top:1px solid #f5ede3;padding:20px 40px 28px;text-align:center;">
   <p style="margin:0;color:#9ca3af;font-size:12px;">You received this because you ordered from {shop}.</p>
-</td></tr>`, "#faf7f2"),
+</td></tr>`, "#eef2ff"),
   },
 ];
 
@@ -134,15 +54,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const anyDb = db as any;
 
   const defaultSettings = {
-    autoApprove: false,
-    sendRequestEmail: true,
-    requestDelayDays: 7,
-    emailSubject: TEMPLATES[0].subject,
-    emailBody: TEMPLATES[0].body,
+    autoApprove: false, sendRequestEmail: true, requestDelayDays: 7,
+    emailSubject: TEMPLATES[0].subject, emailBody: TEMPLATES[0].body,
   };
   const settings = await anyDb.reviewSettings?.findUnique?.({ where: { shop } }).catch(() => null) ?? defaultSettings;
 
-  return json({ settings, smtpConfigured: !!process.env.SMTP_HOST });
+  // Real metrics from Review model
+  const [totalReviews, approvedReviews, pendingReviews] = await Promise.all([
+    anyDb.review?.count?.({ where: { shop } }).catch(() => 0) ?? 0,
+    anyDb.review?.count?.({ where: { shop, status: "approved" } }).catch(() => 0) ?? 0,
+    anyDb.review?.count?.({ where: { shop, status: "pending" } }).catch(() => 0) ?? 0,
+  ]);
+
+  const now = new Date();
+  const days30Ago = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const recentReviews = await anyDb.review?.count?.({ where: { shop, createdAt: { gte: days30Ago } } }).catch(() => 0) ?? 0;
+
+  const totalOrders = await db.purchase.count({ where: { shop } }).catch(() => 0);
+  const reviewRate = totalOrders > 0 ? ((totalReviews / totalOrders) * 100).toFixed(1) : "0";
+
+  return json({
+    settings, smtpConfigured: !!process.env.SMTP_HOST, shop,
+    metrics: { totalReviews, approvedReviews, pendingReviews, recentReviews, totalOrders, reviewRate },
+  });
 }
 
 // ─── Action ──────────────────────────────────────────────────────────────────
@@ -155,240 +89,372 @@ export async function action({ request }: ActionFunctionArgs) {
 
   await anyDb.reviewSettings?.upsert?.({
     where: { shop },
-    create: {
-      shop,
-      autoApprove: !!body.autoApprove,
-      sendRequestEmail: !!body.sendRequestEmail,
-      requestDelayDays: Number(body.requestDelayDays ?? 7),
-      emailSubject: body.emailSubject ?? "",
-      emailBody: body.emailBody ?? "",
-    },
-    update: {
-      autoApprove: !!body.autoApprove,
-      sendRequestEmail: !!body.sendRequestEmail,
-      requestDelayDays: Number(body.requestDelayDays ?? 7),
-      emailSubject: body.emailSubject ?? "",
-      emailBody: body.emailBody ?? "",
-    },
+    create: { shop, autoApprove: !!body.autoApprove, sendRequestEmail: !!body.sendRequestEmail, requestDelayDays: Number(body.requestDelayDays ?? 7), emailSubject: body.emailSubject ?? "", emailBody: body.emailBody ?? "" },
+    update: { autoApprove: !!body.autoApprove, sendRequestEmail: !!body.sendRequestEmail, requestDelayDays: Number(body.requestDelayDays ?? 7), emailSubject: body.emailSubject ?? "", emailBody: body.emailBody ?? "" },
   }).catch(() => null);
 
   return json({ ok: true });
 }
 
-// ─── Scale constants for thumbnail iframes ────────────────────────────────────
-const CARD_W = 190;
-const CARD_H = 150;
-const IFRAME_W = 600;
+// ─── Components ──────────────────────────────────────────────────────────────
+
+function KpiCard({ icon, label, value, sub }: { icon: string; label: string; value: string; sub?: string }) {
+  return (
+    <Card>
+      <BlockStack gap="200">
+        <InlineStack gap="200" blockAlign="center">
+          <span style={{ fontSize: 20 }}>{icon}</span>
+          <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+        </InlineStack>
+        <Text as="p" variant="headingXl" fontWeight="bold">{value}</Text>
+        {sub && <Text as="p" variant="bodySm" tone="subdued">{sub}</Text>}
+      </BlockStack>
+    </Card>
+  );
+}
+
+function RequestStatusBadge({ status }: { status: string }) {
+  const map: Record<string, "success" | "new" | "warning" | "info"> = {
+    active: "success", scheduled: "info", draft: "new", paused: "warning", completed: "success",
+  };
+  return <Badge tone={map[status] ?? "new"}>{status.charAt(0).toUpperCase() + status.slice(1)}</Badge>;
+}
+
+// ─── Edit modal ───────────────────────────────────────────────────────────────
+
+const CARD_W = 190, CARD_H = 150, IFRAME_W = 600;
 const SCALE = CARD_W / IFRAME_W;
 const IFRAME_H = Math.round(CARD_H / SCALE);
 
-// ─── Component ───────────────────────────────────────────────────────────────
-
-export default function ReviewRequestsPage() {
-  const { settings, smtpConfigured } = useLoaderData<typeof loader>();
-  const fetcher = useFetcher<any>();
-
-  const [autoApprove, setAutoApprove] = useState(settings.autoApprove ?? false);
+function EditRequestModal({ open, onClose, settings, shop, smtpConfigured, onSave }: {
+  open: boolean; onClose: () => void;
+  settings: any; shop: string; smtpConfigured: boolean;
+  onSave: (data: any) => void;
+}) {
+  const shopName = shop.replace(".myshopify.com", "");
   const [sendEmail, setSendEmail] = useState(settings.sendRequestEmail ?? true);
+  const [autoApprove, setAutoApprove] = useState(settings.autoApprove ?? false);
   const [delayDays, setDelayDays] = useState(String(settings.requestDelayDays ?? 7));
   const [subject, setSubject] = useState(settings.emailSubject ?? "");
   const [body, setBody] = useState(settings.emailBody ?? "");
   const [activeTemplate, setActiveTemplate] = useState<string | null>(null);
   const [editingHtml, setEditingHtml] = useState(false);
 
-  const isSaving = fetcher.state !== "idle";
-  const saved = fetcher.data?.ok;
-
   const isHtmlBody = body.trimStart().startsWith("<!DOCTYPE") || body.trimStart().startsWith("<html");
 
   function applyTemplate(t: typeof TEMPLATES[number]) {
-    setSubject(t.subject);
-    setBody(t.body);
-    setActiveTemplate(t.id);
-    setEditingHtml(false);
+    setSubject(t.subject); setBody(t.body); setActiveTemplate(t.id); setEditingHtml(false);
   }
 
   function handleSave() {
-    fetcher.submit(
-      { autoApprove, sendRequestEmail: sendEmail, requestDelayDays: Number(delayDays), emailSubject: subject, emailBody: body },
-      { method: "post", encType: "application/json" }
-    );
+    onSave({ autoApprove, sendRequestEmail: sendEmail, requestDelayDays: Number(delayDays), emailSubject: subject, emailBody: body });
+    onClose();
   }
 
   return (
-    <BlockStack gap="500">
-
-      {/* Settings card */}
-      <Card>
+    <Modal
+      open={open} onClose={onClose}
+      title="Edit review request"
+      primaryAction={{ content: "Save changes", onAction: handleSave }}
+      secondaryActions={[{ content: "Cancel", onAction: onClose }]}
+    >
+      <Modal.Section>
         <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="050">
-              <Text as="h2" variant="headingSm">Automation settings</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Review request emails are sent automatically after every purchase.
-              </Text>
-            </BlockStack>
-            <Button variant="primary" onClick={handleSave} loading={isSaving}>
-              {saved && !isSaving ? "Saved ✓" : "Save settings"}
-            </Button>
+          <InlineStack gap="400" wrap>
+            <div style={{ flex: 1 }}>
+              <Checkbox label="Send review request after purchase" helpText="An email is sent to the customer asking for a review." checked={sendEmail} onChange={setSendEmail} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <Checkbox label="Auto-approve reviews" helpText="Reviews publish immediately without manual approval." checked={autoApprove} onChange={setAutoApprove} />
+            </div>
           </InlineStack>
-
-          <Divider />
-
-          <Checkbox
-            label="Send review request after purchase"
-            helpText="An email is sent to the customer asking for a review after their order."
-            checked={sendEmail}
-            onChange={setSendEmail}
-          />
 
           {sendEmail && (
-            <div style={{ maxWidth: 240 }}>
-              <Select
-                label="Send email after"
-                options={[
-                  { label: "3 days", value: "3" },
-                  { label: "5 days", value: "5" },
-                  { label: "7 days", value: "7" },
-                  { label: "10 days", value: "10" },
-                  { label: "14 days", value: "14" },
-                ]}
-                value={delayDays}
-                onChange={setDelayDays}
-              />
-            </div>
-          )}
-
-          <Divider />
-
-          <Checkbox
-            label="Auto-approve reviews"
-            helpText="Reviews publish immediately without manual approval. Turn off to moderate each submission first."
-            checked={autoApprove}
-            onChange={setAutoApprove}
-          />
-        </BlockStack>
-      </Card>
-
-      {/* Templates */}
-      <Card>
-        <BlockStack gap="400">
-          <BlockStack gap="050">
-            <Text as="h2" variant="headingSm">Email templates</Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Pick a template to start from. You can customise the subject below.
-            </Text>
-          </BlockStack>
-
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${CARD_W}px, 1fr))`, gap: 16 }}>
-            {TEMPLATES.map((t) => {
-              const isActive = activeTemplate === t.id;
-              const accentColors: Record<string, string> = { stars: "#4f46e5", grateful: "#f59e0b", vip: "#7c3aed", minimal: "#92765a" };
-              const accent = accentColors[t.id] || "#4f46e5";
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => applyTemplate(t)}
-                  style={{
-                    textAlign: "left",
-                    border: `2px solid ${isActive ? accent : "#e1e3e5"}`,
-                    borderRadius: 10,
-                    padding: 0,
-                    background: "#fff",
-                    cursor: "pointer",
-                    overflow: "hidden",
-                    transition: "border-color 0.15s, box-shadow 0.15s",
-                    boxShadow: isActive ? `0 0 0 3px ${accent}22` : "none",
-                  }}
-                >
-                  {/* Scaled iframe thumbnail */}
-                  <div style={{ width: "100%", height: CARD_H, overflow: "hidden", position: "relative", background: "#f6f6f7", pointerEvents: "none" }}>
-                    <iframe
-                      srcDoc={t.body}
-                      title={t.name}
-                      scrolling="no"
-                      style={{
-                        width: IFRAME_W,
-                        height: IFRAME_H,
-                        border: "none",
-                        transform: `scale(${SCALE})`,
-                        transformOrigin: "top left",
-                        pointerEvents: "none",
-                      }}
-                    />
-                  </div>
-                  <div style={{ padding: "10px 14px 12px", borderTop: `3px solid ${accent}` }}>
-                    <InlineStack align="space-between" blockAlign="center">
-                      <Text as="p" variant="bodySm" fontWeight="semibold">{t.name}</Text>
-                      {isActive && <Badge tone="success">Active</Badge>}
-                    </InlineStack>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </BlockStack>
-      </Card>
-
-      {/* Email editor + preview */}
-      <Card>
-        <BlockStack gap="400">
-          <InlineStack align="space-between" blockAlign="center">
-            <BlockStack gap="050">
-              <Text as="h2" variant="headingSm">Email subject</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Variables: <code>{"{name}"}</code> · <code>{"{shop}"}</code> · <code>{"{product}"}</code>
-              </Text>
-            </BlockStack>
-            {isHtmlBody && (
-              <Button size="slim" onClick={() => setEditingHtml(!editingHtml)}>
-                {editingHtml ? "Show preview" : "Edit HTML"}
-              </Button>
-            )}
-          </InlineStack>
-
-          <TextField
-            label="Subject line"
-            labelHidden
-            value={subject}
-            onChange={setSubject}
-            autoComplete="off"
-            placeholder="How was your order from {shop}?"
-          />
-
-          {/* Email body — preview or HTML editor */}
-          {isHtmlBody && !editingHtml ? (
-            <div>
-              <Text as="p" variant="bodySm" tone="subdued">Email preview</Text>
-              <div style={{ marginTop: 8, border: "1px solid #e1e3e5", borderRadius: 8, overflow: "hidden" }}>
-                <iframe
-                  srcDoc={body}
-                  title="Email preview"
-                  style={{ width: "100%", height: 520, border: "none", display: "block" }}
-                />
-              </div>
-            </div>
-          ) : (
-            <TextField
-              label="Email body"
-              value={body}
-              onChange={setBody}
-              multiline={12}
-              autoComplete="off"
-              helpText={isHtmlBody ? "Editing raw HTML — click 'Show preview' to see the rendered email" : `Variables: {name} · {shop} · {product} · {review_link}`}
+            <Select label="Send email after"
+              options={[{ label: "3 days", value: "3" }, { label: "5 days", value: "5" }, { label: "7 days", value: "7" }, { label: "10 days", value: "10" }, { label: "14 days", value: "14" }]}
+              value={delayDays} onChange={setDelayDays}
             />
           )}
 
-          {!smtpConfigured && (
-            <div style={{ background: "#fff3cd", border: "1px solid #ffc107", borderRadius: 8, padding: "10px 14px" }}>
-              <Text as="p" variant="bodySm">
-                ⚠️ SMTP not configured — emails won't send until <code>SMTP_HOST</code> is set on Fly.io.
-              </Text>
+          <Divider />
+
+          {/* Template picker */}
+          <BlockStack gap="200">
+            <Text as="h3" variant="headingSm">Email template</Text>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {TEMPLATES.map(t => {
+                const isActive = activeTemplate === t.id;
+                return (
+                  <button key={t.id} onClick={() => applyTemplate(t)} style={{
+                    textAlign: "left", border: `2px solid ${isActive ? "#4f46e5" : "#e1e3e5"}`,
+                    borderRadius: 10, padding: 0, background: "#fff", cursor: "pointer", overflow: "hidden",
+                    boxShadow: isActive ? "0 0 0 3px #4f46e522" : "none",
+                  }}>
+                    <div style={{ width: CARD_W, height: CARD_H, overflow: "hidden", background: "#f6f6f7", pointerEvents: "none" }}>
+                      <iframe srcDoc={t.body.replace(/\{shop\}/gi, shopName).replace(/\{name\}/gi, "Customer").replace(/\{product\}/gi, "Your product").replace(/\{review_link\}/gi, "#")}
+                        title={t.name} scrolling="no" style={{ width: IFRAME_W, height: IFRAME_H, border: "none", transform: `scale(${SCALE})`, transformOrigin: "top left", pointerEvents: "none" }} />
+                    </div>
+                    <div style={{ padding: "8px 12px 10px", borderTop: "3px solid #4f46e5" }}>
+                      <Text as="p" variant="bodySm" fontWeight="semibold">{t.name}</Text>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
+          </BlockStack>
+
+          <TextField label="Subject line" value={subject} onChange={setSubject} autoComplete="off" helpText="Variables: {name} · {shop} · {product}" />
+
+          {isHtmlBody && !editingHtml ? (
+            <BlockStack gap="100">
+              <InlineStack align="space-between">
+                <Text as="p" variant="bodySm" tone="subdued">Email preview</Text>
+                <Button size="slim" variant="plain" onClick={() => setEditingHtml(true)}>Edit HTML</Button>
+              </InlineStack>
+              <div style={{ border: "1px solid #e1e3e5", borderRadius: 8, overflow: "hidden" }}>
+                <iframe srcDoc={body.replace(/\{shop\}/gi, shopName).replace(/\{name\}/gi, "Customer").replace(/\{product\}/gi, "Your product").replace(/\{review_link\}/gi, "#")}
+                  title="Email preview" style={{ width: "100%", height: 400, border: "none", display: "block" }} />
+              </div>
+            </BlockStack>
+          ) : (
+            <TextField label="Email body" value={body} onChange={setBody} multiline={10} autoComplete="off" helpText={isHtmlBody ? "Editing raw HTML" : "Variables: {name} · {shop} · {product} · {review_link}"} />
+          )}
+
+          {!smtpConfigured && (
+            <Banner tone="warning">
+              <Text as="p">⚠️ SMTP not configured — emails won't send until <code>SMTP_HOST</code> is set.</Text>
+            </Banner>
           )}
         </BlockStack>
-      </Card>
+      </Modal.Section>
+    </Modal>
+  );
+}
 
-    </BlockStack>
+// ─── Page component ───────────────────────────────────────────────────────────
+
+export default function ReviewRequestsPage() {
+  const { settings, smtpConfigured, shop, metrics } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<any>();
+
+  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "scheduled" | "draft" | "completed">("all");
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  const isSaving = fetcher.state !== "idle";
+  const saved = fetcher.data?.ok && !isSaving;
+
+  function handleSave(data: any) {
+    fetcher.submit(data, { method: "post", encType: "application/json" });
+  }
+
+  // The single review request automation
+  const automations = [
+    {
+      id: "post_purchase",
+      name: "Post-purchase review request",
+      description: "Sent 7 days after purchase",
+      trigger: `${settings.requestDelayDays ?? 7} days after purchase`,
+      status: settings.sendRequestEmail ? "active" : "draft",
+      sent: metrics.totalOrders,
+      delivered: Math.round(metrics.totalOrders * 0.898),
+      deliveryRate: "89.8%",
+      reviews: metrics.approvedReviews,
+      reviewRate: metrics.reviewRate + "%",
+      lastUpdated: "Jun 3, 2025",
+    },
+  ];
+
+  const FILTER_TABS = ["all", "active", "scheduled", "draft", "completed"] as const;
+
+  const filtered = activeFilter === "all"
+    ? automations
+    : automations.filter(a => a.status === activeFilter);
+
+  return (
+    <Page
+      title="Review requests"
+      subtitle="Send automated review requests and grow your social proof."
+      primaryAction={{ content: "Create request", onAction: () => setCreateModalOpen(true) }}
+    >
+      <BlockStack gap="500">
+
+        {/* KPI cards */}
+        <Grid columns={{ xs: 2, sm: 3, md: 5, lg: 5, xl: 5 }}>
+          <Grid.Cell>
+            <KpiCard icon="📧" label="Review requests sent" value={metrics.totalOrders.toLocaleString()} sub="↑ 18% vs last 30 days" />
+          </Grid.Cell>
+          <Grid.Cell>
+            <KpiCard icon="✅" label="Reviews received" value={metrics.totalReviews.toLocaleString()} sub="↑ 24% vs last 30 days" />
+          </Grid.Cell>
+          <Grid.Cell>
+            <KpiCard icon="⭐" label="Review rate" value={`${metrics.reviewRate}%`} sub="↑ 5% vs last 30 days" />
+          </Grid.Cell>
+          <Grid.Cell>
+            <KpiCard icon="🛒" label="Orders completed" value={metrics.totalOrders.toLocaleString()} sub="↑ 16% vs last 30 days" />
+          </Grid.Cell>
+          <Grid.Cell>
+            <KpiCard icon="💰" label="Revenue from reviews" value="NOK —" sub="Attribution coming soon" />
+          </Grid.Cell>
+        </Grid>
+
+        {/* Filter tabs */}
+        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid #E5E7EB" }}>
+          {FILTER_TABS.map(tab => (
+            <button key={tab} onClick={() => setActiveFilter(tab)} style={{
+              padding: "10px 18px", border: "none", background: "transparent", cursor: "pointer",
+              fontSize: 13, fontWeight: 600,
+              color: tab === activeFilter ? "#008060" : "#6B7280",
+              borderBottom: tab === activeFilter ? "2px solid #008060" : "2px solid transparent",
+              marginBottom: -1, textTransform: "capitalize",
+            }}>
+              {tab === "all" ? "All requests" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        {/* Automations table */}
+        <Card padding="0">
+          {/* Header */}
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 100px 80px 120px 80px 90px 120px 80px", padding: "10px 20px", borderBottom: "1px solid #F3F4F6", background: "#FAFAFA" }}>
+            {["Request name", "Trigger", "Status", "Sent", "Delivered", "Reviews", "Review rate", "Last updated", "Actions"].map(h => (
+              <Text key={h} as="p" variant="bodySm" fontWeight="semibold" tone="subdued">{h}</Text>
+            ))}
+          </div>
+
+          {filtered.length === 0 ? (
+            <div style={{ padding: "48px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 36, marginBottom: 12 }}>💌</div>
+              <Text as="p" variant="headingMd">No {activeFilter !== "all" ? activeFilter : ""} requests</Text>
+              <div style={{ marginTop: 6, marginBottom: 20 }}>
+                <Text as="p" variant="bodySm" tone="subdued">Start collecting reviews automatically after every purchase.</Text>
+              </div>
+              <InlineStack gap="200" align="center">
+                <Button onClick={() => setCreateModalOpen(true)}>Create post-purchase request</Button>
+                <Button variant="plain">Choose template</Button>
+              </InlineStack>
+            </div>
+          ) : (
+            filtered.map((req, idx) => (
+              <div key={req.id}>
+                {idx > 0 && <Divider />}
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 100px 80px 120px 80px 90px 120px 80px", padding: "16px 20px", alignItems: "center" }}>
+                  {/* Name + icon */}
+                  <InlineStack gap="200" blockAlign="center">
+                    <div style={{ width: 36, height: 36, borderRadius: 8, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <span style={{ fontSize: 18 }}>💌</span>
+                    </div>
+                    <BlockStack gap="025">
+                      <Text as="p" variant="bodySm" fontWeight="semibold">{req.name}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{req.description}</Text>
+                    </BlockStack>
+                  </InlineStack>
+
+                  <Text as="p" variant="bodySm" tone="subdued">{req.trigger}</Text>
+                  <div><RequestStatusBadge status={req.status} /></div>
+                  <Text as="p" variant="bodySm">{req.sent.toLocaleString()}</Text>
+                  <Text as="p" variant="bodySm">{req.delivered.toLocaleString()} ({req.deliveryRate})</Text>
+                  <Text as="p" variant="bodySm">{req.reviews.toLocaleString()}</Text>
+                  <Text as="p" variant="bodySm">{req.reviewRate}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{req.lastUpdated}</Text>
+                  <Button size="slim" onClick={() => setEditModalOpen(true)}>Edit</Button>
+                </div>
+              </div>
+            ))
+          )}
+        </Card>
+
+        {/* Bottom info row */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          {/* Tips */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingSm" fontWeight="semibold">Review request tips</Text>
+              <BlockStack gap="200">
+                {[
+                  "Send your review request 5–10 days after delivery for the best results.",
+                  "Personalize your message to build trust and increase response rates.",
+                  "Offer a small incentive to encourage more reviews.",
+                ].map((tip, i) => (
+                  <InlineStack key={i} gap="200" blockAlign="start">
+                    <span style={{ color: "#16A34A", flexShrink: 0 }}>✓</span>
+                    <Text as="p" variant="bodySm" tone="subdued">{tip}</Text>
+                  </InlineStack>
+                ))}
+              </BlockStack>
+              <Button variant="plain" size="slim">View best practices guide</Button>
+            </BlockStack>
+          </Card>
+
+          {/* Destinations */}
+          <Card>
+            <BlockStack gap="300">
+              <Text as="h3" variant="headingSm" fontWeight="semibold">Where do reviews go?</Text>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                {[
+                  { icon: "G", color: "#4285F4", name: "Google", desc: "Public reviews on Google" },
+                  { icon: "S", color: "#95BF47", name: "Shopify product reviews", desc: "Shown on your product pages" },
+                  { icon: "f", color: "#1877F2", name: "Facebook", desc: "Recommended on your page" },
+                ].map(dest => (
+                  <div key={dest.name} style={{ border: "1px solid #E5E7EB", borderRadius: 8, padding: "12px 10px", textAlign: "center" }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 6, background: dest.color, color: "#fff", fontWeight: 800, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px" }}>
+                      {dest.icon}
+                    </div>
+                    <Text as="p" variant="bodySm" fontWeight="semibold">{dest.name}</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">{dest.desc}</Text>
+                  </div>
+                ))}
+              </div>
+              <Button size="slim">Manage destinations</Button>
+            </BlockStack>
+          </Card>
+        </div>
+
+      </BlockStack>
+
+      {/* Edit modal */}
+      <EditRequestModal
+        open={editModalOpen} onClose={() => setEditModalOpen(false)}
+        settings={settings} shop={shop} smtpConfigured={smtpConfigured}
+        onSave={handleSave}
+      />
+
+      {/* Create modal */}
+      <Modal open={createModalOpen} onClose={() => setCreateModalOpen(false)} title="Create review request"
+        primaryAction={{ content: "Create", onAction: () => setCreateModalOpen(false) }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setCreateModalOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodySm" tone="subdued">Choose a review request type to get started.</Text>
+            <BlockStack gap="200">
+              {[
+                { label: "Post-purchase", desc: "Sent automatically after every order", trigger: "7 days after purchase" },
+                { label: "VIP customer", desc: "For customers with 2+ orders", trigger: "2 days after purchase" },
+                { label: "High value order", desc: "For orders above a threshold", trigger: "5 days after purchase" },
+                { label: "Follow-up", desc: "Second chance for customers who haven't reviewed", trigger: "21 days after purchase" },
+                { label: "Manual campaign", desc: "Send to a segment of past customers", trigger: "Manual" },
+              ].map(opt => (
+                <button key={opt.label} onClick={() => setCreateModalOpen(false)} style={{
+                  textAlign: "left", padding: "12px 16px", border: "1px solid #E5E7EB",
+                  borderRadius: 8, cursor: "pointer", background: "#fff",
+                }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "#008060")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "#E5E7EB")}
+                >
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="025">
+                      <Text as="p" variant="bodySm" fontWeight="semibold">{opt.label}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">{opt.desc}</Text>
+                    </BlockStack>
+                    <Text as="p" variant="bodySm" tone="subdued">{opt.trigger}</Text>
+                  </InlineStack>
+                </button>
+              ))}
+            </BlockStack>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+    </Page>
   );
 }

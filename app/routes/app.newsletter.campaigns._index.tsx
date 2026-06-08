@@ -86,7 +86,7 @@ export default function CampaignList() {
     c.subject || "—",
     statusBadge(c.status),
     c.sentAt ? new Date(c.sentAt).toLocaleDateString() : "—",
-    c.recipientCount ? c.recipientCount.toLocaleString() : "—",
+    c.recipientCount != null ? c.recipientCount.toLocaleString() : "—",
     c.openCount ? `${Math.round((c.openCount / Math.max(c.recipientCount, 1)) * 100)}%` : "—",
     c.clickCount ? `${Math.round((c.clickCount / Math.max(c.recipientCount, 1)) * 100)}%` : "—",
     c.revenueAttributed ? `$${c.revenueAttributed.toFixed(0)}` : "—",
@@ -101,7 +101,7 @@ export default function CampaignList() {
           <Button variant="primary" url="/app/newsletter/campaigns/new">New newsletter</Button>
         </InlineStack>
         <DataTable
-          columnContentTypes={["text","text","text","text","numeric","text","text","numeric","text"]}
+          columnContentTypes={["text","text","text","text","text","text","text","numeric","text"]}
           headings={["Name","Subject","Status","Sent date","Recipients","Open rate","Click rate","Revenue","Actions"]}
           rows={rows}
         />

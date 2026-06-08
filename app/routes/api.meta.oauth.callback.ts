@@ -133,17 +133,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const title = "Meta connected!";
   const subtitle = isWooCommerce
     ? "Your Meta account has been linked to Attribix.<br>You can close this window and refresh your WordPress admin."
-    : isOnboarding
-    ? "Your Meta account has been linked to Attribix.<br>Closing this window…"
-    : `Your Meta account has been linked to Attribix.<br>Redirecting you to Shopify in a moment…`;
-  const buttonText = isWooCommerce || isOnboarding ? "Close this window" : "Return to Shopify Admin";
+    : "Your Meta account has been linked to Attribix.<br>Closing this window…";
+  const buttonText = isWooCommerce ? "Close this window" : "Close this window";
   const buttonHref = "#";
   const buttonOnClick = "window.close(); return false;";
-  const autoRedirect = isOnboarding
-    ? `<script>window.close();</script>`
-    : isWooCommerce
+  const autoRedirect = isWooCommerce
     ? ""
-    : `<meta http-equiv="refresh" content="3;url=https://${shop}/admin" />`;
+    : `<script>setTimeout(function(){ window.close(); }, 1500);</script>`;
 
   return new Response(
     `<!DOCTYPE html>

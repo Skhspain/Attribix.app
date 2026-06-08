@@ -96,6 +96,23 @@ function rowColors(status: string): { bg: string; border: string } {
   return { bg: "#ffffff", border: "#e5e7eb" };
 }
 
+function CopyWebhookButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard.writeText(url).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        });
+      }}
+      style={{ marginTop: 6, fontSize: 12, color: copied ? "#16a34a" : "#008060", background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}
+    >
+      {copied ? "✓ Copied!" : "Copy URL"}
+    </button>
+  );
+}
+
 function StatusDot({ status }: { status: string }) {
   const { border } = rowColors(status);
   const label =
@@ -907,23 +924,17 @@ export default function LeadsPage() {
   const webhookFetcher = useFetcher();
   const metaSyncFetcher = useFetcher();
 
-  const handleStatusFilter = useCallback(
-    (val: string) => {
-      const next = new URLSearchParams(searchParams);
-      val === "all" ? next.delete("status") : next.set("status", val);
-      setSearchParams(next);
-    },
-    [searchParams, setSearchParams]
-  );
+  const handleStatusFilter = useCallback((val: string) => {
+    const next = new URLSearchParams(searchParams);
+    val === "all" ? next.delete("status") : next.set("status", val);
+    setSearchParams(next);
+  }, [searchParams, setSearchParams]);
 
-  const handleSourceFilter = useCallback(
-    (val: string) => {
-      const next = new URLSearchParams(searchParams);
-      val === "all" ? next.delete("source") : next.set("source", val);
-      setSearchParams(next);
-    },
-    [searchParams, setSearchParams]
-  );
+  const handleSourceFilter = useCallback((val: string) => {
+    const next = new URLSearchParams(searchParams);
+    val === "all" ? next.delete("source") : next.set("source", val);
+    setSearchParams(next);
+  }, [searchParams, setSearchParams]);
 
   const statusOptions = [
     { label: "All statuses", value: "all" },
@@ -940,130 +951,139 @@ export default function LeadsPage() {
     { label: "Contact Form", value: "contact_form" },
     { label: "Meta Ad", value: "meta_ad" },
     { label: "Google Ad", value: "google_ad" },
-    { label: "Google Form", value: "google_form" },
     { label: "Manual", value: "manual" },
     { label: "Import", value: "import" },
   ];
 
-  // Legend for the color coding
-  const statusLegend = [
-    { label: "New", color: "#9ca3af" },
-    { label: "In progress (contacted / qualified)", color: "#f59e0b" },
-    { label: "Converted", color: "#22c55e" },
-    { label: "Lost", color: "#ef4444" },
-  ];
+  const hasLeads = leads.length > 0 || stats.totalLeads > 0;
 
   return (
     <Page
       title="Lead Center"
-      subtitle={`${stats.totalLeads} total lead${stats.totalLeads !== 1 ? "s" : ""}`}
-      primaryAction={{
-        content: "Add lead",
-        onAction: () => setAddModalOpen(true),
-      }}
-      secondaryActions={[
-        {
-          content: "Import CSV",
-          onAction: () => setImportModalOpen(true),
-        },
-        {
-          content: "Export CSV",
-          onAction: () => window.open("/app/leads/export", "_blank"),
-        },
-      ]}
+      subtitle="Collect, manage and follow up leads from ads, forms, CSV imports and your store."
+      primaryAction={{ content: "Add lead", onAction: () => setAddModalOpen(true) }}
+      secondaryActions={[{ content: "Import CSV", onAction: () => setImportModalOpen(true) }]}
     >
       <BlockStack gap="500">
-        {/* Stats row */}
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <StatCard label="Total Leads" value={stats.totalLeads} />
-          <StatCard label="New Today" value={stats.newToday} />
-          <StatCard
-            label="Conversion Rate"
-            value={`${stats.conversionRate}%`}
-            sub="converted / total"
-          />
-          <StatCard label="Qualified" value={stats.qualified} />
+
+        {/* Setup banner — only when no leads */}
+        {!hasLeads && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE" }}>
+            <span style={{ fontSize: 18, flexShrink: 0 }}>ℹ️</span>
+            <Text as="p" variant="bodySm">
+              Start collecting leads — connect a source below and new leads will appear here automatically.
+            </Text>
+          </div>
+        )}
+
+        {/* 3 metric cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+          {[
+            { icon: "👥", label: "Total leads", value: stats.totalLeads, sub: "across all sources" },
+            { icon: "✅", label: "Qualified", value: stats.qualified, sub: "ready to convert" },
+            { icon: "🏆", label: "Converted", value: stats.totalLeads > 0 ? Math.round((stats.conversionRate / 100) * stats.totalLeads) : 0, sub: `${stats.conversionRate}% conversion rate` },
+          ].map(card => (
+            <Card key={card.label}>
+              <BlockStack gap="100">
+                <InlineStack align="space-between" blockAlign="start">
+                  <Text as="p" variant="bodySm" tone="subdued">{card.label}</Text>
+                  <span style={{ fontSize: 20 }}>{card.icon}</span>
+                </InlineStack>
+                <Text as="p" variant="heading2xl" fontWeight="bold">{card.value}</Text>
+                <Text as="p" variant="bodySm" tone="subdued">{card.sub}</Text>
+              </BlockStack>
+            </Card>
+          ))}
         </div>
 
-        {/* Import Sources: Webhook + Meta Sync */}
+        {/* Connect lead sources */}
         <Card>
           <BlockStack gap="400">
-            <Text as="h2" variant="headingSm">Import Sources</Text>
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              {/* Meta Lead Sync */}
-              <div style={{ flex: 1, minWidth: 280, padding: 16, background: "#f0f4ff", borderRadius: 8, border: "1px solid #c7d2fe" }}>
-                <InlineStack gap="200" blockAlign="center">
-                  <span style={{ fontSize: 20 }}>📘</span>
-                  <Text as="h3" variant="headingSm">Meta Lead Ads</Text>
-                </InlineStack>
-                <div style={{ marginTop: 8 }}>
-                  {metaConnected ? (
-                    <BlockStack gap="200">
-                      <Text as="p" variant="bodySm" tone="subdued">Pull leads from your Meta Lead Ad forms.</Text>
-                      <Button
-                        variant="primary"
-                        size="slim"
-                        loading={metaSyncFetcher.state !== "idle"}
-                        onClick={() => metaSyncFetcher.submit(
-                          { _intent: "sync_meta_leads" },
-                          { method: "post", encType: "application/json" }
-                        )}
-                      >
-                        Sync Meta Leads
-                      </Button>
-                      {metaSyncFetcher.data?.ok && (
-                        <Banner tone="success">
-                          Imported {(metaSyncFetcher.data as any).imported} leads from {(metaSyncFetcher.data as any).pages} page(s). {(metaSyncFetcher.data as any).skipped > 0 ? `${(metaSyncFetcher.data as any).skipped} skipped.` : ""}
-                        </Banner>
-                      )}
-                      {metaSyncFetcher.data && !metaSyncFetcher.data.ok && (
-                        <Banner tone="critical">{(metaSyncFetcher.data as any).error}</Banner>
-                      )}
-                    </BlockStack>
-                  ) : (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Connect Meta in <Link url="/app/integrations/meta">Integrations</Link> to sync leads from Lead Ad forms.
-                    </Text>
+            <BlockStack gap="025">
+              <Text as="h2" variant="headingMd">Connect lead sources</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Bring leads into Attribix from ads, forms, CSV files or manual entry.</Text>
+            </BlockStack>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+
+              {/* Meta Lead Ads */}
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: 16 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: "#1877F2", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+                    <span style={{ color: "white", fontSize: 16, fontWeight: 700 }}>f</span>
+                  </div>
+                  <Text as="p" variant="headingSm" fontWeight="semibold">Meta Lead Ads</Text>
+                  <div style={{ marginTop: 6 }}>
+                    <Text as="p" variant="bodySm" tone="subdued">Sync leads from your connected Meta lead forms instantly.</Text>
+                  </div>
+                  {metaSyncFetcher.data?.ok && (
+                    <div style={{ marginTop: 8 }}>
+                      <Text as="p" variant="bodySm" tone="success">
+                        ✓ Imported {(metaSyncFetcher.data as any).imported} leads
+                      </Text>
+                    </div>
                   )}
+                  {metaSyncFetcher.data && !(metaSyncFetcher.data as any).ok && (
+                    <div style={{ marginTop: 8 }}>
+                      <Text as="p" variant="bodySm" tone="critical">{(metaSyncFetcher.data as any).error}</Text>
+                    </div>
+                  )}
+                </div>
+                <div style={{ borderTop: "1px solid #F3F4F6" }}>
+                  <button
+                    onClick={() => metaConnected
+                      ? metaSyncFetcher.submit({ _intent: "sync_meta_leads" }, { method: "post", encType: "application/json" })
+                      : window.location.href = "/app/integrations/meta"
+                    }
+                    disabled={metaSyncFetcher.state !== "idle"}
+                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}
+                  >
+                    <span>{metaConnected ? (metaSyncFetcher.state !== "idle" ? "Syncing…" : "Sync Meta leads") : "Connect Meta"}</span>
+                    <span style={{ color: "#9CA3AF" }}>›</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Google Forms Webhook */}
-              <div style={{ flex: 1, minWidth: 280, padding: 16, background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0" }}>
-                <InlineStack gap="200" blockAlign="center">
-                  <span style={{ fontSize: 20 }}>📝</span>
-                  <Text as="h3" variant="headingSm">Google Forms / Webhook</Text>
-                </InlineStack>
-                <div style={{ marginTop: 8 }}>
-                  <BlockStack gap="200">
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Receive leads automatically from Google Forms, Typeform, or any service that can POST JSON.
-                    </Text>
-                    {webhookUrl ? (
-                      <BlockStack gap="200">
-                        <Text as="p" variant="bodySm" fontWeight="semibold">Webhook URL:</Text>
-                        <div style={{ padding: "8px 12px", background: "#fff", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 12, fontFamily: "monospace", wordBreak: "break-all" }}>
-                          {webhookUrl}
-                        </div>
-                        <InlineStack gap="200">
-                          <Button size="slim" onClick={() => navigator.clipboard.writeText(webhookUrl)}>Copy URL</Button>
-                          <Button size="slim" variant="plain" onClick={() => setWebhookSectionOpen(!webhookSectionOpen)}>
-                            {webhookSectionOpen ? "Hide setup guide" : "Setup guide"}
-                          </Button>
-                        </InlineStack>
-                        {webhookSectionOpen && (
-                          <div style={{ marginTop: 8, padding: 12, background: "#fff", borderRadius: 6, border: "1px solid #e5e7eb" }}>
-                            <Text as="p" variant="bodySm" fontWeight="semibold">Google Forms Apps Script:</Text>
-                            <div style={{ marginTop: 8, padding: 10, background: "#1e293b", color: "#e2e8f0", borderRadius: 6, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", overflowX: "auto" }}>
+              {/* Forms & Webhooks */}
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: 16 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: "#10B981", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+                    <span style={{ color: "white", fontSize: 16 }}>⚙</span>
+                  </div>
+                  <Text as="p" variant="headingSm" fontWeight="semibold">Forms & Webhooks</Text>
+                  <div style={{ marginTop: 6 }}>
+                    <Text as="p" variant="bodySm" tone="subdued">Receive leads from Typeform, Google Forms, contact forms or any service that can POST JSON.</Text>
+                  </div>
+                  {webhookUrl && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ padding: "6px 10px", background: "#F3F4F6", borderRadius: 6, fontSize: 11, fontFamily: "monospace", wordBreak: "break-all", color: "#374151" }}>
+                        {webhookUrl.length > 50 ? webhookUrl.slice(0, 50) + "…" : webhookUrl}
+                      </div>
+                      <CopyWebhookButton url={webhookUrl!} />
+                    </div>
+                  )}
+                </div>
+                <div style={{ borderTop: "1px solid #F3F4F6" }}>
+                  <button
+                    onClick={() => webhookUrl
+                      ? setWebhookSectionOpen(!webhookSectionOpen)
+                      : webhookFetcher.submit({ _intent: "generate_webhook_token" }, { method: "post", encType: "application/json" })
+                    }
+                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}
+                  >
+                    <span>{webhookUrl ? "Setup guide" : webhookFetcher.state !== "idle" ? "Generating…" : "Generate webhook URL"}</span>
+                    <span style={{ color: "#9CA3AF" }}>›</span>
+                  </button>
+                </div>
+                {webhookSectionOpen && webhookUrl && (
+                  <div style={{ padding: "0 16px 16px" }}>
+                    <div style={{ padding: 10, background: "#1e293b", color: "#e2e8f0", borderRadius: 6, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", overflowX: "auto" }}>
 {`function onFormSubmit(e) {
   var items = e.response.getItemResponses();
   var data = {};
   items.forEach(function(item) {
     var title = item.getItem().getTitle().toLowerCase();
     if (title.includes("email")) data.email = item.getResponse();
-    else if (title.includes("name")) data.name = item.getResponse();
-    else if (title.includes("phone")) data.phone = item.getResponse();
-    else if (title.includes("company")) data.company = item.getResponse();
     else data[title] = item.getResponse();
   });
   UrlFetchApp.fetch("${webhookUrl}", {
@@ -1072,101 +1092,131 @@ export default function LeadsPage() {
     payload: JSON.stringify(data)
   });
 }`}
-                            </div>
-                            <Text as="p" variant="bodySm" tone="subdued">
-                              Paste this in your Google Form's Apps Script editor (Extensions → Apps Script), then set a trigger for "onFormSubmit".
-                            </Text>
-                          </div>
-                        )}
-                      </BlockStack>
-                    ) : (
-                      <Button
-                        variant="primary"
-                        size="slim"
-                        loading={webhookFetcher.state !== "idle"}
-                        onClick={() => webhookFetcher.submit(
-                          { _intent: "generate_webhook_token" },
-                          { method: "post", encType: "application/json" }
-                        )}
-                      >
-                        Generate Webhook URL
-                      </Button>
-                    )}
-                  </BlockStack>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* CSV Import */}
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: 16 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: "#F59E0B", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+                    <span style={{ color: "white", fontSize: 16 }}>📄</span>
+                  </div>
+                  <Text as="p" variant="headingSm" fontWeight="semibold">CSV Import</Text>
+                  <div style={{ marginTop: 6 }}>
+                    <Text as="p" variant="bodySm" tone="subdued">Upload a CSV file to import an existing list of leads.</Text>
+                  </div>
+                </div>
+                <div style={{ borderTop: "1px solid #F3F4F6" }}>
+                  <button
+                    onClick={() => setImportModalOpen(true)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}
+                  >
+                    <span>Import leads</span>
+                    <span style={{ color: "#9CA3AF" }}>›</span>
+                  </button>
                 </div>
               </div>
+
+              {/* Manual Lead */}
+              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: 16 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: "#8B5CF6", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 10 }}>
+                    <span style={{ color: "white", fontSize: 16 }}>👤</span>
+                  </div>
+                  <Text as="p" variant="headingSm" fontWeight="semibold">Manual Lead</Text>
+                  <div style={{ marginTop: 6 }}>
+                    <Text as="p" variant="bodySm" tone="subdued">Add a lead yourself when you meet someone offline or receive a request.</Text>
+                  </div>
+                </div>
+                <div style={{ borderTop: "1px solid #F3F4F6" }}>
+                  <button
+                    onClick={() => setAddModalOpen(true)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "transparent", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}
+                  >
+                    <span>Add manually</span>
+                    <span style={{ color: "#9CA3AF" }}>›</span>
+                  </button>
+                </div>
+              </div>
+
             </div>
           </BlockStack>
         </Card>
 
-        {/* Filters + Export */}
-        <Card>
-          <InlineStack gap="400" wrap blockAlign="end" align="space-between">
-            <InlineStack gap="400" wrap blockAlign="end">
-              <div style={{ minWidth: 180 }}>
-                <Select
-                  label="Status"
-                  options={statusOptions}
-                  value={statusFilter}
-                  onChange={handleStatusFilter}
-                />
-              </div>
-              <div style={{ minWidth: 180 }}>
-                <Select
-                  label="Source"
-                  options={sourceOptions}
-                  value={sourceFilter}
-                  onChange={handleSourceFilter}
-                />
+        {/* Filters — only shown when there are leads */}
+        {hasLeads && (
+          <Card>
+            <InlineStack gap="400" wrap blockAlign="end" align="space-between">
+              <InlineStack gap="400" wrap blockAlign="end">
+                <div style={{ minWidth: 180 }}>
+                  <Select label="Status" options={statusOptions} value={statusFilter} onChange={handleStatusFilter} />
+                </div>
+                <div style={{ minWidth: 180 }}>
+                  <Select label="Source" options={sourceOptions} value={sourceFilter} onChange={handleSourceFilter} />
+                </div>
+              </InlineStack>
+              <div style={{ paddingTop: 20 }}>
+                <Button variant="plain" onClick={() => window.open(`/app/leads/export`, "_blank")}>
+                  Export CSV
+                </Button>
               </div>
             </InlineStack>
-            <div style={{ paddingTop: 20 }}>
-              <Button
-                variant="plain"
-                icon={<span style={{ fontSize: 14 }}>⬇️</span>}
-                onClick={() => {
-                  const params = new URLSearchParams();
-                  if (statusFilter !== "all") params.set("status", statusFilter);
-                  if (sourceFilter !== "all") params.set("source", sourceFilter);
-                  const qs = params.toString();
-                  window.open(`/app/leads/export${qs ? `?${qs}` : ""}`, "_blank");
-                }}
-              >
-                Export CSV ({leads.length}{statusFilter !== "all" || sourceFilter !== "all" ? " filtered" : ""})
-              </Button>
-            </div>
-          </InlineStack>
-        </Card>
+          </Card>
+        )}
 
-        {/* Color legend */}
-        <InlineStack gap="300" blockAlign="center">
-          {statusLegend.map(l => (
-            <span key={l.label} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <span style={{ width: 10, height: 10, borderRadius: "50%", background: l.color, display: "inline-block" }} />
-              <span style={{ color: "#6b7280" }}>{l.label}</span>
-            </span>
-          ))}
-        </InlineStack>
-
-        {/* Table */}
+        {/* Lead table or empty state */}
         <Card padding="0">
           {leads.length === 0 ? (
-            <EmptyState
-              heading="No leads yet"
-              image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
-            >
-              <Text as="p" variant="bodyMd">
-                Leads are automatically created when visitors submit your newsletter popup or contact
-                forms. You can also add leads manually using the button above.
-              </Text>
-            </EmptyState>
+            <div style={{ padding: "32px 24px" }}>
+              <BlockStack gap="400" inlineAlign="center">
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
+                  <Text as="p" variant="headingMd">No leads yet</Text>
+                  <div style={{ marginTop: 6, marginBottom: 20 }}>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Once leads arrive, you'll be able to track status, source, qualification, and follow-up activity here.
+                    </Text>
+                  </div>
+                  <InlineStack gap="200" align="center">
+                    <Button variant="primary" onClick={() => setAddModalOpen(true)}>Add lead</Button>
+                    <Button onClick={() => setImportModalOpen(true)}>Import CSV</Button>
+                  </InlineStack>
+                </div>
+
+                {/* Faint table preview */}
+                <div style={{ width: "100%", opacity: 0.35, pointerEvents: "none", marginTop: 8 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid #E5E7EB", background: "#F9FAFB" }}>
+                        {["Name", "Contact", "Source", "Status", "Created", "Last activity"].map(h => (
+                          <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: "#6B7280", fontWeight: 600 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[1, 2, 3].map(i => (
+                        <tr key={i} style={{ borderBottom: "1px solid #F3F4F6" }}>
+                          {[200, 160, 80, 70, 90, 90].map((w, j) => (
+                            <td key={j} style={{ padding: "12px 14px" }}>
+                              <div style={{ height: 12, background: "#E5E7EB", borderRadius: 4, width: w }} />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </BlockStack>
+            </div>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
-                  <tr style={{ borderBottom: "2px solid #e5e7eb", background: "#f9fafb" }}>
+                  <tr style={{ borderBottom: "2px solid #E5E7EB", background: "#F9FAFB" }}>
                     {["Name / Email", "Source", "Status", "Attribution", "Created", "Change status"].map(h => (
-                      <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: "#6b7280", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
+                      <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: "#6B7280", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1174,42 +1224,17 @@ export default function LeadsPage() {
                   {leads.map((lead) => {
                     const { bg, border } = rowColors(lead.status);
                     return (
-                      <tr
-                        key={lead.id}
-                        style={{
-                          borderBottom: "1px solid #e5e7eb",
-                          background: bg,
-                          borderLeft: `4px solid ${border}`,
-                        }}
-                      >
-                        {/* Name / Email */}
+                      <tr key={lead.id} style={{ borderBottom: "1px solid #E5E7EB", background: bg, borderLeft: `4px solid ${border}` }}>
                         <td style={{ padding: "10px 14px", minWidth: 180 }}>
-                          <div style={{ fontWeight: 600, color: "#111827" }}>
-                            {[lead.firstName, lead.lastName].filter(Boolean).join(" ") || "—"}
-                          </div>
-                          <div style={{ color: "#6b7280", fontSize: 12 }}>{lead.email}</div>
-                          {lead.company && <div style={{ color: "#9ca3af", fontSize: 12 }}>{lead.company}</div>}
+                          <div style={{ fontWeight: 600, color: "#111827" }}>{[lead.firstName, lead.lastName].filter(Boolean).join(" ") || "—"}</div>
+                          <div style={{ color: "#6B7280", fontSize: 12 }}>{lead.email}</div>
+                          {lead.company && <div style={{ color: "#9CA3AF", fontSize: 12 }}>{lead.company}</div>}
                         </td>
-                        {/* Source */}
-                        <td style={{ padding: "10px 14px", color: "#374151", whiteSpace: "nowrap" }}>
-                          {sourceLabel(lead.source)}
-                        </td>
-                        {/* Status */}
-                        <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
-                          <StatusDot status={lead.status} />
-                        </td>
-                        {/* Attribution */}
-                        <td style={{ padding: "10px 14px", color: "#6b7280", fontSize: 12, maxWidth: 200 }}>
-                          {formatAttribution(lead)}
-                        </td>
-                        {/* Created */}
-                        <td style={{ padding: "10px 14px", color: "#9ca3af", whiteSpace: "nowrap" }}>
-                          {formatDate(lead.createdAt)}
-                        </td>
-                        {/* Change status */}
-                        <td style={{ padding: "10px 14px", minWidth: 160 }}>
-                          <StatusSelect lead={lead} />
-                        </td>
+                        <td style={{ padding: "10px 14px", color: "#374151", whiteSpace: "nowrap" }}>{sourceLabel(lead.source)}</td>
+                        <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}><StatusDot status={lead.status} /></td>
+                        <td style={{ padding: "10px 14px", color: "#6B7280", fontSize: 12, maxWidth: 200 }}>{formatAttribution(lead)}</td>
+                        <td style={{ padding: "10px 14px", color: "#9CA3AF", whiteSpace: "nowrap" }}>{formatDate(lead.createdAt)}</td>
+                        <td style={{ padding: "10px 14px", minWidth: 160 }}><StatusSelect lead={lead} /></td>
                       </tr>
                     );
                   })}
@@ -1218,6 +1243,7 @@ export default function LeadsPage() {
             </div>
           )}
         </Card>
+
       </BlockStack>
 
       <AddLeadModal open={addModalOpen} onClose={() => setAddModalOpen(false)} />

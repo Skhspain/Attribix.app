@@ -582,6 +582,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const originHost = origin;
 
     const requestedShop = pickFirstString(data?.shop) || null;
+    const earlyAccountId = pickFirstString(data?.accountID) || pickFirstString(data?.accountId) || null;
 
     const inferredStorefrontHost = getShopFromOriginOrUrl(origin, url);
     const trackingKey = getTrackingKeyFromRequest(request, data);
@@ -597,6 +598,12 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!matchedSettings && trackingKey) {
       matchedSettings = await db.trackingSettings.findUnique({
         where: { trackingKey },
+      });
+    }
+
+    if (!matchedSettings && earlyAccountId) {
+      matchedSettings = await db.trackingSettings.findUnique({
+        where: { shop: earlyAccountId },
       });
     }
 
@@ -617,10 +624,17 @@ export async function action({ request }: ActionFunctionArgs) {
     if (matchedSettings?.trackingKey) {
       if (trackingKey === matchedSettings.trackingKey) {
         authMode = "tracking_key";
-      } else if (requestedShop && matchedSettings.shop === requestedShop) {
+      } else if (
+        (requestedShop && matchedSettings.shop === requestedShop) ||
+        (earlyAccountId && matchedSettings.shop === earlyAccountId)
+      ) {
+        // Allow events from a shop whose domain matches — this covers both:
+        // - tracker.liquid sending data.shop = shop domain
+        // - Shopify Web Pixel sending data.accountID = shop domain (no tracking key in pixel settings)
         authMode = "shop_only_missing_key_allowed";
         console.log("[/api/track] missing tracking key, allowing storefront event", {
           requestedShop,
+          earlyAccountId,
           matchedShop: matchedSettings.shop,
         });
       } else {
@@ -638,7 +652,9 @@ export async function action({ request }: ActionFunctionArgs) {
       authMode = "shop_only";
     }
 
-    const resolvedShop = matchedSettings?.shop || requestedShop || inferredStorefrontHost || null;
+    // earlyAccountId is the shop domain pushed by the pixel extension settings (accountID = shop).
+    // Include it in resolvedShop so pixel events can be attributed even before a TrackingSettings row exists.
+    const resolvedShop = matchedSettings?.shop || requestedShop || earlyAccountId || inferredStorefrontHost || null;
 
     const normalizedEvent = normalizeTrackedEvent({
       data,
@@ -777,10 +793,14 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    if (matchedSettings?.shop) {
+    // Update pixel health for any resolved shop — including when no settings row exists yet.
+    // touchTrackingHealth will create the row if missing, so pixelLastSeenAt gets set on first event.
+    // Both pixel_boot (web pixel extension) and page_view (tracker.liquid App Embed) signal
+    // that storefront tracking is active.
+    if (resolvedShop) {
       try {
-        await touchTrackingHealth(matchedSettings.shop, {
-          pixelSeen: type === "pixel_boot",
+        await touchTrackingHealth(resolvedShop, {
+          pixelSeen: type === "pixel_boot" || type === "page_view",
         });
       } catch (healthError: any) {
         console.error("[/api/track] touchTrackingHealth error:", healthError?.message || healthError);

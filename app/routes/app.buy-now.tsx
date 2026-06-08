@@ -195,444 +195,320 @@ export async function action({ request }: ActionFunctionArgs) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function BuyNowDashboard() {
-  const {
-    settings,
-    scriptTagInstalled,
-    totalClicks,
-    conversions,
-    conversionRate,
-    topProducts,
-    sourceCounts,
-    recentClicks,
-    shop,
-  } = useLoaderData<typeof loader>();
+  const { settings, scriptTagInstalled, shop } = useLoaderData<typeof loader>();
 
   const fetcher = useFetcher<any>();
   const authFetch = useAuthenticatedFetch();
-  const [s, setS] = useState(settings);
+  const [s, setS] = useState({
+    ...settings,
+    showOn: (settings as any).showOn || "product_pages",
+    position: (settings as any).position || "below_add_to_cart",
+  });
   const [saved, setSaved] = useState(false);
-
   const [scanning, setScanning] = useState(false);
   const [suggestion, setSuggestion] = useState<null | {
-    buttonColor: string;
-    textColor: string;
-    borderRadius: number;
-    fontFamily: string | null;
-    themeHint: string;
-    accentColor: string | null;
+    buttonColor: string; textColor: string; borderRadius: number;
+    fontFamily: string | null; themeHint: string; accentColor: string | null;
   }>(null);
   const [scanError, setScanError] = useState<string | null>(null);
 
   const update = (key: string, value: any) => setS((prev: any) => ({ ...prev, [key]: value }));
 
-  const handleScan = useCallback(async () => {
-    setScanning(true);
-    setScanError(null);
-    setSuggestion(null);
-    try {
-      const res = await authFetch("/api/buy-now/scan-style");
-      const text = await res.text();
-      let data: any = null;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(`Scan endpoint returned non-JSON (status ${res.status}). Check server logs.`);
-      }
-      if (data.ok) {
-        setSuggestion(data);
-      } else {
-        setScanError(data.error ?? "Scan failed");
-      }
-    } catch (e: any) {
-      setScanError(e.message);
-    } finally {
-      setScanning(false);
-    }
-  }, [authFetch]);
+  const isActive = s.enabled && scriptTagInstalled;
+  const needsAttention = s.enabled && !scriptTagInstalled;
 
-  const handleSave = useCallback(() => {
-    fetcher.submit(s, {
-      method: "POST",
-      encType: "application/json",
-    });
+  // Enable + immediately save so the ScriptTag gets created right away
+  const handleEnable = useCallback(() => {
+    const next = { ...s, enabled: true };
+    setS(next);
+    fetcher.submit(next, { method: "POST", encType: "application/json" });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }, [s, fetcher]);
 
-  // Live button preview
-  const previewStyle: React.CSSProperties = {
-    background: s.buttonColor,
-    color: s.textColor,
-    border: "none",
-    borderRadius: s.borderRadius,
-    padding:
-      s.size === "small" ? "8px 16px" : s.size === "large" ? "14px 28px" : "11px 22px",
+  const handleScan = useCallback(async () => {
+    setScanning(true); setScanError(null); setSuggestion(null);
+    try {
+      const res = await authFetch("/api/buy-now/scan-style");
+      const data = await res.json().catch(() => null);
+      if (data?.ok) setSuggestion(data);
+      else setScanError(data?.error ?? "Scan failed");
+    } catch (e: any) { setScanError(e.message); }
+    finally { setScanning(false); }
+  }, [authFetch]);
+
+  const handleSave = useCallback(() => {
+    fetcher.submit(s, { method: "POST", encType: "application/json" });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }, [s, fetcher]);
+
+  // Live preview style
+  const btnStyle: React.CSSProperties = {
+    width: "100%", background: s.buttonColor, color: s.textColor,
+    border: "none", borderRadius: s.borderRadius,
+    padding: s.size === "small" ? "8px 16px" : s.size === "large" ? "14px 22px" : "11px 20px",
     fontSize: s.size === "small" ? 13 : s.size === "large" ? 17 : 15,
-    fontWeight: 600,
-    cursor: "pointer",
+    fontWeight: 600, cursor: "pointer",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   };
-
 
   return (
     <Page
       title="Buy Now Button"
+      subtitle="Add a direct checkout button to your product pages. No theme editing required."
       primaryAction={{ content: saved ? "Saved ✓" : "Save settings", onAction: handleSave }}
+      secondaryActions={[{
+        content: "Preview on store",
+        url: `https://${shop}`,
+        external: true,
+      }]}
     >
       <BlockStack gap="500">
-        <Banner tone="info" title="How it works">
-          <Text as="p" variant="bodySm">
-            The Buy Now button is automatically injected into your Shopify storefront via a ScriptTag — no theme editing required.
-            Every click is tracked with full attribution (UTM, gclid, fbclid) and linked back to conversions in your analytics.
-          </Text>
-        </Banner>
 
-        {/* KPI cards */}
-        <Grid>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 4, lg: 4, xl: 4 }}>
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Total clicks</Text>
-                <Text as="p" variant="headingXl">{totalClicks.toLocaleString()}</Text>
+        {/* ── Dynamic status banner ─────────────────────────────── */}
+        {isActive ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", gap: 16 }}>
+            <InlineStack gap="300" blockAlign="center">
+              <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>✓</div>
+              <BlockStack gap="025">
+                <Text as="p" variant="headingSm" fontWeight="semibold">Buy Now Button is active on your store</Text>
+                <Text as="p" variant="bodySm" tone="subdued">The button is automatically added to product pages and works with your current theme.</Text>
               </BlockStack>
-            </Card>
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 4, lg: 4, xl: 4 }}>
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Conversions</Text>
-                <Text as="p" variant="headingXl" tone="success">{conversions.toLocaleString()}</Text>
+            </InlineStack>
+            <Button size="slim" url={`https://${shop}`} external>Preview on store</Button>
+          </div>
+        ) : needsAttention ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", gap: 16 }}>
+            <InlineStack gap="300" blockAlign="center">
+              <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#D97706", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>!</div>
+              <BlockStack gap="025">
+                <Text as="p" variant="headingSm" fontWeight="semibold">Buy Now Button needs attention</Text>
+                <Text as="p" variant="bodySm" tone="subdued">The button is enabled, but Attribix could not confirm it is live on your store.</Text>
               </BlockStack>
-            </Card>
-          </Grid.Cell>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 4, md: 4, lg: 4, xl: 4 }}>
-            <Card>
-              <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Conversion rate</Text>
-                <Text as="p" variant="headingXl">{conversionRate}%</Text>
+            </InlineStack>
+            <Button size="slim" onClick={handleSave}>Check installation</Button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", gap: 16 }}>
+            <InlineStack gap="300" blockAlign="center">
+              <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#3B82F6", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>i</div>
+              <BlockStack gap="025">
+                <Text as="p" variant="headingSm" fontWeight="semibold">Buy Now Button is ready to set up</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Customise the button below, then enable it when you are ready to add it to your product pages.</Text>
               </BlockStack>
-            </Card>
-          </Grid.Cell>
-        </Grid>
+            </InlineStack>
+            <Button size="slim" variant="primary" onClick={handleEnable}>Enable & publish</Button>
+          </div>
+        )}
 
+        {/* ── Two-column: Settings + Preview ─────────────────────── */}
         <Grid>
-          {/* Settings panel */}
+          {/* LEFT: Settings */}
           <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 7, xl: 7 }}>
             <BlockStack gap="400">
-            {/* Scan banner */}
-            <Card>
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingSm">Auto-detect store style</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    We scan your store's CSS to suggest a matching button design.
-                  </Text>
+
+              {/* 1. Button content */}
+              <Card>
+                <BlockStack gap="400">
+                  <BlockStack gap="025">
+                    <Text as="h2" variant="headingMd">1. Button content</Text>
+                  </BlockStack>
+                  <Divider />
+                  <Grid>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <TextField label="Button text" value={s.buttonText} onChange={(v) => update("buttonText", v)} autoComplete="off" />
+                    </Grid.Cell>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <Select
+                        label="After click"
+                        options={[
+                          { label: "Go to checkout", value: "checkout" },
+                          { label: "Add to cart", value: "cart" },
+                          { label: "Go to product page", value: "product" },
+                        ]}
+                        value={s.action}
+                        onChange={(v) => update("action", v)}
+                      />
+                    </Grid.Cell>
+                  </Grid>
                 </BlockStack>
-                <Button onClick={handleScan} loading={scanning} variant="secondary">
-                  {scanning ? "Scanning…" : "Scan my store"}
-                </Button>
-              </InlineStack>
+              </Card>
 
-              {scanError && (
-                <div style={{ marginTop: 12 }}>
-                  <Text as="p" variant="bodySm" tone="critical">{scanError}</Text>
-                </div>
-              )}
+              {/* 2. Design */}
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="h2" variant="headingMd">2. Design</Text>
+                    <Button size="slim" onClick={handleScan} loading={scanning} variant="plain">
+                      {scanning ? "Scanning…" : "Match my store style"}
+                    </Button>
+                  </InlineStack>
+                  <Divider />
 
-              {suggestion && (
-                <div style={{ marginTop: 16 }}>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Detected theme: <strong>{suggestion.themeHint}</strong>
-                    {suggestion.fontFamily ? ` · Font: ${suggestion.fontFamily}` : ""}
-                  </Text>
+                  {scanError && <Text as="p" variant="bodySm" tone="critical">{scanError}</Text>}
 
-                  {/* 3 design variants as clickable cards */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginTop: 12 }}>
-                    {[
-                      {
-                        label: "Exact match",
-                        color: suggestion.buttonColor,
-                        text: suggestion.textColor,
-                        radius: suggestion.borderRadius,
-                      },
-                      {
-                        label: "Pill",
-                        color: suggestion.buttonColor,
-                        text: suggestion.textColor,
-                        radius: 50,
-                      },
-                      {
-                        label: "Outlined",
-                        color: "transparent",
-                        text: suggestion.buttonColor,
-                        radius: suggestion.borderRadius,
-                        border: `2px solid ${suggestion.buttonColor}`,
-                      },
-                      ...(suggestion.accentColor ? [{
-                        label: "Accent",
-                        color: suggestion.accentColor,
-                        text: isDark(suggestion.accentColor) ? "#ffffff" : "#111111",
-                        radius: suggestion.borderRadius,
-                      }] : []),
-                    ].slice(0, 3).map((variant) => (
-                      <div
-                        key={variant.label}
-                        onClick={() => {
-                          update("buttonColor", variant.color === "transparent" ? "#ffffff" : variant.color);
-                          update("textColor", variant.text);
-                          update("borderRadius", variant.radius);
-                        }}
-                        style={{
-                          border: "1px solid #e1e3e5",
-                          borderRadius: 8,
-                          padding: 12,
-                          cursor: "pointer",
-                          textAlign: "center",
-                          background: "#fafafa",
-                          transition: "box-shadow 0.1s",
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.12)")}
-                        onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}
-                      >
-                        <button
-                          style={{
-                            background: variant.color,
-                            color: variant.text,
-                            border: (variant as any).border ?? "none",
-                            borderRadius: variant.radius,
-                            padding: "8px 16px",
-                            fontSize: 13,
-                            fontWeight: 600,
-                            cursor: "pointer",
-                            width: "100%",
-                            fontFamily: suggestion.fontFamily || "inherit",
-                          }}
-                        >
-                          {s.buttonText || "Buy Now"}
-                        </button>
-                        <Text as="p" variant="bodySm" tone="subdued">{variant.label}</Text>
-                        <Text as="p" variant="bodySm" tone="magic">Click to apply</Text>
+                  {suggestion && (
+                    <BlockStack gap="200">
+                      <Text as="p" variant="bodySm" tone="subdued">Detected theme: <strong>{suggestion.themeHint}</strong></Text>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                        {[
+                          { label: "Exact match", color: suggestion.buttonColor, text: suggestion.textColor, radius: suggestion.borderRadius },
+                          { label: "Pill", color: suggestion.buttonColor, text: suggestion.textColor, radius: 50 },
+                          { label: "Outlined", color: "transparent", text: suggestion.buttonColor, radius: suggestion.borderRadius, border: `2px solid ${suggestion.buttonColor}` },
+                        ].map((v) => (
+                          <div key={v.label} onClick={() => { update("buttonColor", v.color === "transparent" ? "#ffffff" : v.color); update("textColor", v.text); update("borderRadius", v.radius); }}
+                            style={{ border: "1px solid #e1e3e5", borderRadius: 8, padding: 10, cursor: "pointer", textAlign: "center" }}>
+                            <button style={{ background: v.color, color: v.text, border: (v as any).border ?? "none", borderRadius: v.radius, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", width: "100%" }}>
+                              {s.buttonText || "Buy Now"}
+                            </button>
+                            <Text as="p" variant="bodySm" tone="subdued">{v.label}</Text>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </Card>
+                    </BlockStack>
+                  )}
 
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingSm">Button settings</Text>
+                  <Grid>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <TextField label="Button colour" value={s.buttonColor} onChange={(v) => update("buttonColor", v)} autoComplete="off"
+                        prefix={
+                          <div style={{ position: "relative", width: 22, height: 22, flexShrink: 0 }}>
+                            <div style={{ width: 22, height: 22, borderRadius: 5, background: s.buttonColor, border: "1px solid #ccc" }} />
+                            <input type="color" value={s.buttonColor} onChange={e => update("buttonColor", e.target.value)}
+                              style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%" }} />
+                          </div>
+                        } />
+                    </Grid.Cell>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <TextField label="Text colour" value={s.textColor} onChange={(v) => update("textColor", v)} autoComplete="off"
+                        prefix={
+                          <div style={{ position: "relative", width: 22, height: 22, flexShrink: 0 }}>
+                            <div style={{ width: 22, height: 22, borderRadius: 5, background: s.textColor, border: "1px solid #ccc" }} />
+                            <input type="color" value={s.textColor} onChange={e => update("textColor", e.target.value)}
+                              style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%" }} />
+                          </div>
+                        } />
+                    </Grid.Cell>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <Select label="Size" options={[{ label: "Small", value: "small" }, { label: "Medium", value: "medium" }, { label: "Large", value: "large" }]} value={s.size} onChange={(v) => update("size", v)} />
+                    </Grid.Cell>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <TextField label="Border radius (px)" type="number" value={String(s.borderRadius)} onChange={(v) => update("borderRadius", parseInt(v, 10) || 0)} autoComplete="off" />
+                    </Grid.Cell>
+                  </Grid>
+                </BlockStack>
+              </Card>
 
-                <Checkbox
-                  label="Enable Buy Now button"
-                  checked={s.enabled}
-                  onChange={(v) => update("enabled", v)}
-                />
+              {/* 3. Placement */}
+              <Card>
+                <BlockStack gap="400">
+                  <Text as="h2" variant="headingMd">3. Placement</Text>
+                  <Divider />
+                  <Grid>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <Select label="Show on" options={[{ label: "Product pages", value: "product_pages" }, { label: "All pages", value: "all_pages" }]}
+                        value={s.showOn} onChange={(v) => update("showOn", v)} />
+                    </Grid.Cell>
+                    <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 6, xl: 6 }}>
+                      <Select label="Position" options={[{ label: "Below Add to cart", value: "below_add_to_cart" }, { label: "Above Add to cart", value: "above_add_to_cart" }]}
+                        value={s.position} onChange={(v) => update("position", v)} />
+                    </Grid.Cell>
+                  </Grid>
+                  <Text as="p" variant="bodySm" tone="subdued">Settings are applied automatically. No theme editing required.</Text>
+                </BlockStack>
+              </Card>
 
-                <TextField
-                  label="Button text"
-                  value={s.buttonText}
-                  onChange={(v) => update("buttonText", v)}
-                  autoComplete="off"
-                />
-
-                <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
-                    <TextField
-                      label="Button colour (hex)"
-                      value={s.buttonColor}
-                      onChange={(v) => update("buttonColor", v)}
-                      autoComplete="off"
-                      prefix={
-                        <div style={{
-                          width: 16, height: 16, borderRadius: 4,
-                          background: s.buttonColor, border: "1px solid #ccc"
-                        }} />
-                      }
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <TextField
-                      label="Text colour (hex)"
-                      value={s.textColor}
-                      onChange={(v) => update("textColor", v)}
-                      autoComplete="off"
-                      prefix={
-                        <div style={{
-                          width: 16, height: 16, borderRadius: 4,
-                          background: s.textColor, border: "1px solid #ccc"
-                        }} />
-                      }
-                    />
-                  </div>
-                </InlineStack>
-
-                <InlineStack gap="400">
-                  <div style={{ flex: 1 }}>
-                    <Select
-                      label="Size"
-                      options={[
-                        { label: "Small", value: "small" },
-                        { label: "Medium", value: "medium" },
-                        { label: "Large", value: "large" },
-                      ]}
-                      value={s.size}
-                      onChange={(v) => update("size", v)}
-                    />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <Select
-                      label="On click"
-                      options={[
-                        { label: "Go to checkout", value: "checkout" },
-                        { label: "Add to cart", value: "cart" },
-                        { label: "Go to product page", value: "product" },
-                      ]}
-                      value={s.action}
-                      onChange={(v) => update("action", v)}
-                    />
-                  </div>
-                </InlineStack>
-
-                <TextField
-                  label="Border radius (px)"
-                  type="number"
-                  value={String(s.borderRadius)}
-                  onChange={(v) => update("borderRadius", parseInt(v, 10) || 0)}
-                  autoComplete="off"
-                />
-              </BlockStack>
-            </Card>
             </BlockStack>
           </Grid.Cell>
 
-          {/* Preview + source breakdown */}
+          {/* RIGHT: Live preview */}
           <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 5, xl: 5 }}>
-            <BlockStack gap="400">
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingSm">Live preview</Text>
-                  <div style={{ padding: "24px", background: "#f6f6f7", borderRadius: 8, textAlign: "center" }}>
-                    <button style={previewStyle}>{s.buttonText}</button>
-                  </div>
-                </BlockStack>
-              </Card>
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">Live preview</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">Updates as you edit</Text>
+                </InlineStack>
+                <Divider />
 
-              <Card>
-                <BlockStack gap="300">
-                  <Text as="h2" variant="headingSm">Clicks by source</Text>
-                  {Object.keys(sourceCounts).length === 0 ? (
-                    <Text as="p" tone="subdued">No clicks yet.</Text>
-                  ) : (
-                    <BlockStack gap="150">
-                      {Object.entries(sourceCounts)
-                        .sort((a, b) => b[1] - a[1])
-                        .slice(0, 6)
-                        .map(([src, count]) => (
-                          <InlineStack key={src} align="space-between">
-                            <Text as="p" variant="bodySm">{src}</Text>
-                            <Text as="p" variant="bodySm" fontWeight="semibold">{(count as number).toLocaleString()}</Text>
-                          </InlineStack>
+                {/* Product page mockup */}
+                <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden", background: "white" }}>
+                  {/* Product image */}
+                  <div style={{ background: "#F3F4F6", height: 180, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ fontSize: 56 }}>🎒</span>
+                  </div>
+                  <div style={{ padding: "16px" }}>
+                    {/* Stars */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+                      {"★★★★★".split("").map((s, i) => <span key={i} style={{ color: "#F59E0B", fontSize: 13 }}>{s}</span>)}
+                      <span style={{ fontSize: 12, color: "#6B7280" }}>(128)</span>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 2 }}>TrailDay Backpack</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>$79.00</div>
+
+                    {/* Size selector */}
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: "#374151" }}>Size</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {["S", "M", "L", "XL"].map((sz) => (
+                          <div key={sz} style={{ padding: "4px 10px", border: sz === "M" ? "2px solid #111" : "1px solid #D1D5DB", borderRadius: 4, fontSize: 12, fontWeight: sz === "M" ? 600 : 400 }}>{sz}</div>
                         ))}
-                    </BlockStack>
-                  )}
-                </BlockStack>
-              </Card>
-            </BlockStack>
+                      </div>
+                    </div>
+
+                    {/* Add to cart */}
+                    <button style={{ width: "100%", padding: "11px 20px", background: "white", border: "1px solid #D1D5DB", borderRadius: 6, fontWeight: 600, fontSize: 14, marginBottom: 8, cursor: "default" }}>
+                      Add to cart
+                    </button>
+
+                    {/* Buy Now — live styled */}
+                    <button style={btnStyle}>{s.buttonText || "Buy Now"}</button>
+                  </div>
+                </div>
+
+                <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                  This is a preview of how the button will appear on your product pages.
+                </Text>
+              </BlockStack>
+            </Card>
           </Grid.Cell>
         </Grid>
 
-        {/* Installation status */}
+        {/* ── How installation works ───────────────────────────── */}
         <Card>
           <BlockStack gap="400">
-            <InlineStack align="space-between" blockAlign="center">
-              <BlockStack gap="100">
-                <Text as="h2" variant="headingSm">Automatic installation</Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  The Buy Now button is injected directly into your store. No theme editing or code required.
-                </Text>
-              </BlockStack>
-              {s.enabled ? (
-                scriptTagInstalled ? (
-                  <span style={{
-                    background: "#f0fdf4", color: "#15803d", border: "1.5px solid #16a34a",
-                    borderRadius: 20, padding: "5px 16px", fontSize: 13, fontWeight: 700,
-                  }}>
-                    ✓ Active on store
-                  </span>
-                ) : (
-                  <span style={{
-                    background: "#fffbeb", color: "#b45309", border: "1.5px solid #d97706",
-                    borderRadius: 20, padding: "5px 16px", fontSize: 13, fontWeight: 700,
-                  }}>
-                    ⏳ Activating…
-                  </span>
-                )
-              ) : (
-                <span style={{
-                  background: "#f3f4f6", color: "#6b7280", border: "1.5px solid #d1d5db",
-                  borderRadius: 20, padding: "5px 16px", fontSize: 13, fontWeight: 700,
-                }}>
-                  ○ Disabled
-                </span>
-              )}
-            </InlineStack>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <BlockStack gap="025">
+              <Text as="h2" variant="headingMd">How installation works</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Attribix automatically installs the Buy Now button across your store.</Text>
+            </BlockStack>
+            <Divider />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto 1fr", gap: 12, alignItems: "center" }}>
               {[
-                { step: "1", label: "Enable the button", done: s.enabled },
-                { step: "2", label: "Save settings", done: scriptTagInstalled },
-                { step: "3", label: "Live on your store", done: scriptTagInstalled && s.enabled },
-              ].map((item) => (
-                <div key={item.step} style={{
-                  background: item.done ? "#f0fdf4" : "#f9fafb",
-                  border: `1px solid ${item.done ? "#16a34a" : "#e5e7eb"}`,
-                  borderRadius: 8, padding: "12px 14px",
-                  display: "flex", alignItems: "center", gap: 10,
-                }}>
-                  <div style={{
-                    width: 24, height: 24, borderRadius: 99, flexShrink: 0,
-                    background: item.done ? "#16a34a" : "#e5e7eb",
-                    color: item.done ? "#fff" : "#9ca3af",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 12, fontWeight: 700,
-                  }}>
-                    {item.done ? "✓" : item.step}
+                { icon: "✓", label: "1. Enable the button", desc: "Turn on the button and configure its content and design.", done: s.enabled },
+                null,
+                { icon: "↑", label: "2. Auto-install", desc: "We automatically add the button to your product pages.", done: scriptTagInstalled },
+                null,
+                { icon: "🏪", label: "3. Live on store", desc: "Your Buy Now button is live and ready for customers to use.", done: isActive },
+              ].map((item, i) => item === null ? (
+                <div key={i} style={{ textAlign: "center", color: "#D1D5DB", fontSize: 24 }}>→</div>
+              ) : (
+                <div key={item.label} style={{ background: item.done ? "#F0FDF4" : "#F9FAFB", border: `1px solid ${item.done ? "#BBF7D0" : "#E5E7EB"}`, borderRadius: 10, padding: "16px" }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: item.done ? "#16A34A" : "#E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", color: item.done ? "white" : "#9CA3AF", fontSize: 16, fontWeight: 700, marginBottom: 10 }}>
+                    {item.done ? "✓" : item.icon}
                   </div>
-                  <Text as="p" variant="bodySm" fontWeight={item.done ? "semibold" : "regular"}>
-                    {item.label}
-                  </Text>
+                  <Text as="p" variant="headingSm" fontWeight="semibold">{item.label}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{item.desc}</Text>
                 </div>
               ))}
             </div>
-
-            <Text as="p" variant="bodySm" tone="subdued">
-              The button auto-detects product pages and inserts itself after the "Add to cart" button.
-              It works with Dawn, Debut, Craft, and most Shopify themes.
-              {!scriptTagInstalled && s.enabled && " Save your settings to activate it."}
-            </Text>
+            <div style={{ padding: "10px 14px", background: "#F9FAFB", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 14 }}>🛡️</span>
+              <Text as="p" variant="bodySm" tone="subdued">No theme editing or code required. Works with Dawn, Debut, Craft, and most Shopify themes.</Text>
+            </div>
           </BlockStack>
         </Card>
 
-        {/* Recent clicks table */}
-        {recentClicks.length > 0 && (
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingSm">Recent clicks</Text>
-              <DataTable
-                columnContentTypes={["text","text","text","text","text"]}
-                headings={["Product","Source","UTM Campaign","Converted","Time"]}
-                rows={recentClicks.map((c: any) => [
-                  c.productId || "—",
-                  c.utmSource || (c.gclid ? "Google" : c.fbclid ? "Meta" : "Direct"),
-                  c.utmCampaign || "—",
-                  c.convertedOrderId ? <Badge tone="success">Yes</Badge> : <Badge>No</Badge>,
-                  new Date(c.createdAt).toLocaleTimeString(),
-                ])}
-              />
-            </BlockStack>
-          </Card>
-        )}
       </BlockStack>
     </Page>
   );

@@ -1,4 +1,5 @@
 // app/routes/app.reviews._index.tsx
+import { createHmac } from "node:crypto";
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useFetcher } from "@remix-run/react";
 import { useState } from "react";
@@ -7,6 +8,13 @@ import {
   EmptyState, Grid, InlineStack, Page, Select, Text, TextField, Modal,
 } from "@shopify/polaris";
 import db from "../db.server";
+
+// ─── Feed token (mirrors api.reviews.feed.ts) ────────────────────────────────
+
+function makeFeedToken(shop: string): string {
+  const secret = process.env.SHOPIFY_API_SECRET ?? "attribix-feed-fallback";
+  return createHmac("sha256", secret).update(shop).digest("hex").slice(0, 32);
+}
 
 // ─── Color presets ────────────────────────────────────────────────────────────
 
@@ -82,11 +90,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const statusCounts: Record<string, number> = { pending: 0, approved: 0, rejected: 0 };
   for (const c of counts ?? []) statusCounts[c.status] = c._count.id;
 
+  const APP_URL = (process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev").replace(/\/$/, "");
+  const feedUrl = `${APP_URL}/api/reviews/feed?shop=${shop}&token=${makeFeedToken(shop)}`;
+
   return json({
     shop,
     products,
     reviews: reviews ?? [],
     statusCounts,
+    feedUrl,
     reviewSettings: reviewSettings ?? { autoApprove: false, sendRequestEmail: true, requestDelayDays: 7, discountEnabled: false, discountType: "percentage", discountValue: 10, discountExpiryDays: 30, allowPublicReviews: true },
     widgetSettings: widgetSettings ?? { primaryColor: "#4f46e5", starColor: "#f59e0b", backgroundColor: "#ffffff", borderColor: "#e5e7eb", layout: "list", showVerifiedBadge: true, showReviewerName: true, showDate: true, allowImages: true, translateTo: "" },
   });
@@ -184,9 +196,10 @@ function ColorSwatch({ label, value, onChange }: { label: string; value: string;
 
 // ─── Live widget preview ──────────────────────────────────────────────────────
 
-function WidgetPreview({ primaryColor, starColor, backgroundColor, borderColor, layout, showVerifiedBadge, showReviewerName, showDate, showImages }: {
+function WidgetPreview({ primaryColor, starColor, backgroundColor, borderColor, layout, showVerifiedBadge, showReviewerName, showDate, showImages, liveAvg, liveCount }: {
   primaryColor: string; starColor: string; backgroundColor: string; borderColor: string;
   layout: string; showVerifiedBadge: boolean; showReviewerName: boolean; showDate: boolean; showImages: boolean;
+  liveAvg?: number; liveCount?: number;
 }) {
   const isDark = backgroundColor.toLowerCase() === "#1f2937" || backgroundColor.toLowerCase() === "#111827";
   const textColor = isDark ? "#f3f4f6" : "#111827";
@@ -206,9 +219,9 @@ function WidgetPreview({ primaryColor, starColor, backgroundColor, borderColor, 
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
         <span style={{ fontSize: 16, fontWeight: 700, color: textColor }}>Customer Reviews</span>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <StarDisplay rating={5} color={starColor} size={14} />
-          <span style={{ fontWeight: 600, fontSize: 13, color: textColor }}>4.8</span>
-          <span style={{ fontSize: 12, color: subtleColor }}>(2 reviews)</span>
+          <StarDisplay rating={Math.round(liveAvg ?? 5)} color={starColor} size={14} />
+          <span style={{ fontWeight: 600, fontSize: 13, color: textColor }}>{liveAvg != null ? liveAvg.toFixed(1) : "—"}</span>
+          <span style={{ fontSize: 12, color: subtleColor }}>({liveCount ?? 0} review{(liveCount ?? 0) !== 1 ? "s" : ""})</span>
         </div>
         <div style={{ marginLeft: "auto" }}>
           <span style={{ background: primaryColor, color: "#fff", borderRadius: 7, padding: "6px 14px", fontSize: 12, fontWeight: 600, display: "inline-block" }}>Write a review</span>
@@ -249,15 +262,24 @@ function WidgetPreview({ primaryColor, starColor, backgroundColor, borderColor, 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function ReviewsIndex() {
-  const { reviews, statusCounts, reviewSettings, widgetSettings, products, shop } = useLoaderData<typeof loader>();
+  const { reviews, statusCounts, reviewSettings, widgetSettings, products, shop, feedUrl } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const settingsFetcher = useFetcher<any>();
   const widgetFetcher = useFetcher<any>();
   const nav = useNavigation();
+  const [copied, setCopied] = useState(false);
+
+  function copyFeedUrl() {
+    navigator.clipboard.writeText(feedUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
 
   // Add review modal state
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addForm, setAddForm] = useState({ reviewerName: "", reviewerEmail: "", productId: "", productTitle: "", rating: "5", title: "", body: "" });
+  const [addFormErrors, setAddFormErrors] = useState<Record<string, string>>({});
 
   const productOptions = [
     { label: "Select a product...", value: "" },
@@ -265,6 +287,13 @@ export default function ReviewsIndex() {
   ];
 
   function submitAddReview() {
+    const errors: Record<string, string> = {};
+    if (!addForm.reviewerName.trim()) errors.reviewerName = "Name is required";
+    if (!addForm.reviewerEmail.trim() || !addForm.reviewerEmail.includes("@")) errors.reviewerEmail = "Valid email is required";
+    if (!addForm.body.trim()) errors.body = "Review body is required";
+    if (Object.keys(errors).length > 0) { setAddFormErrors(errors); return; }
+    setAddFormErrors({});
+
     const formData = new FormData();
     formData.append("intent", "create");
     formData.append("reviewerName", addForm.reviewerName);
@@ -276,6 +305,7 @@ export default function ReviewsIndex() {
     formData.append("body", addForm.body);
     submit(formData, { method: "post" });
     setAddForm({ reviewerName: "", reviewerEmail: "", productId: "", productTitle: "", rating: "5", title: "", body: "" });
+    setAddModalOpen(false);
   }
   const busy = nav.state !== "idle";
 
@@ -355,19 +385,19 @@ export default function ReviewsIndex() {
       {/* Add Review Modal */}
       <Modal
         open={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
+        onClose={() => { setAddModalOpen(false); setAddFormErrors({}); }}
         title="Add a review"
-        primaryAction={{ content: "Publish review", onAction: () => { submitAddReview(); setAddModalOpen(false); } }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setAddModalOpen(false) }]}
+        primaryAction={{ content: "Publish review", onAction: submitAddReview }}
+        secondaryActions={[{ content: "Cancel", onAction: () => { setAddModalOpen(false); setAddFormErrors({}); } }]}
       >
         <Modal.Section>
           <BlockStack gap="300">
             <InlineStack gap="300" wrap>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="Reviewer name" value={addForm.reviewerName} onChange={(v) => setAddForm({ ...addForm, reviewerName: v })} autoComplete="off" />
+                <TextField label="Reviewer name" value={addForm.reviewerName} onChange={(v) => setAddForm({ ...addForm, reviewerName: v })} autoComplete="off" requiredIndicator error={addFormErrors.reviewerName} />
               </div>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <TextField label="Email" value={addForm.reviewerEmail} onChange={(v) => setAddForm({ ...addForm, reviewerEmail: v })} type="email" autoComplete="off" />
+                <TextField label="Email" value={addForm.reviewerEmail} onChange={(v) => setAddForm({ ...addForm, reviewerEmail: v })} type="email" autoComplete="off" requiredIndicator error={addFormErrors.reviewerEmail} />
               </div>
             </InlineStack>
             <InlineStack gap="300" wrap>
@@ -382,7 +412,7 @@ export default function ReviewsIndex() {
               </div>
             </InlineStack>
             <TextField label="Review title" value={addForm.title} onChange={(v) => setAddForm({ ...addForm, title: v })} autoComplete="off" />
-            <TextField label="Review" value={addForm.body} onChange={(v) => setAddForm({ ...addForm, body: v })} multiline={4} autoComplete="off" />
+            <TextField label="Review body" value={addForm.body} onChange={(v) => setAddForm({ ...addForm, body: v })} multiline={4} autoComplete="off" requiredIndicator error={addFormErrors.body} />
           </BlockStack>
         </Modal.Section>
       </Modal>
@@ -604,6 +634,8 @@ export default function ReviewsIndex() {
                   showReviewerName={showReviewerName}
                   showDate={showDate}
                   showImages={allowImages}
+                  liveAvg={avgRating !== "—" ? parseFloat(avgRating) : undefined}
+                  liveCount={approvedCount}
                 />
               </BlockStack>
             </div>
@@ -687,6 +719,99 @@ export default function ReviewsIndex() {
             )}
           </BlockStack>
         </Card>
+
+        {/* ── Google Merchant Center — star ratings ── */}
+        {approvedCount >= 50 ? (
+          <div style={{
+            border: "1px solid #86efac",
+            borderRadius: 12,
+            background: "#f0fdf4",
+            padding: 24,
+          }}>
+            <BlockStack gap="400">
+              <InlineStack gap="300" blockAlign="start">
+                <span style={{ fontSize: 28, lineHeight: 1 }}>🎉</span>
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">You're eligible for Google Shopping star ratings</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    You have {approvedCount} approved reviews — enough for Google to show star ratings on your Shopping ads and free listings. Add your feed URL in Google Merchant Center to get started.
+                  </Text>
+                </BlockStack>
+              </InlineStack>
+
+              <Divider />
+
+              <BlockStack gap="200">
+                <Text as="h3" variant="headingSm">Your Product Ratings feed URL</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  In Google Merchant Center go to <strong>Products → Product ratings → Configure data source</strong>, paste this URL and set the fetch frequency to <strong>Daily</strong>.
+                </Text>
+                <InlineStack gap="200" blockAlign="end">
+                  <div style={{ flex: 1 }}>
+                    <TextField label="" labelHidden value={feedUrl} autoComplete="off" readOnly />
+                  </div>
+                  <Button onClick={copyFeedUrl} variant={copied ? "primary" : "secondary"}>
+                    {copied ? "Copied ✓" : "Copy URL"}
+                  </Button>
+                </InlineStack>
+              </BlockStack>
+
+              <InlineStack gap="300" blockAlign="center" wrap>
+                <Button url="https://merchants.google.com/mc/productratings" target="_blank" variant="primary">
+                  Open Google Merchant Center →
+                </Button>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Note: Google may take a few days to review and activate your ratings.
+                </Text>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        ) : (
+          <div style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 12,
+            background: "#f9fafb",
+            padding: 24,
+          }}>
+            <BlockStack gap="300">
+              <InlineStack gap="300" blockAlign="start">
+                <span style={{ fontSize: 28, lineHeight: 1 }}>🛍️</span>
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">Unlock Google Shopping star ratings</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Google requires at least 50 approved reviews to display star ratings on Shopping ads and free listings. Keep collecting!
+                  </Text>
+                </BlockStack>
+              </InlineStack>
+
+              {/* Progress bar */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <Text as="p" variant="bodySm" tone="subdued">Approved reviews</Text>
+                  <Text as="p" variant="bodySm" fontWeight="semibold">{approvedCount} / 50</Text>
+                </div>
+                <div style={{ background: "#e5e7eb", borderRadius: 99, height: 8, overflow: "hidden" }}>
+                  <div style={{
+                    background: "#4f46e5",
+                    width: `${Math.min(100, (approvedCount / 50) * 100)}%`,
+                    height: "100%",
+                    borderRadius: 99,
+                    transition: "width 0.4s ease",
+                  }} />
+                </div>
+              </div>
+
+              <InlineStack gap="200" blockAlign="center">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {50 - approvedCount} more approved review{50 - approvedCount !== 1 ? "s" : ""} to go. Once you reach 50 you'll be able to connect to Google Merchant Center.
+                </Text>
+                <Button url="https://merchants.google.com/mc/productratings" target="_blank" variant="plain" size="slim">
+                  Learn more →
+                </Button>
+              </InlineStack>
+            </BlockStack>
+          </div>
+        )}
 
       </BlockStack>
 

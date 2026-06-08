@@ -93,6 +93,17 @@ export default function NewCampaignGallery() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#f6f6f7", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+        .tpl-shimmer {
+          background: linear-gradient(90deg, #ececec 25%, #e0e0e0 50%, #ececec 75%);
+          background-size: 200% 100%;
+          animation: shimmer 1.4s ease-in-out infinite;
+        }
+      `}} />
       {/* ── Top bar ── */}
       <div style={{ background: "#fff", borderBottom: "1px solid #e1e3e5", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60, position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -233,6 +244,7 @@ function TemplateCard({
   onSelect: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
 
   return (
     <div
@@ -257,22 +269,34 @@ function TemplateCard({
       {/* Preview area */}
       <div style={{ width: "100%", height: CARD_H, overflow: "hidden", position: "relative", background: html ? "#f4f4f4" : "#f9fafb" }}>
         {html ? (
-          <iframe
-            srcDoc={html}
-            style={{
-              width: IFRAME_W,
-              height: IFRAME_H,
-              border: "none",
-              position: "absolute",
-              top: 0,
-              left: 0,
-              transformOrigin: "top left",
-              transform: `scale(${SCALE})`,
-              pointerEvents: "none",
-            }}
-            title={name}
-            sandbox="allow-same-origin"
-          />
+          <>
+            {/* Shimmer skeleton while iframe renders */}
+            {!iframeLoaded && (
+              <div
+                className="tpl-shimmer"
+                style={{ position: "absolute", inset: 0, zIndex: 1 }}
+              />
+            )}
+            <iframe
+              srcDoc={html}
+              style={{
+                width: IFRAME_W,
+                height: IFRAME_H,
+                border: "none",
+                position: "absolute",
+                top: 0,
+                left: 0,
+                transformOrigin: "top left",
+                transform: `scale(${SCALE})`,
+                pointerEvents: "none",
+                opacity: iframeLoaded ? 1 : 0,
+                transition: "opacity 0.2s ease",
+              }}
+              title={name}
+              sandbox="allow-same-origin"
+              onLoad={() => setIframeLoaded(true)}
+            />
+          </>
         ) : (
           // Blank card placeholder
           <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>

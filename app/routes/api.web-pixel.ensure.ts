@@ -72,10 +72,10 @@ function readAccountIDFromUrl(request: Request) {
 
 /**
  * Shopify expects `settings` to be a JSON OBJECT matching the Pixel extension settings schema.
- * Do NOT stringify it.
+ * accountID is set to the shop domain so /api/track can identify the shop from pixel events.
  */
-function settingsObject(accountID: string) {
-  return { accountID };
+function settingsObject(shop: string) {
+  return { accountID: shop };
 }
 
 async function runGraphql(admin: any, query: string, variables?: any) {
@@ -207,7 +207,7 @@ async function ensureWebPixel(request: Request, accountID: string) {
 
     console.log("[webPixel] app installation", { appInstallationId, storedWebPixelId });
 
-    const desiredSettings = settingsObject(accountID);
+    const desiredSettings = settingsObject(shop);
 
     let finalAction: "created" | "updated" = "updated";
     let webPixelId: string | undefined;

@@ -632,6 +632,7 @@ export default function AppAnalytics() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
               {[
                 { title: "Attribution", desc: "Multi-touch channel attribution", url: "/app/attribution", icon: "🎯", color: "#6366f1" },
+                { title: "Customer Journeys", desc: "See every touchpoint before purchase", url: "/app/journey", icon: "🗺️", color: "#008060" },
                 { title: "Creative", desc: "Ad & campaign performance", url: "/app/creative", icon: "📊", color: "#1877f2" },
                 { title: "Products", desc: "Top products, AOV, revenue", url: "/app/products", icon: "🛍️", color: "#10b981" },
               ].map(item => (

@@ -1,9 +1,11 @@
 // app/routes/app.orders.jsx
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useState, useMemo } from "react";
+import { OrdersChart, buildOrdersChartData } from "~/components/OrdersChart";
 import {
   Badge,
+  Banner,
   BlockStack,
   Box,
   Button,
@@ -44,6 +46,7 @@ export async function loader({ request }) {
       landingPage: true,
       referrer: true,
       createdAt: true,
+      customerName: true,
     },
   }).catch(() => []);
 
@@ -132,9 +135,17 @@ function truncateUrl(url, maxLen = 45) {
 export default function AppOrders() {
   const { purchases, totalRevenue, attributedCount, totalCount } = useLoaderData();
   const navigate = useNavigate();
+  const backfillFetcher = useFetcher();
 
   const [sourceFilter, setSourceFilter] = useState("all");
   const [search, setSearch] = useState("");
+
+  const backfillLoading = backfillFetcher.state !== "idle";
+  const backfillResult = backfillFetcher.data;
+  const backfillDone = backfillResult?.ok === true;
+
+  const [chartDays, setChartDays] = useState(30);
+  const chartData = useMemo(() => buildOrdersChartData(purchases, chartDays), [purchases, chartDays]);
 
   const sourceOptions = useMemo(() => {
     const sources = new Set();
@@ -195,12 +206,12 @@ export default function AppOrders() {
     const source = normalizeSource(p);
     return [
       <Text as="span" variant="bodySm" fontWeight="semibold">{p.orderId || p.id?.slice(0, 8) || "—"}</Text>,
+      <Text as="span" variant="bodySm" tone="subdued">{p.customerName || "—"}</Text>,
       <Text as="span" variant="bodySm">{formatMoney(p.totalValue, p.currency)}</Text>,
       source
         ? <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
         : <Text as="span" variant="bodySm" tone="subdued">direct</Text>,
       <Text as="span" variant="bodySm" tone="subdued">{p.utmCampaign || "—"}</Text>,
-      <Text as="span" variant="bodySm" tone="subdued">{p.utmMedium || "—"}</Text>,
       <Text as="span" variant="bodySm" tone="subdued" title={p.landingPage || ""}>{truncateUrl(p.landingPage)}</Text>,
       <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,
     ];
@@ -210,12 +221,27 @@ export default function AppOrders() {
     <Page
       title="Orders"
       subtitle={`${totalCount} total · ${attributedCount} attributed (${attributionRate}%)`}
-      secondaryActions={[{
-        content: "View attribution",
-        onAction: () => navigate("/app/analytics"),
-      }]}
+      secondaryActions={[
+        {
+          content: "View attribution",
+          onAction: () => navigate("/app/analytics"),
+        },
+        {
+          content: backfillLoading ? "Importing…" : backfillDone ? "Import again" : "Import older orders",
+          onAction: () => backfillFetcher.submit({}, { method: "post", action: "/api/backfill/orders" }),
+          loading: backfillLoading,
+        },
+      ]}
     >
       <BlockStack gap="400">
+
+        {backfillResult && (
+          <Banner tone={backfillResult.ok ? "success" : "critical"} title={backfillResult.ok ? "Shopify import complete" : "Import failed"} onDismiss={() => {}}>
+            {backfillResult.ok
+              ? <Text as="p">{backfillResult.created} new orders added, {backfillResult.updated ?? 0} patched with source data, {backfillResult.skipped} unchanged. Reload to see updated totals.</Text>
+              : <Text as="p">{backfillResult.error}</Text>}
+          </Banner>
+        )}
 
         {/* Summary cards */}
         <InlineStack gap="300">
@@ -238,6 +264,34 @@ export default function AppOrders() {
             </BlockStack>
           </Card>
         </InlineStack>
+
+        {/* Revenue chart */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Revenue over time</Text>
+              <InlineStack gap="100">
+                {[14, 30, 90].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setChartDays(d)}
+                    style={{
+                      background: chartDays === d ? "#111827" : "transparent",
+                      color: chartDays === d ? "#fff" : "#6b7280",
+                      border: `1px solid ${chartDays === d ? "#111827" : "#e5e7eb"}`,
+                      borderRadius: 6, padding: "3px 10px", cursor: "pointer",
+                      fontSize: 12, fontWeight: 500,
+                    }}
+                  >{d}d</button>
+                ))}
+              </InlineStack>
+            </InlineStack>
+            <OrdersChart
+              data={chartData}
+              currency={purchases[0]?.currency || "USD"}
+            />
+          </BlockStack>
+        </Card>
 
         {/* Source overview */}
         <BlockStack gap="200">
@@ -300,8 +354,8 @@ export default function AppOrders() {
 
           {rows.length > 0 ? (
             <DataTable
-              columnContentTypes={["text", "numeric", "text", "text", "text", "text", "text"]}
-              headings={["Order ID", "Value", "Source", "Campaign", "Medium", "Landing page", "Date"]}
+              columnContentTypes={["text", "text", "numeric", "text", "text", "text", "text"]}
+              headings={["Order ID", "Customer", "Value", "Source", "Campaign", "Landing page", "Date"]}
               rows={rows}
               increasedTableDensity
               truncate

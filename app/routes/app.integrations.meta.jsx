@@ -162,6 +162,7 @@ function MetaIntegrationsInner({ data }) {
   const [pixelsLoading, setPixelsLoading] = useState(false);
   const [pixelInputMode, setPixelInputMode] = useState("auto"); // "auto" or "manual"
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showPixelSelector, setShowPixelSelector] = useState(false);
 
   async function savePixelSettings() {
     setPixelSaving(true);
@@ -410,9 +411,6 @@ function MetaIntegrationsInner({ data }) {
             <Card>
               <BlockStack gap="400">
                 <Text as="h2" variant="headingMd">Connected assets</Text>
-                <Text as="p" tone="subdued" variant="bodySm">
-                  Managed via Meta Business Login. To change these, click Reconnect Meta above.
-                </Text>
 
                 <div style={{ display: "grid", gap: 12 }}>
                   {/* Ad Account */}
@@ -432,22 +430,53 @@ function MetaIntegrationsInner({ data }) {
                   </div>
 
                   {/* Pixel */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, padding: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8 }}>
-                    <span style={{ fontSize: 24 }}>📊</span>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: 12, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8 }}>
+                    <span style={{ fontSize: 24, marginTop: 2 }}>📊</span>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14 }}>Meta Pixel</div>
+                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>Meta Pixel</div>
                       {data.connectedAssets.pixel ? (
                         <>
                           <div style={{ fontSize: 13, color: "#374151" }}>
                             {data.connectedAssets.pixel.name} <code style={{ background: "#fff", padding: "1px 6px", borderRadius: 3, fontSize: 11 }}>{data.connectedAssets.pixel.id}</code>
                           </div>
                           {data.connectedAssets.pixel.lastFired && (
-                            <div style={{ fontSize: 11, color: "#6b7280" }}>Last fired: {new Date(data.connectedAssets.pixel.lastFired).toLocaleString()}</div>
+                            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>Last fired: {new Date(data.connectedAssets.pixel.lastFired).toLocaleString()}</div>
                           )}
                         </>
                       ) : (
-                        <div style={{ fontSize: 13, color: "#9ca3af" }}>Not selected</div>
+                        <div style={{ fontSize: 13, color: "#9ca3af", marginBottom: 8 }}>Not selected</div>
                       )}
+                      {!showPixelSelector ? (
+                        <button
+                          onClick={() => setShowPixelSelector(true)}
+                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
+                        >
+                          Change pixel
+                        </button>
+                      ) : pixelsLoading ? (
+                        <InlineStack gap="200" blockAlign="center">
+                          <Spinner size="small" />
+                          <Text as="p" variant="bodySm" tone="subdued">Loading pixels…</Text>
+                        </InlineStack>
+                      ) : availablePixels.length > 0 ? (
+                        <InlineStack gap="200" blockAlign="end" wrap={false}>
+                          <div style={{ flex: 1 }}>
+                            <Select
+                              label="Change pixel"
+                              labelHidden
+                              options={[
+                                { label: "Select a pixel…", value: "" },
+                                ...availablePixels.map((p) => ({ label: `${p.name} (${p.id})`, value: p.id })),
+                              ]}
+                              value={pixelId}
+                              onChange={setPixelId}
+                            />
+                          </div>
+                          <Button size="slim" variant="primary" onClick={savePixelSettings} loading={pixelSaving}>
+                            {pixelSaved ? "Saved ✓" : "Save"}
+                          </Button>
+                        </InlineStack>
+                      ) : null}
                     </div>
                     <Badge tone="success">Active</Badge>
                   </div>
