@@ -426,7 +426,9 @@ function MetaIntegrationsInner({ data }) {
                         <div style={{ fontSize: 13, color: "#9ca3af" }}>Not selected</div>
                       )}
                     </div>
-                    <Badge tone="success">Active</Badge>
+                    {data.connectedAssets.adAccount
+                      ? <Badge tone="success">Active</Badge>
+                      : <Badge tone="warning">Not configured</Badge>}
                   </div>
 
                   {/* Pixel */}
@@ -478,7 +480,9 @@ function MetaIntegrationsInner({ data }) {
                         </InlineStack>
                       ) : null}
                     </div>
-                    <Badge tone="success">Active</Badge>
+                    {data.connectedAssets.pixel
+                      ? <Badge tone="success">Active</Badge>
+                      : <Badge tone="warning">Not configured</Badge>}
                   </div>
                 </div>
               </BlockStack>

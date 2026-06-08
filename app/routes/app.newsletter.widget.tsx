@@ -247,16 +247,16 @@ export default function SignupFormsPage() {
             <KpiCard label="Active forms" value={String(activeForms)} sub={`of ${forms.length} forms`} icon="✅" />
           </Grid.Cell>
           <Grid.Cell>
-            <KpiCard label="Total subscribers" value={totalSubscribers.toLocaleString()} sub={`↑ 12% vs last 30 days`} icon="👥" />
+            <KpiCard label="Total subscribers" value={totalSubscribers.toLocaleString()} sub="All time" icon="👥" />
           </Grid.Cell>
           <Grid.Cell>
-            <KpiCard label="Conversion rate" value={`${overallCR}%`} sub="↑ 8% vs last 30 days" icon="📈" />
+            <KpiCard label="Conversion rate" value={`${overallCR}%`} sub={totalViews > 0 ? `${totalSubmissions} of ${totalViews} views` : "No views yet"} icon="📈" />
           </Grid.Cell>
           <Grid.Cell>
-            <KpiCard label="Views" value={totalViews.toLocaleString()} sub="↑ 9% vs last 30 days" icon="👁️" />
+            <KpiCard label="Views" value={totalViews.toLocaleString()} sub="Last 30 days" icon="👁️" />
           </Grid.Cell>
           <Grid.Cell>
-            <KpiCard label="Submissions" value={totalSubmissions.toLocaleString()} sub="↑ 11% vs last 30 days" icon="📬" />
+            <KpiCard label="Submissions" value={totalSubmissions.toLocaleString()} sub="Last 30 days" icon="📬" />
           </Grid.Cell>
         </Grid>
 

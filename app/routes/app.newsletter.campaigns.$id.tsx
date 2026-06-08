@@ -445,9 +445,16 @@ export default function CampaignEditor() {
       try {
         result = JSON.parse(text);
       } catch {
-        // Response wasn't JSON — show HTTP status or raw snippet
-        const snippet = text.slice(0, 120).replace(/<[^>]+>/g, "").trim();
-        result = { ok: false, error: res.ok ? `Unexpected server response${snippet ? `: ${snippet}` : ""}` : `Server error (HTTP ${res.status}) — check Fly.io logs` };
+        // Shopify session redirect returns HTML — detect and give a friendly message
+        const isAuthRedirect = text.includes("session-token") || text.includes("shopify.idToken") || text.includes("<meta") || text.includes("auth/login");
+        result = {
+          ok: false,
+          error: isAuthRedirect
+            ? "Session expired — please refresh the page and try again"
+            : res.ok
+              ? `Unexpected server response (HTTP ${res.status})`
+              : `Server error (HTTP ${res.status}) — check Fly.io logs`,
+        };
       }
       setTestResult({
         ok: result.ok ?? false,
