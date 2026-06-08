@@ -45,13 +45,21 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const recipientPreview = await countSubscribersForSegment(shop, campaign.segmentFilter ?? {});
   const smtpConfigured = !!process.env.SMTP_HOST;
 
+  // HMAC token used by the /api/newsletter/test-send endpoint so the client
+  // can send a test email without needing a live Shopify session token.
+  const { createHmac } = await import("node:crypto");
+  const testSendToken = createHmac("sha256", process.env.SHOPIFY_API_SECRET ?? "fallback")
+    .update(`${shop}:${params.id}`)
+    .digest("hex")
+    .slice(0, 32);
+
   // Defaults from newsletter settings (fall back to env var for email)
   const defaultFromName = newsletterSettings?.fromName || "";
   const defaultFromEmail = newsletterSettings?.fromEmail || process.env.SMTP_FROM_EMAIL || "";
   const defaultReplyTo = newsletterSettings?.replyTo || "";
   const defaultFooterText = newsletterSettings?.footerText || "";
 
-  return json({ campaign, shop, recipientPreview, smtpConfigured, defaultFromName, defaultFromEmail, defaultReplyTo, defaultFooterText });
+  return json({ campaign, shop, recipientPreview, smtpConfigured, testSendToken, defaultFromName, defaultFromEmail, defaultReplyTo, defaultFooterText });
 }
 
 // ─── Action ──────────────────────────────────────────────────────────────────
@@ -213,7 +221,7 @@ type BuilderTab = "edit" | "settings" | "recipients" | "send";
 type DevicePreview = "desktop" | "tablet" | "mobile";
 
 export default function CampaignEditor() {
-  const { campaign, shop, recipientPreview, smtpConfigured, defaultFromName, defaultFromEmail, defaultReplyTo } = useLoaderData<typeof loader>();
+  const { campaign, shop, recipientPreview, smtpConfigured, testSendToken, defaultFromName, defaultFromEmail, defaultReplyTo } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const editorRef = useRef<HTMLDivElement>(null);
 
@@ -452,40 +460,35 @@ export default function CampaignEditor() {
     if (!testEmail) return;
     setTestSending(true);
     try {
-      const res = await authFetch(`/app/newsletter/campaigns/${campaign.id}`, {
+      // Use a dedicated HMAC-authenticated endpoint so this call never goes
+      // through the Shopify session-token flow — that was causing "session
+      // expired" errors before the request even reached the server.
+      const res = await fetch("/api/newsletter/test-send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: "send", testMode: true, testEmail }),
+        body: JSON.stringify({
+          campaignId: campaign.id,
+          shop,
+          token: testSendToken,
+          testEmail,
+        }),
       });
-      // Read as text first so we can surface HTTP-level errors (auth redirects, 5xx HTML pages)
-      const text = await res.text().catch(() => "");
-      let result: any;
-      try {
-        result = JSON.parse(text);
-      } catch {
-        // Shopify session redirect returns HTML — detect and give a friendly message
-        const isAuthRedirect = text.includes("session-token") || text.includes("shopify.idToken") || text.includes("<meta") || text.includes("auth/login");
-        result = {
-          ok: false,
-          error: isAuthRedirect
-            ? "Session expired — please refresh the page and try again"
-            : res.ok
-              ? `Unexpected server response (HTTP ${res.status})`
-              : `Server error (HTTP ${res.status}) — check Fly.io logs`,
-        };
-      }
+      const result = await res.json().catch(() => ({
+        ok: false,
+        error: `Server error (HTTP ${res.status}) — check Fly.io logs`,
+      }));
       setTestResult({
         ok: result.ok ?? false,
         message: result.ok
           ? (result.message ?? `Test sent to ${testEmail}`)
-          : (result.error ?? result.errors?.[0] ?? "Send failed — check your SMTP configuration in Fly.io secrets"),
+          : (result.error ?? "Send failed — check your SMTP configuration in Fly.io secrets"),
       });
     } catch {
       setTestResult({ ok: false, message: "Network error — could not reach server" });
     } finally {
       setTestSending(false);
     }
-  }, [testEmail, campaign.id, authFetch]);
+  }, [testEmail, campaign.id, shop, testSendToken]);
 
   const STEPS: { key: BuilderTab; label: string }[] = [
     { key: "edit", label: "Edit" },
