@@ -257,8 +257,8 @@ export default function ReviewRequestsPage() {
       trigger: `${settings.requestDelayDays ?? 7} days after purchase`,
       status: settings.sendRequestEmail ? "active" : "draft",
       sent: metrics.totalOrders,
-      delivered: Math.round(metrics.totalOrders * 0.898),
-      deliveryRate: "89.8%",
+      delivered: metrics.totalOrders > 0 ? Math.round(metrics.totalOrders * 0.898) : 0,
+      deliveryRate: metrics.totalOrders > 0 ? "89.8%" : "—",
       reviews: metrics.approvedReviews,
       reviewRate: metrics.reviewRate + "%",
       lastUpdated: "Jun 3, 2025",
@@ -350,7 +350,7 @@ export default function ReviewRequestsPage() {
                   <Text as="p" variant="bodySm" tone="subdued">{req.trigger}</Text>
                   <div><RequestStatusBadge status={req.status} /></div>
                   <Text as="p" variant="bodySm">{req.sent.toLocaleString()}</Text>
-                  <Text as="p" variant="bodySm">{req.delivered.toLocaleString()} ({req.deliveryRate})</Text>
+                  <Text as="p" variant="bodySm">{req.sent === 0 ? "—" : `${req.delivered.toLocaleString()} (${req.deliveryRate})`}</Text>
                   <Text as="p" variant="bodySm">{req.reviews.toLocaleString()}</Text>
                   <Text as="p" variant="bodySm">{req.reviewRate}</Text>
                   <Text as="p" variant="bodySm" tone="subdued">{req.lastUpdated}</Text>

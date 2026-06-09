@@ -9,7 +9,7 @@ import {
   Badge, BlockStack, Button, Card, Checkbox, Divider,
   InlineStack, Modal, Page, Select, Text, TextField,
 } from "@shopify/polaris";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { EMAIL_TEMPLATES } from "~/data/emailTemplates";
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
@@ -116,10 +116,39 @@ export default function FlowEditor() {
   const [stepDelayDays, setStepDelayDays] = useState("0");
   const [stepDelayHours, setStepDelayHours] = useState("0");
   const [stepSubject, setStepSubject] = useState("");
-  const [stepHtml, setStepHtml] = useState("");
-  const [htmlMode, setHtmlMode] = useState(false);
+  const [unlayerReady, setUnlayerReady] = useState(false);
 
   const isSaving = fetcher.state !== "idle";
+
+  // Load Unlayer script once on mount
+  useEffect(() => {
+    if ((window as any).unlayer) { setUnlayerReady(true); return; }
+    const script = document.createElement("script");
+    script.src = "https://editor.unlayer.com/embed.js";
+    script.async = true;
+    script.onload = () => setUnlayerReady(true);
+    document.head.appendChild(script);
+  }, []);
+
+  // Init/reload Unlayer each time a step is opened for editing
+  useEffect(() => {
+    if (!editingStep || !unlayerReady) return;
+    const t = setTimeout(() => {
+      const el = document.getElementById("flow-unlayer-editor");
+      if (!el || !(window as any).unlayer) return;
+      (window as any).unlayer.init({
+        id: "flow-unlayer-editor",
+        displayMode: "email",
+        locale: "en-US",
+        appearance: { theme: "modern_light" },
+      });
+      if (editingStep.htmlContent) {
+        (window as any).unlayer.loadDesign({ html: editingStep.htmlContent, classic: true });
+      }
+    }, 150);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingStep?.id, unlayerReady]);
 
   function saveFlow() {
     fetcher.submit({ intent: "update_flow", name, enabled }, { method: "post", encType: "application/json" });
@@ -130,20 +159,25 @@ export default function FlowEditor() {
     setStepDelayDays(String(step?.delayDays ?? 1));
     setStepDelayHours(String(step?.delayHours ?? 0));
     setStepSubject(step?.subject ?? "");
-    setStepHtml(step?.htmlContent ?? "");
-    setHtmlMode(false);
   }
 
   function saveStep() {
-    fetcher.submit({
-      intent: "upsert_step",
-      stepId: editingStep?.id ?? null,
-      delayDays: Number(stepDelayDays),
-      delayHours: Number(stepDelayHours),
-      subject: stepSubject,
-      htmlContent: stepHtml || null,
-    }, { method: "post", encType: "application/json" });
-    setEditingStep(null);
+    const doSubmit = (htmlContent: string | null) => {
+      fetcher.submit({
+        intent: "upsert_step",
+        stepId: editingStep?.id ?? null,
+        delayDays: Number(stepDelayDays),
+        delayHours: Number(stepDelayHours),
+        subject: stepSubject,
+        htmlContent,
+      }, { method: "post", encType: "application/json" });
+      setEditingStep(null);
+    };
+    if ((window as any).unlayer && unlayerReady) {
+      (window as any).unlayer.exportHtml((data: { html: string }) => doSubmit(data.html || null));
+    } else {
+      doSubmit(null);
+    }
   }
 
   function deleteStep(stepId: string) {
@@ -151,14 +185,14 @@ export default function FlowEditor() {
   }
 
   function applyTemplate(html: string, subject: string) {
-    setStepHtml(html);
     if (!stepSubject) setStepSubject(subject);
     setShowTemplates(false);
-    setHtmlMode(false);
+    if ((window as any).unlayer && unlayerReady) {
+      setTimeout(() => (window as any).unlayer.loadDesign({ html, classic: true }), 50);
+    }
   }
 
   const triggerLabel = TRIGGER_OPTIONS.find(t => t.value === flow.trigger)?.label ?? flow.trigger;
-  const isHtmlBody = stepHtml.trimStart().startsWith("<!DOCTYPE") || stepHtml.trimStart().startsWith("<html");
 
   return (
     <Page
@@ -326,25 +360,28 @@ export default function FlowEditor() {
           </Modal.Section>
         )}
 
-        {/* Email body */}
+        {/* Email body — Unlayer drag-and-drop editor */}
         <Modal.Section>
           <BlockStack gap="300">
-            <InlineStack align="space-between" blockAlign="center">
-              <Text as="h3" variant="headingSm">Email body</Text>
-              {isHtmlBody && (
-                <Button size="slim" onClick={() => setHtmlMode(!htmlMode)}>
-                  {htmlMode ? "Show preview" : "Edit HTML"}
-                </Button>
-              )}
-            </InlineStack>
-            {isHtmlBody && !htmlMode ? (
-              <div style={{ border: "1px solid #e1e3e5", borderRadius: 8, overflow: "hidden" }}>
-                <iframe srcDoc={stepHtml} title="Email preview" style={{ width: "100%", height: 480, border: "none", display: "block" }} />
-              </div>
-            ) : (
-              <TextField label="HTML content" labelHidden value={stepHtml} onChange={setStepHtml} multiline={12} autoComplete="off"
-                placeholder="Paste HTML or pick a template above. Variables: {name}, {shop}" />
+            <Text as="h3" variant="headingSm">Email body</Text>
+            {!unlayerReady && (
+              <Text as="p" variant="bodySm" tone="subdued">Loading email editor…</Text>
             )}
+            <style dangerouslySetInnerHTML={{ __html: `
+              #flow-unlayer-editor { overflow: hidden !important; }
+              #flow-unlayer-editor iframe { border: none !important; }
+              #flow-unlayer-editor > div > div:last-child { display: none !important; }
+            `}} />
+            <div
+              id="flow-unlayer-editor"
+              style={{
+                height: 500,
+                border: "1px solid #E5E7EB",
+                borderRadius: 8,
+                overflow: "hidden",
+                background: "#f9fafb",
+              }}
+            />
           </BlockStack>
         </Modal.Section>
       </Modal>

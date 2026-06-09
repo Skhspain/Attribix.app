@@ -596,6 +596,17 @@ export default function CampaignEditor() {
             </Banner>
           </div>
         )}
+        {activeTab === "send" && !subject && !isSent && (
+          <div style={{ marginBottom: 16 }}>
+            <Banner
+              tone="critical"
+              title="Subject line required"
+              action={{ content: "Open Settings tab", onAction: () => setActiveTab("settings") }}
+            >
+              Add a subject line before you can send this campaign.
+            </Banner>
+          </div>
+        )}
         {sendResult && (
           <div style={{ marginBottom: 16 }}>
             <Banner
