@@ -47,7 +47,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const hasConnection = !!(metaConn && metaConn.accessToken && metaConn.accessToken !== "__PENDING__");
 
-  // Get Shopify revenue for comparison (7-day)
+  // Get Shopify revenue for comparison (7-day) + store currency
   const since7 = new Date(); since7.setDate(since7.getDate() - 7); since7.setHours(0,0,0,0);
   const [shopifyPurchases7, storeCurrencyRes] = await Promise.all([
     db.purchase.findMany({
@@ -60,17 +60,48 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shopifyOrders7 = shopifyPurchases7.length;
   const storeCurrency = storeCurrencyRes?.data?.shop?.currencyCode || "NOK";
 
+  // Detect ad account currency from Meta Graph API and convert if needed
+  let adAccountCurrency = storeCurrency; // assume same unless we learn otherwise
+  if (hasConnection && metaConn?.accessToken && metaConn?.adAccountId) {
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v20.0/${metaConn.adAccountId}?fields=currency&access_token=${metaConn.accessToken}`
+      );
+      const acct = await res.json();
+      if (acct?.currency && !acct.error) adAccountCurrency = acct.currency;
+    } catch {}
+  }
+
+  const { convertCurrency } = await import("~/services/currency.server");
+  const exchangeRate = adAccountCurrency !== storeCurrency
+    ? await convertCurrency(1, adAccountCurrency, storeCurrency).catch(() => 1)
+    : 1;
+
+  // Apply exchange rate to all DB values (stored in ad account currency)
+  const convertedCampaigns = (campaigns ?? []).map((r: any) => ({
+    ...r,
+    spend: Number(r.spend || 0) * exchangeRate,
+    purchaseValue: Number(r.purchaseValue || 0) * exchangeRate,
+  }));
+  const convertedAds = (ads ?? []).map((r: any) => ({
+    ...r,
+    spend: Number(r.spend || 0) * exchangeRate,
+    purchaseValue: Number(r.purchaseValue || 0) * exchangeRate,
+  }));
+
   return json({
     shop,
     nowMs: Date.now(),
-    campaigns: campaigns ?? [],
-    ads: ads ?? [],
+    campaigns: convertedCampaigns,
+    ads: convertedAds,
     lastSyncedAt: metaConn?.lastSyncedAt ?? null,
     hasConnection,
     adAccountId: metaConn?.adAccountId ?? null,
     shopifyRev7,
     shopifyOrders7,
     storeCurrency,
+    adAccountCurrency,
+    exchangeRate,
   });
 }
 
@@ -196,8 +227,8 @@ export default function MetaAdsDetail() {
     return { spend, impressions, clicks, purchases, value, roas: spend > 0 ? value / spend : null, ctr: impressions > 0 ? (clicks / impressions) * 100 : null, cpc: clicks > 0 ? spend / clicks : null };
   }, [campaigns]);
 
-  // Detect currency
-  const currency = "NOK";
+  // Use store currency (values already converted in loader)
+  const currency = data.storeCurrency || "NOK";
 
   // Chart data — daily spend vs purchase value
   const chartData = useMemo(() => {
@@ -395,6 +426,13 @@ export default function MetaAdsDetail() {
       }
     >
       <BlockStack gap="600">
+
+        {/* Currency conversion notice */}
+        {data.adAccountCurrency && data.adAccountCurrency !== data.storeCurrency && (
+          <div style={{ padding: "10px 16px", borderRadius: 8, background: "#eff6ff", border: "1px solid #bfdbfe", fontSize: 13, color: "#1d4ed8" }}>
+            💱 Ad account currency is <strong>{data.adAccountCurrency}</strong> — all values are automatically converted to <strong>{data.storeCurrency}</strong> at the current exchange rate (1 {data.adAccountCurrency} = {data.exchangeRate?.toFixed(2)} {data.storeCurrency}).
+          </div>
+        )}
 
         {/* Sync status */}
         {syncPermError && (
