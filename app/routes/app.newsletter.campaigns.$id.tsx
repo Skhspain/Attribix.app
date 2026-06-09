@@ -814,13 +814,18 @@ export default function CampaignEditor() {
           content: testSending ? "Sending…" : "Send test email",
           onAction: handleTestSend,
           loading: testSending,
-          disabled: !testEmail || testSending,
+          disabled: !testEmail || testSending || !subject,
         }}
         secondaryActions={[{ content: "Close", onAction: () => { setTestModalOpen(false); setTestResult(null); } }]}
       >
         <Modal.Section>
           <BlockStack gap="300">
             <Text as="p" variant="bodySm" tone="subdued">Send a test version of this email to check how it looks in an inbox.</Text>
+            {!subject && (
+              <Banner tone="critical" action={{ content: "Open Settings tab", onAction: () => { setTestModalOpen(false); setActiveTab("settings"); } }}>
+                Add a subject line before sending.
+              </Banner>
+            )}
             {!smtpConfigured && (
               <Banner tone="warning">Email sending is not configured (SMTP missing). Contact support.</Banner>
             )}
