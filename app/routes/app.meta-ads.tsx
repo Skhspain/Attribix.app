@@ -1027,11 +1027,21 @@ export default function MetaAdsDetail() {
           currency={data.storeCurrency || "NOK"}
         />
 
-        {data.lastSyncedAt && (
-          <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-            Last synced: {new Date(data.lastSyncedAt).toLocaleString()}
-          </Text>
-        )}
+        <InlineStack align="center" blockAlign="center" gap="300">
+          <Button
+            onClick={handleSync}
+            loading={syncing}
+            disabled={syncing}
+            size="slim"
+          >
+            {syncing ? "Syncing…" : "Sync now"}
+          </Button>
+          {data.lastSyncedAt && (
+            <Text as="p" variant="bodySm" tone="subdued">
+              Last synced: {new Date(data.lastSyncedAt).toLocaleString()}
+            </Text>
+          )}
+        </InlineStack>
       </BlockStack>
     </Page>
   );

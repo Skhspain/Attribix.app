@@ -1,7 +1,7 @@
 // app/routes/app.integrations.meta.jsx
 import React, { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData, useRevalidator, useNavigate, Form } from "@remix-run/react";
+import { useLoaderData, useRevalidator, useNavigate, Form, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -563,7 +563,7 @@ function MetaIntegrationsInner({ data }) {
             <Banner tone="info">
               <Text as="p">
                 ✓ Ad data syncs automatically every 24 hours. To sync manually or view campaign performance, go to{" "}
-                <a href="/app/meta-ads">Meta Ads →</a>
+                <Link to="/app/meta-ads" style={{ color: "#2563eb", fontWeight: 600 }}>Meta Ads →</Link>
               </Text>
             </Banner>
           </Layout.Section>
