@@ -17,7 +17,6 @@ const ORDERS_QUERY = `#graphql
         name
         totalPriceSet { shopMoney { amount currencyCode } }
         createdAt
-        customer { firstName lastName displayName }
         billingAddress { countryCodeV2 city firstName lastName }
         shippingAddress { countryCodeV2 city firstName lastName }
         customerJourneySummary {
@@ -171,10 +170,9 @@ export async function action({ request }: ActionFunctionArgs) {
       const currency   = (order.totalPriceSet?.shopMoney?.currencyCode ?? "USD") as string;
       const country    = order.billingAddress?.countryCodeV2 || order.shippingAddress?.countryCodeV2 || null;
       const city       = order.billingAddress?.city || order.shippingAddress?.city || null;
-      const firstName  = order.customer?.firstName || order.billingAddress?.firstName || order.shippingAddress?.firstName || null;
-      const lastName   = order.customer?.lastName  || order.billingAddress?.lastName  || order.shippingAddress?.lastName  || null;
-      const customerName = order.customer?.displayName ||
-        (firstName || lastName ? `${firstName || ""} ${lastName || ""}`.trim() : null);
+      const firstName  = order.billingAddress?.firstName || order.shippingAddress?.firstName || null;
+      const lastName   = order.billingAddress?.lastName  || order.shippingAddress?.lastName  || null;
+      const customerName = firstName || lastName ? `${firstName || ""} ${lastName || ""}`.trim() : null;
       const createdAt  = order.createdAt ? new Date(order.createdAt) : new Date();
       const { utmSource, utmMedium, utmCampaign, landingPage, referrer } =
         extractAttribution(order.customerJourneySummary);
