@@ -110,6 +110,11 @@ function safeNum(v: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function fmtRoas(roas: number | null) {
+  if (roas === null) return "—";
+  return roas.toFixed(1) + "×";
+}
+
 function fmtDecimal(value: number, currency = "NOK") {
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(value || 0);
@@ -332,7 +337,7 @@ export default function MetaAdsDetail() {
         c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + "%" : "—",
         String(c.purchases),
         fmtDecimal(c.value, currency),
-        c.spend > 0 ? Math.round((c.value / c.spend) * 100) + "%" : "—",
+        c.spend > 0 ? fmtRoas(c.value / c.spend) : "—",
         c.purchases > 0 && c.spend > 0 ? fmtDecimal(c.spend / c.purchases, currency) : "—",
       ]);
   }, [campaigns, currency]);
@@ -503,7 +508,7 @@ export default function MetaAdsDetail() {
               <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? Math.round(kpis.roas * 100) + "%" : "—"}</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? fmtRoas(kpis.roas) : "—"}</p>
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
@@ -536,7 +541,7 @@ export default function MetaAdsDetail() {
             { label: "Total spend", value: fmtDecimal(kpis.spend, currency) },
             { label: "Impressions", value: kpis.impressions.toLocaleString() },
             { label: "Clicks", value: kpis.clicks.toLocaleString(), sub: kpis.ctr ? `CTR ${kpis.ctr.toFixed(2)}%` : undefined },
-            { label: "ROAS (Meta reported)", value: kpis.roas ? Math.round(kpis.roas * 100) + "%" : "—", sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value` },
+            { label: "ROAS (Meta reported)", value: kpis.roas ? fmtRoas(kpis.roas) : "—", sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value` },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
               <Card>
@@ -593,7 +598,7 @@ export default function MetaAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#15803d" }}>
-                          {topCampaign.spend > 0 ? Math.round((topCampaign.value / topCampaign.spend) * 100) + "%" : "—"}
+                          {topCampaign.spend > 0 ? fmtRoas(topCampaign.value / topCampaign.spend) : "—"}
                         </p>
                       </div>
                       <div>
@@ -646,7 +651,7 @@ export default function MetaAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#dc2626" }}>
-                          {worstCampaign.spend > 0 ? Math.round((worstCampaign.value / worstCampaign.spend) * 100) + "%" : "—"}
+                          {worstCampaign.spend > 0 ? fmtRoas(worstCampaign.value / worstCampaign.spend) : "—"}
                         </p>
                       </div>
                       <div>
@@ -895,7 +900,7 @@ export default function MetaAdsDetail() {
                 const hitCpa = cpaTarget && cpa !== null && cpa <= cpaTarget;
                 let targetNote = "";
                 if (roasTarget && a.roas !== null) {
-                  targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(a.roas * 100)}% / ${roasTarget}× target)` : `${Math.round(a.roas * 100)}% of ${roasTarget}× target`;
+                  targetNote = hitRoas ? `✅ ROAS target hit! (${fmtRoas(a.roas)} / ${roasTarget}× target)` : `${fmtRoas(a.roas)} of ${roasTarget}× target`;
                 }
                 if (cpaTarget && cpa !== null) {
                   const cpaStr = `${fmtDecimal(cpa, currency)} per sale (target: ${fmtDecimal(cpaTarget, currency)})`;
@@ -1037,7 +1042,7 @@ export default function MetaAdsDetail() {
                           else if (roas !== null && roas < 1 && c.spend > 0) { perfLabel = "🔴 Losing money"; perfColor = "#dc2626"; }
 
                           let targetNote = "";
-                          if (roasTarget && roas !== null) targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(roas * 100)}% / ${roasTarget}× target)` : `${Math.round(roas * 100)}% of ${roasTarget}× target`;
+                          if (roasTarget && roas !== null) targetNote = hitRoas ? `✅ ROAS target hit! (${fmtRoas(roas)} / ${roasTarget}× target)` : `${fmtRoas(roas)} of ${roasTarget}× target`;
                           if (!roasTarget && !cpaTarget) targetNote = perfLabel;
 
                           return (

@@ -145,6 +145,11 @@ function safeNum(v: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function fmtRoas(roas: number | null) {
+  if (roas === null) return "—";
+  return roas.toFixed(1) + "×";
+}
+
 function fmtDecimal(value: number, currency = "NOK") {
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(value || 0);
@@ -313,7 +318,7 @@ export default function GoogleAdsDetail() {
         c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + "%" : "—",
         String(Math.round(c.conversions).toLocaleString()),
         fmtDecimal(c.value, currency),
-        c.spend > 0 ? Math.round((c.value / c.spend) * 100) + "%" : "—",
+        c.spend > 0 ? fmtRoas(c.value / c.spend) : "—",
         c.conversions > 0 && c.spend > 0 ? fmtDecimal(c.spend / c.conversions, currency) : "—",
       ]);
   }, [campaigns, currency]);
@@ -396,7 +401,7 @@ export default function GoogleAdsDetail() {
               <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? Math.round(kpis.roas * 100) + "%" : "—"}</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? fmtRoas(kpis.roas) : "—"}</p>
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
@@ -435,7 +440,7 @@ export default function GoogleAdsDetail() {
             },
             {
               label: "ROAS",
-              value: kpis.roas !== null ? Math.round(kpis.roas * 100) + "%" : "—",
+              value: kpis.roas !== null ? fmtRoas(kpis.roas) : "—",
               sub: `${Math.round(kpis.conversions).toLocaleString()} conversions · ${fmtDecimal(kpis.value, currency)} value`,
             },
             { label: "Conversions", value: Math.round(kpis.conversions).toLocaleString() },
@@ -499,7 +504,7 @@ export default function GoogleAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#15803d" }}>
-                          {topCampaign.spend > 0 ? Math.round((topCampaign.value / topCampaign.spend) * 100) + "%" : "—"}
+                          {topCampaign.spend > 0 ? fmtRoas(topCampaign.value / topCampaign.spend) : "—"}
                         </p>
                       </div>
                       <div>
@@ -552,7 +557,7 @@ export default function GoogleAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#dc2626" }}>
-                          {worstCampaign.spend > 0 ? Math.round((worstCampaign.value / worstCampaign.spend) * 100) + "%" : "—"}
+                          {worstCampaign.spend > 0 ? fmtRoas(worstCampaign.value / worstCampaign.spend) : "—"}
                         </p>
                       </div>
                       <div>
