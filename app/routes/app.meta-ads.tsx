@@ -2,7 +2,7 @@
 import { SalesComparison } from "~/components/SalesComparison";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useRevalidator, Link } from "@remix-run/react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import {
   Badge,
@@ -106,8 +106,25 @@ export default function MetaAdsDetail() {
   const [window, setWindow] = useState<"7" | "14" | "30" | "90">("7");
   const [view, setView] = useState<"ads" | "campaigns">("ads");
   const [showTargets, setShowTargets] = useState(false);
-  const [targetRoas, setTargetRoas] = useState<string>("3");
+  const [targetRoas, setTargetRoas] = useState<string>("");
   const [targetCpa, setTargetCpa] = useState<string>("");
+
+  // Load persisted targets from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("attribix_meta_targets");
+      if (saved) {
+        const { roas, cpa } = JSON.parse(saved);
+        if (roas) setTargetRoas(roas);
+        if (cpa) setTargetCpa(cpa);
+      }
+    } catch {}
+  }, []);
+
+  function saveTargets() {
+    try { localStorage.setItem("attribix_meta_targets", JSON.stringify({ roas: targetRoas, cpa: targetCpa })); } catch {}
+    setShowTargets(false);
+  }
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncPermError, setSyncPermError] = useState(false);
@@ -647,33 +664,13 @@ export default function MetaAdsDetail() {
         {/* Ads/Campaigns toggle + table */}
         <div style={{ borderRadius: 16, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.08)", border: "1px solid #e1e3e5" }}>
 
-          {/* Target banner */}
-          {!showTargets ? (
+          {/* Target banner — 3 states: no target set | editing | target saved */}
+          {showTargets ? (
+            /* ── Editing state ── */
             <div style={{
-              background: "#fff8f0",
-              borderBottom: "1px solid #f0e0c8",
-              padding: "16px 24px",
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
-            }}>
-              <div>
-                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.06em" }}>⚠️ No ROAS target set</p>
-                <p style={{ margin: 0, fontSize: 14, color: "#78350f", marginTop: 3 }}>Set your target to see which ads are actually profitable.</p>
-              </div>
-              <button onClick={() => setShowTargets(true)} style={{
-                background: "#f59e0b", color: "#fff", border: "none",
-                borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 14,
-                cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-              }}>
-                👉 Set your ROAS target
-              </button>
-            </div>
-          ) : (
-            <div style={{
-              background: "#f0fdf4",
-              borderBottom: "1px solid #bbf7d0",
-              padding: "16px 24px",
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+              background: "#f0fdf4", borderBottom: "1px solid #bbf7d0",
+              padding: "16px 24px", display: "flex", alignItems: "center",
+              justifyContent: "space-between", gap: 16, flexWrap: "wrap",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -695,11 +692,52 @@ export default function MetaAdsDetail() {
                   />
                 </div>
               </div>
-              <button onClick={() => setShowTargets(false)} style={{
+              <button onClick={saveTargets} style={{
+                background: "#16a34a", color: "#fff", border: "none",
+                borderRadius: 8, padding: "8px 18px", cursor: "pointer", fontSize: 13, fontWeight: 700,
+              }}>
+                Save ✓
+              </button>
+            </div>
+          ) : parseFloat(targetRoas) > 0 ? (
+            /* ── Targets saved summary ── */
+            <div style={{
+              background: "#f0fdf4", borderBottom: "1px solid #bbf7d0",
+              padding: "12px 24px", display: "flex", alignItems: "center",
+              justifyContent: "space-between", gap: 16,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 16 }}>🎯</span>
+                <p style={{ margin: 0, fontSize: 13, color: "#166534", fontWeight: 600 }}>
+                  Target ROAS: <strong>{targetRoas}×</strong>
+                  {parseFloat(targetCpa) > 0 && <span> · Max cost/sale: <strong>{currency} {targetCpa}</strong></span>}
+                </p>
+              </div>
+              <button onClick={() => setShowTargets(true)} style={{
                 background: "transparent", color: "#166534", border: "1px solid #86efac",
                 borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, fontWeight: 600,
               }}>
-                Done ✓
+                Edit
+              </button>
+            </div>
+          ) : (
+            /* ── No target set ── */
+            <div style={{
+              background: "#fff8f0", borderBottom: "1px solid #f0e0c8",
+              padding: "16px 24px", display: "flex", alignItems: "center",
+              justifyContent: "space-between", gap: 16,
+            }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.06em" }}>⚠️ No ROAS target set</p>
+                <p style={{ margin: 0, fontSize: 14, color: "#78350f", marginTop: 3 }}>Set your target to see which ads are actually profitable.</p>
+              </div>
+              <button onClick={() => setShowTargets(true)} style={{
+                background: "#f59e0b", color: "#fff", border: "none",
+                borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 14,
+                cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+              }}>
+                👉 Set your ROAS target
               </button>
             </div>
           )}
