@@ -95,6 +95,46 @@ export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData().catch(() => new FormData());
   const maxPages = Math.min(parseInt((form.get("maxPages") as string) || "4", 10), 40);
 
+  // ── 0. Dedup pass: merge GID-format rows into numeric-ID rows ────────────
+  // The webhook used to store admin_graphql_api_id ("gid://shopify/Order/123")
+  // while the pixel stores the numeric ID ("123"). This creates duplicate rows.
+  // Find all GID-format rows and merge them into their numeric counterpart.
+  let deduped = 0;
+  try {
+    const gidRows = await (db.purchase as any).findMany({
+      where: { shop, orderId: { startsWith: "gid://shopify/Order/" } },
+      select: { id: true, orderId: true, utmSource: true, customerName: true, country: true, city: true, landingPage: true, referrer: true },
+    });
+    for (const gidRow of gidRows) {
+      const numericId = gidRow.orderId.replace("gid://shopify/Order/", "");
+      const numericRow = await (db.purchase as any).findFirst({
+        where: { shop, orderId: numericId },
+      });
+      if (numericRow) {
+        // Merge any attribution/name data from GID row into numeric row, then delete GID row
+        await db.purchase.update({
+          where: { id: numericRow.id },
+          data: {
+            ...(!numericRow.utmSource && gidRow.utmSource ? { utmSource: gidRow.utmSource } : {}),
+            ...(!numericRow.customerName && gidRow.customerName ? { customerName: gidRow.customerName } : {}),
+            ...(!numericRow.country && gidRow.country ? { country: gidRow.country } : {}),
+            ...(!numericRow.city && gidRow.city ? { city: gidRow.city } : {}),
+            ...(!numericRow.landingPage && gidRow.landingPage ? { landingPage: gidRow.landingPage } : {}),
+            ...(!numericRow.referrer && gidRow.referrer ? { referrer: gidRow.referrer } : {}),
+          },
+        });
+        await db.purchase.delete({ where: { id: gidRow.id } });
+        deduped++;
+      } else {
+        // No numeric counterpart — rename GID row to numeric ID
+        await db.purchase.update({ where: { id: gidRow.id }, data: { orderId: numericId } });
+        deduped++;
+      }
+    }
+  } catch (e: any) {
+    console.error("[backfill/orders] dedup error:", e?.message);
+  }
+
   let cursor: string | null = null;
   let created = 0;
   let updated = 0;
@@ -200,5 +240,5 @@ export async function action({ request }: ActionFunctionArgs) {
     cursor = orders.pageInfo.endCursor;
   }
 
-  return json({ ok: true, created, updated, skipped, pages: page });
+  return json({ ok: true, created, updated, skipped, deduped, pages: page });
 }

@@ -238,7 +238,7 @@ export default function AppOrders() {
         {backfillResult && (
           <Banner tone={backfillResult.ok ? "success" : "critical"} title={backfillResult.ok ? "Shopify import complete" : "Import failed"} onDismiss={() => {}}>
             {backfillResult.ok
-              ? <Text as="p">{backfillResult.created} new orders added, {backfillResult.updated ?? 0} patched with source data, {backfillResult.skipped} unchanged. Reload to see updated totals.</Text>
+              ? <Text as="p">{backfillResult.created} new orders added, {backfillResult.updated ?? 0} patched with names/source data{backfillResult.deduped > 0 ? `, ${backfillResult.deduped} duplicate rows removed` : ""}, {backfillResult.skipped} unchanged. Reload to see updated totals.</Text>
               : <Text as="p">{backfillResult.error}</Text>}
           </Banner>
         )}

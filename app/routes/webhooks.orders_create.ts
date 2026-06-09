@@ -59,9 +59,12 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     const { topic, shop, payload } = await shopify.authenticate.webhook(request);
 
+    // Prefer the numeric ID — it matches what the pixel tracker stores.
+    // The GID (admin_graphql_api_id) causes duplicate rows when both the
+    // pixel and the webhook fire for the same order.
     const orderId =
-      pickFirstString(payload?.admin_graphql_api_id) ||
       pickFirstString(payload?.id?.toString?.()) ||
+      pickFirstString(payload?.admin_graphql_api_id) ||
       pickFirstString(payload?.order_number?.toString?.()) ||
       null;
 
