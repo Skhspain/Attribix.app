@@ -1,7 +1,7 @@
 // app/routes/app.meta-ads.tsx — v2 banner removed
 import { SalesComparison } from "~/components/SalesComparison";
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useRevalidator, Link } from "@remix-run/react";
 import { useMemo, useState } from "react";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import {
@@ -760,7 +760,7 @@ export default function MetaAdsDetail() {
 
             {/* Ads table — grouped */}
             {view === "ads" && (() => {
-              if (adTableData.length === 0) return <Text as="p" tone="subdued">Ad-level data will appear after the next sync from Integrations → Meta.</Text>;
+              if (adTableData.length === 0) return <Text as="p" tone="subdued">Ad-level data will appear after the next sync. <Link to="/app/integrations/meta" style={{ color: "#2563eb", fontWeight: 600 }}>Go to Integrations → Meta →</Link></Text>;
 
               const conversionAds = adTableData.filter(a => a.adType === "conversion" || a.purchases > 0);
               const awarenessAds = adTableData.filter(a => a.adType === "awareness");
