@@ -402,6 +402,9 @@ export default function MetaAdsDetail() {
                     Dismiss
                   </button>
                 </div>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "#b91c1c" }}>
+                  Trouble reconnecting? Try clicking <strong>Disconnect</strong> first, then connect from scratch.
+                </p>
               </div>
             </div>
           </div>
