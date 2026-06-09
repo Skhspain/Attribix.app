@@ -607,6 +607,17 @@ export default function CampaignEditor() {
             </Banner>
           </div>
         )}
+        {activeTab === "send" && !fromName && !isSent && (
+          <div style={{ marginBottom: 16 }}>
+            <Banner
+              tone="critical"
+              title="From name required"
+              action={{ content: "Open Settings tab", onAction: () => setActiveTab("settings") }}
+            >
+              Add a sender name so recipients know who the email is from.
+            </Banner>
+          </div>
+        )}
         {sendResult && (
           <div style={{ marginBottom: 16 }}>
             <Banner
@@ -754,7 +765,7 @@ export default function CampaignEditor() {
                   {[
                     { icon: "📝", label: "Subject", value: subject || "(no subject)", ok: !!subject },
                     { icon: "👥", label: "Recipients", value: `${recipientPreview.toLocaleString()} subscribers`, ok: recipientPreview > 0 },
-                    { icon: "✉️", label: "From", value: `${fromName} <${fromEmailVal}>`, ok: !!fromEmailVal },
+                    { icon: "✉️", label: "From", value: `${fromName || "(no name)"} <${fromEmailVal}>`, ok: !!fromEmailVal && !!fromName },
                   ].map(item => (
                     <div key={item.label} style={{ flex: 1, minWidth: 180, padding: "12px 16px", background: item.ok ? "#F0FDF4" : "#FEF2F2", borderRadius: 8, border: `1px solid ${item.ok ? "#BBF7D0" : "#FECACA"}` }}>
                       <InlineStack gap="150" blockAlign="center">
@@ -771,7 +782,7 @@ export default function CampaignEditor() {
                 <InlineStack gap="200">
                   <Button
                     variant="primary"
-                    disabled={isSent || !smtpConfigured || !subject || recipientPreview === 0}
+                    disabled={isSent || !smtpConfigured || !subject || !fromName || recipientPreview === 0}
                     onClick={() => setSendModalOpen(true)}
                   >
                     Send to {recipientPreview.toLocaleString()} subscribers
@@ -814,7 +825,7 @@ export default function CampaignEditor() {
           content: testSending ? "Sending…" : "Send test email",
           onAction: handleTestSend,
           loading: testSending,
-          disabled: !testEmail || testSending || !subject,
+          disabled: !testEmail || testSending || !subject || !fromName,
         }}
         secondaryActions={[{ content: "Close", onAction: () => { setTestModalOpen(false); setTestResult(null); } }]}
       >
@@ -824,6 +835,11 @@ export default function CampaignEditor() {
             {!subject && (
               <Banner tone="critical" action={{ content: "Open Settings tab", onAction: () => { setTestModalOpen(false); setActiveTab("settings"); } }}>
                 Add a subject line before sending.
+              </Banner>
+            )}
+            {!fromName && (
+              <Banner tone="critical" action={{ content: "Open Settings tab", onAction: () => { setTestModalOpen(false); setActiveTab("settings"); } }}>
+                Add a sender name before sending.
               </Banner>
             )}
             {!smtpConfigured && (
