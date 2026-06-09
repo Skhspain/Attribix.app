@@ -895,7 +895,7 @@ export default function MetaAdsDetail() {
                 const hitCpa = cpaTarget && cpa !== null && cpa <= cpaTarget;
                 let targetNote = "";
                 if (roasTarget && a.roas !== null) {
-                  targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(a.roas * 100)}% / ${Math.round(roasTarget * 100)}%)` : `${Math.round(a.roas * 100)}% of ${Math.round(roasTarget * 100)}% target`;
+                  targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(a.roas * 100)}% / ${roasTarget}× target)` : `${Math.round(a.roas * 100)}% of ${roasTarget}× target`;
                 }
                 if (cpaTarget && cpa !== null) {
                   const cpaStr = `${fmtDecimal(cpa, currency)} per sale (target: ${fmtDecimal(cpaTarget, currency)})`;
@@ -1037,7 +1037,7 @@ export default function MetaAdsDetail() {
                           else if (roas !== null && roas < 1 && c.spend > 0) { perfLabel = "🔴 Losing money"; perfColor = "#dc2626"; }
 
                           let targetNote = "";
-                          if (roasTarget && roas !== null) targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(roas * 100)}%)` : `${Math.round(roas * 100)}% of ${Math.round(roasTarget * 100)}% target`;
+                          if (roasTarget && roas !== null) targetNote = hitRoas ? `✅ ROAS target hit! (${Math.round(roas * 100)}% / ${roasTarget}× target)` : `${Math.round(roas * 100)}% of ${roasTarget}× target`;
                           if (!roasTarget && !cpaTarget) targetNote = perfLabel;
 
                           return (

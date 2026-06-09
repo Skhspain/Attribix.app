@@ -107,6 +107,20 @@ export async function action({ request }: ActionFunctionArgs) {
       pickFirstString(payload?.shipping_address?.city) ||
       null;
 
+    const firstName =
+      pickFirstString(payload?.customer?.first_name) ||
+      pickFirstString(payload?.billing_address?.first_name) ||
+      pickFirstString(payload?.shipping_address?.first_name) ||
+      null;
+    const lastName =
+      pickFirstString(payload?.customer?.last_name) ||
+      pickFirstString(payload?.billing_address?.last_name) ||
+      pickFirstString(payload?.shipping_address?.last_name) ||
+      null;
+    const customerName = firstName || lastName
+      ? `${firstName || ""} ${lastName || ""}`.trim()
+      : null;
+
     const userAgent =
       pickFirstString(payload?.client_details?.user_agent) ||
       null;
@@ -154,6 +168,7 @@ export async function action({ request }: ActionFunctionArgs) {
           msclkid: utm.msclkid,
           country,
           city,
+          customerName,
         },
         update: {
           totalValue,
@@ -170,6 +185,7 @@ export async function action({ request }: ActionFunctionArgs) {
           msclkid: utm.msclkid ?? undefined,
           country: country ?? undefined,
           city: city ?? undefined,
+          customerName: customerName ?? undefined,
         },
       });
 
