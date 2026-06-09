@@ -51,6 +51,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     settings: settings ?? { fromName: "", fromEmail: "", replyTo: "", footerText: "", monthlyEmailLimit: 2500 },
     domainStatus,
     smtpConfigured: !!process.env.SMTP_HOST,
+    // If SMTP_FROM_EMAIL is set as a fallback the sender warning is a false alarm
+    envFromEmail: process.env.SMTP_FROM_EMAIL || "",
     emailsSentThisMonth,
     monthlyEmailLimit,
     shop,
@@ -76,8 +78,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
 // ─── Tab nav ─────────────────────────────────────────────────────────────────
 
-type Tab = "General" | "Email" | "Attribution" | "Domains" | "Notifications" | "Integrations" | "Billing";
-const TABS: Tab[] = ["General", "Email", "Attribution", "Domains", "Notifications", "Integrations", "Billing"];
+type Tab = "General" | "Email" | "Domains" | "Billing";
+const TABS: Tab[] = ["General", "Email", "Domains", "Billing"];
 
 function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
   return (
@@ -113,7 +115,7 @@ function StubTab({ name }: { name: string }) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function NewsletterSettingsPage() {
-  const { settings, domainStatus, smtpConfigured, emailsSentThisMonth, monthlyEmailLimit, shop } =
+  const { settings, domainStatus, smtpConfigured, envFromEmail, emailsSentThisMonth, monthlyEmailLimit, shop } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<any>();
 
@@ -139,7 +141,9 @@ export default function NewsletterSettingsPage() {
 
   const isSaving = fetcher.state !== "idle";
   const saved = fetcher.data?.ok && !isSaving;
-  const senderUnconfigured = !fromEmail || !fromName;
+  // Only warn when SMTP is live AND there's no env-var fallback AND both fields are blank.
+  // If SMTP_FROM_EMAIL is set server-side, sending works fine even with empty settings.
+  const senderUnconfigured = smtpConfigured && !envFromEmail && (!fromEmail || !fromName);
   const domainFromEmail = fromEmail.includes("@") ? fromEmail.split("@")[1] : null;
 
   function handleSave() {
@@ -403,11 +407,6 @@ export default function NewsletterSettingsPage() {
             </Card>
           </BlockStack>
         )}
-
-        {/* ── ATTRIBUTION ──────────────────────────────────────────── */}
-        {activeTab === "Attribution" && <StubTab name="Attribution" />}
-        {activeTab === "Notifications" && <StubTab name="Notifications" />}
-        {activeTab === "Integrations" && <StubTab name="Integrations" />}
 
         {/* ── BILLING ──────────────────────────────────────────────── */}
         {activeTab === "Billing" && (

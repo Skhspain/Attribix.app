@@ -502,7 +502,7 @@ export default function CampaignEditor() {
     { key: "edit", label: "Edit" },
     { key: "settings", label: "Settings" },
     { key: "recipients", label: "Recipients" },
-    { key: "send", label: "Send or schedule" },
+    { key: "send", label: "Send" },
   ];
 
   const previewWidth = device === "mobile" ? 375 : device === "tablet" ? 768 : undefined;
@@ -566,7 +566,7 @@ export default function CampaignEditor() {
                 });
               }}
             >
-              {saveStatus === "saving" ? "Saving…" : activeTab === "send" ? "Send newsletter" : "Save & continue"}
+              {saveStatus === "saving" ? "Saving…" : "Save & continue"}
             </Button>
           </InlineStack>
         </div>

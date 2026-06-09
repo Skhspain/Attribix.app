@@ -280,21 +280,18 @@ export default function ReviewRequestsPage() {
       <BlockStack gap="500">
 
         {/* KPI cards */}
-        <Grid columns={{ xs: 2, sm: 3, md: 5, lg: 5, xl: 5 }}>
+        <Grid columns={{ xs: 2, sm: 2, md: 4, lg: 4, xl: 4 }}>
           <Grid.Cell>
-            <KpiCard icon="📧" label="Review requests sent" value={metrics.totalOrders.toLocaleString()} sub="↑ 18% vs last 30 days" />
+            <KpiCard icon="📧" label="Review requests sent" value={metrics.totalOrders.toLocaleString()} sub="All time" />
           </Grid.Cell>
           <Grid.Cell>
-            <KpiCard icon="✅" label="Reviews received" value={metrics.totalReviews.toLocaleString()} sub="↑ 24% vs last 30 days" />
+            <KpiCard icon="✅" label="Reviews received" value={metrics.totalReviews.toLocaleString()} sub="All time" />
           </Grid.Cell>
           <Grid.Cell>
-            <KpiCard icon="⭐" label="Review rate" value={`${metrics.reviewRate}%`} sub="↑ 5% vs last 30 days" />
+            <KpiCard icon="⭐" label="Review rate" value={`${metrics.reviewRate}%`} sub={metrics.totalOrders > 0 ? `${metrics.totalOrders.toLocaleString()} orders tracked` : "No orders yet"} />
           </Grid.Cell>
           <Grid.Cell>
-            <KpiCard icon="🛒" label="Orders completed" value={metrics.totalOrders.toLocaleString()} sub="↑ 16% vs last 30 days" />
-          </Grid.Cell>
-          <Grid.Cell>
-            <KpiCard icon="💰" label="Revenue from reviews" value="NOK —" sub="Attribution coming soon" />
+            <KpiCard icon="🕐" label="New this month" value={metrics.recentReviews.toLocaleString()} sub="Last 30 days" />
           </Grid.Cell>
         </Grid>
 

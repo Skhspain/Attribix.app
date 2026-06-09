@@ -8,7 +8,7 @@ import db from "~/db.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import { useState, useCallback } from "react";
 import {
-  Badge, BlockStack, Button, Card, Divider, Grid, InlineStack, Modal,
+  Badge, Banner, BlockStack, Button, Card, Divider, Grid, InlineStack, Modal,
   Page, Select, Text, TextField,
 } from "@shopify/polaris";
 
@@ -147,26 +147,131 @@ const FORM_OPTIONS = [
   { id: "slide-in", label: "Exit intent", icon: "👋", desc: "Show before someone leaves the store." },
 ];
 
-function CreateFormModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+// Two-step form creation modal.
+// Step 1: pick a form type.
+// Step 2a (popup): confirm install with defaults — calls onInstallPopup.
+// Step 2b (other): "coming soon" message with option to use popup instead.
+function CreateFormModal({
+  open,
+  onClose,
+  onInstallPopup,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onInstallPopup: () => void;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+
+  function handleClose() { setSelected(null); onClose(); }
+  function handleBack() { setSelected(null); }
+
+  // ── Step 2a: popup confirmation ───────────────────────────────────
+  if (open && selected === "popup") {
+    return (
+      <Modal
+        open={open}
+        onClose={handleClose}
+        title="Set up popup form"
+        primaryAction={{
+          content: "Install popup",
+          onAction: () => { onInstallPopup(); handleClose(); },
+        }}
+        secondaryActions={[
+          { content: "← Back", onAction: handleBack },
+          { content: "Cancel", onAction: handleClose },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p" variant="bodySm" tone="subdued">
+              A popup will appear on your storefront after 5 seconds and ask visitors
+              to subscribe. You can customise the colours, timing and copy from the
+              Signup forms page once installed.
+            </Text>
+            <Banner tone="info">
+              <Text as="p">The popup script tag will be added to your Online Store automatically.</Text>
+            </Banner>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+    );
+  }
+
+  // ── Step 2b: coming soon ──────────────────────────────────────────
+  if (open && selected) {
+    const opt = FORM_OPTIONS.find(o => o.id === selected);
+    return (
+      <Modal
+        open={open}
+        onClose={handleClose}
+        title={`${opt?.label ?? "This form type"} — coming soon`}
+        secondaryActions={[
+          { content: "← Back", onAction: handleBack },
+          { content: "Cancel", onAction: handleClose },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Banner tone="warning">
+              <Text as="p">
+                <strong>{opt?.label}</strong> forms are not yet available. They will be added in a future update.
+              </Text>
+            </Banner>
+            <Text as="p" variant="bodySm" tone="subdued">
+              In the meantime, a <strong>popup form</strong> is the fastest way to start capturing subscribers from your store.
+            </Text>
+            <Button onClick={() => setSelected("popup")}>Set up a popup instead →</Button>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+    );
+  }
+
+  // ── Step 1: choose type ───────────────────────────────────────────
   return (
-    <Modal open={open} onClose={onClose} title="Create a new form" secondaryActions={[{ content: "Cancel", onAction: onClose }]}>
+    <Modal
+      open={open}
+      onClose={handleClose}
+      title="Create a new form"
+      secondaryActions={[{ content: "Cancel", onAction: handleClose }]}
+    >
       <Modal.Section>
         <BlockStack gap="300">
-          <Text as="p" variant="bodySm" tone="subdued">Choose the type of form you want to create to grow your subscriber list.</Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            Choose the type of form you want to create to grow your subscriber list.
+          </Text>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {FORM_OPTIONS.map(opt => (
-              <button key={opt.id} onClick={onClose} style={{
-                textAlign: "left", padding: "14px 16px", border: "1.5px solid #E5E7EB",
-                borderRadius: 10, cursor: "pointer", background: "#fff",
-              }}
-                onMouseEnter={e => (e.currentTarget.style.borderColor = "#008060")}
-                onMouseLeave={e => (e.currentTarget.style.borderColor = "#E5E7EB")}
-              >
-                <div style={{ fontSize: 22, marginBottom: 6 }}>{opt.icon}</div>
-                <Text as="p" variant="bodySm" fontWeight="semibold">{opt.label}</Text>
-                <Text as="p" variant="bodySm" tone="subdued">{opt.desc}</Text>
-              </button>
-            ))}
+            {FORM_OPTIONS.map(opt => {
+              const isAvailable = opt.id === "popup";
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => setSelected(opt.id)}
+                  style={{
+                    textAlign: "left", padding: "14px 16px",
+                    border: "1.5px solid #E5E7EB",
+                    borderRadius: 10, cursor: "pointer", background: "#fff",
+                    position: "relative", opacity: isAvailable ? 1 : 0.7,
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "#008060")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "#E5E7EB")}
+                >
+                  <div style={{ fontSize: 22, marginBottom: 6 }}>{opt.icon}</div>
+                  <Text as="p" variant="bodySm" fontWeight="semibold">{opt.label}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{opt.desc}</Text>
+                  {!isAvailable && (
+                    <span style={{
+                      position: "absolute", top: 8, right: 8,
+                      fontSize: 10, fontWeight: 700, padding: "2px 6px",
+                      borderRadius: 4, background: "#F3F4F6", color: "#9CA3AF",
+                      textTransform: "uppercase", letterSpacing: "0.4px",
+                    }}>
+                      Soon
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </BlockStack>
       </Modal.Section>
@@ -183,6 +288,20 @@ export default function SignupFormsPage() {
   const fetcher = useFetcher<any>();
   const authFetch = useAuthenticatedFetch();
   const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  function handleInstallPopup() {
+    fetcher.submit(
+      {
+        intent: "install",
+        templateId: "default", templateType: "popup",
+        triggerType: "timer", triggerDelay: 5,
+        scrollDepth: 50, dismissLimit: 3, dismissPeriod: "month",
+        buttonColor: "#008060", textColor: "#ffffff", borderRadius: 6,
+        btnLabel: "Subscribe", pageTargeting: ["all"],
+      },
+      { method: "post", encType: "application/json" },
+    );
+  }
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType, setFilterType] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -407,7 +526,7 @@ export default function SignupFormsPage() {
 
       </BlockStack>
 
-      <CreateFormModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} />
+      <CreateFormModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} onInstallPopup={handleInstallPopup} />
     </Page>
   );
 }

@@ -322,9 +322,9 @@ export default function NewsletterOverview() {
               <div style={{ borderTop: "1px solid #F0F0F0", paddingTop: 12, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
                 {[
                   { label: "Revenue", value: fmt(d.emailRev30), delta: d.revDelta },
-                  { label: "Attributed orders", value: String(d.attributedOrders30), delta: 15 },
-                  { label: "Average order value", value: d.attributedOrders30 > 0 ? fmt(d.emailRev30 / d.attributedOrders30) : "—", delta: 7 },
-                  { label: "Revenue / email sent", value: d.emailsSent30 > 0 ? fmt(d.emailRev30 / d.emailsSent30) : "—", delta: 19 },
+                  { label: "Attributed orders", value: String(d.attributedOrders30), delta: d.revDelta },
+                  { label: "Average order value", value: d.attributedOrders30 > 0 ? fmt(d.emailRev30 / d.attributedOrders30) : "—", delta: null },
+                  { label: "Revenue / email sent", value: d.emailsSent30 > 0 ? fmt(d.emailRev30 / d.emailsSent30) : "—", delta: null },
                 ].map(m => (
                   <BlockStack key={m.label} gap="025">
                     <Text as="p" variant="bodySm" tone="subdued">{m.label}</Text>
