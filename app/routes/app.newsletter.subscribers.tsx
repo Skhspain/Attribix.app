@@ -352,16 +352,14 @@ export default function SubscriberList() {
 
         {/* KPI cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
-          <KpiCard icon="🔢" iconBg="#F3F4F6" label="Total subscribers" value={(stats.activeCount + stats.unsubscribedCount).toLocaleString()}
-            sub={`↑ 12% vs ${prev30Start} – ${now30End}`} />
-          <KpiCard icon="●" iconBg="#DCFCE7" label="Active" value={`${stats.activeCount.toLocaleString()} (${((stats.activeCount / Math.max(1, stats.activeCount + stats.unsubscribedCount)) * 100).toFixed(1)}%)`}
-            sub={`↑ 11% vs ${prev30Start} – ${now30End}`} />
+          <KpiCard icon="🔢" iconBg="#F3F4F6" label="Total subscribers" value={(stats.activeCount + stats.unsubscribedCount).toLocaleString()} />
+          <KpiCard icon="●" iconBg="#DCFCE7" label="Active" value={`${stats.activeCount.toLocaleString()} (${((stats.activeCount / Math.max(1, stats.activeCount + stats.unsubscribedCount)) * 100).toFixed(1)}%)`} />
           <KpiCard icon="◐" iconBg="#FEF3C7" label="Unsubscribed" value={`${stats.unsubscribedCount.toLocaleString()} (${((stats.unsubscribedCount / Math.max(1, stats.activeCount + stats.unsubscribedCount)) * 100).toFixed(1)}%)`}
-            sub={`↑ 8% vs ${prev30Start} – ${now30End}`} subColor="#F59E0B" />
+            subColor="#F59E0B" />
           <KpiCard icon="⊗" iconBg="#FEE2E2" label="Bounced" value={`${stats.bouncedCount} (${stats.bouncedCount === 0 ? "0%" : "—"})`}
             sub="No bounce data yet" subColor="#9CA3AF" />
           <KpiCard icon="📥" iconBg="#DBEAFE" label="New this period" value={stats.newThisPeriod.toLocaleString()}
-            sub={`↑ 15% vs ${prev30Start} – ${now30End}`} />
+            sub="Last 30 days" subColor="#6B7280" />
         </div>
 
         {/* Search bar + filters */}

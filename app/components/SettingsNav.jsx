@@ -1,6 +1,6 @@
 // app/components/SettingsNav.jsx
 // Left-sidebar navigation shared across all /app/settings/* pages.
-import { useLocation } from "@remix-run/react";
+import { useLocation, Link } from "@remix-run/react";
 
 const ITEMS = [
   { label: "General",                href: "/app/settings/general",       match: "prefix" },
@@ -37,9 +37,9 @@ export function SettingsNav() {
             ? pathname === href || pathname === `${href}/`
             : pathname.startsWith(href);
         return (
-          <a
+          <Link
             key={href}
-            href={href}
+            to={href}
             style={{
               display: "block",
               padding: "8px 10px",
@@ -55,7 +55,7 @@ export function SettingsNav() {
             }}
           >
             {label}
-          </a>
+          </Link>
         );
       })}
     </nav>

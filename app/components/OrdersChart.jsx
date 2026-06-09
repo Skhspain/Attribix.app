@@ -77,7 +77,10 @@ export function OrdersChart({ data, currency = "USD" }) {
   function xPos(i) { return PAD.left + (i / Math.max(n - 1, 1)) * INNER_W; }
   function yPos(v) { return PAD.top + INNER_H - (v / maxVal) * INNER_H; }
 
-  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: maxVal * f, y: yPos(maxVal * f) }));
+  const allZero = values.every((v) => v === 0);
+  const yTicks = allZero
+    ? [{ v: 0, y: yPos(0) }]
+    : [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: maxVal * f, y: yPos(maxVal * f) }));
   const labelStep = n <= 14 ? 2 : n <= 31 ? 7 : 14;
   const xLabels = data.map((d, i) => ({ i, label: d.label, x: xPos(i) })).filter((_, i) => i % labelStep === 0 || i === n - 1);
 
