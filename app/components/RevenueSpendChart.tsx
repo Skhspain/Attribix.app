@@ -20,6 +20,7 @@ export function RevenueSpendChart({
   const maxSpend = Math.max(1, ...data.map((d) => d.spend));
   const CHART_H = 150;
   const SPEND_MAX_H = 48;
+  const allEmpty = data.every((d) => d.revenue === 0 && d.spend === 0);
 
   const [tooltip, setTooltip] = useState<{ x: number; y: number } & ChartDay | null>(null);
 
@@ -111,8 +112,15 @@ export function RevenueSpendChart({
         </div>
       )}
 
+      {/* Empty state */}
+      {allEmpty && (
+        <div style={{ height: CHART_H, display: "flex", alignItems: "center", justifyContent: "center", background: "#f9fafb", borderRadius: 8, border: "1px dashed #e5e7eb" }}>
+          <span style={{ fontSize: 13, color: "#9ca3af" }}>No revenue or spend data for this period</span>
+        </div>
+      )}
+
       {/* Bars */}
-      <div style={{
+      {!allEmpty && <div style={{
         display: "grid",
         gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`,
         gap: 3, alignItems: "end", minHeight: 180, minWidth: data.length * 24,
@@ -161,7 +169,7 @@ export function RevenueSpendChart({
             </div>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 }

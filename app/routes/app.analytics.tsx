@@ -125,9 +125,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .catch(() => []),
   ]);
 
-  const metaConn = await db.metaConnection
-    .findUnique({ where: { shop }, select: { lastSyncedAt: true, adAccountId: true } })
-    .catch(() => null);
+  const [metaConn, trackingSettings] = await Promise.all([
+    db.metaConnection
+      .findUnique({ where: { shop }, select: { lastSyncedAt: true, adAccountId: true } })
+      .catch(() => null),
+    (anyDb.trackingSettings?.findUnique?.({ where: { shop }, select: { storeCurrency: true } }) as Promise<{ storeCurrency: string | null } | null>)
+      .catch(() => null),
+  ]);
 
   return json({
     shop,
@@ -141,6 +145,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     metaConnected: !!(metaConn?.adAccountId),
     plan,
     historyDays: plan === "starter" ? 30 : plan === "growth" ? 90 : 365,
+    storeCurrency: trackingSettings?.storeCurrency ?? "USD",
   });
 }
 
@@ -209,15 +214,15 @@ function sourceTone(s: string): any {
   return "new";
 }
 
-// Detect the dominant currency from purchases
-function detectCurrency(purchases: any[]): string {
+// Detect the dominant currency from purchases, falling back to the stored setting
+function detectCurrency(purchases: any[], fallback = "USD"): string {
   const counts: Record<string, number> = {};
   for (const p of purchases) {
     const c = String(p.currency || "").toUpperCase();
     if (c) counts[c] = (counts[c] || 0) + 1;
   }
   const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  return entries[0]?.[0] || "USD";
+  return entries[0]?.[0] || fallback;
 }
 
 // ─── Chart component (inline alias — actual impl in ~/components/RevenueSpendChart) ──
@@ -248,7 +253,7 @@ export default function AppAnalytics() {
   const [window, setWindow] = useState<"7" | "14" | "30">("7");
   const locationBackfill = useFetcher<{ ok: boolean; updated: number; total: number; message?: string }>();
 
-  const currency = useMemo(() => detectCurrency(data.purchases30d), [data.purchases30d]);
+  const currency = useMemo(() => detectCurrency(data.purchases30d, data.storeCurrency), [data.purchases30d, data.storeCurrency]);
 
   const windowDays = Number(window);
   const windowCutoff = useMemo(() => {

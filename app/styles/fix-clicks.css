@@ -1,11 +1,11 @@
 /* app/styles/fix-clicks.css */
 /* Defensive CSS to prevent invisible overlays from blocking clicks */
-html, body {
+html {
   height: 100%;
 }
 
-#app, #root {
-  height: 100%;
+body, #app, #root {
+  min-height: 100%;
 }
 
 /* If some overlay is accidentally covering the page, this can help reveal it:

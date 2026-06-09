@@ -311,7 +311,7 @@ export default function GoogleAdsDetail() {
         String(c.impressions.toLocaleString()),
         String(c.clicks.toLocaleString()),
         c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + "%" : "—",
-        c.conversions.toFixed(2),
+        String(Math.round(c.conversions).toLocaleString()),
         fmtDecimal(c.value, currency),
         c.spend > 0 ? Math.round((c.value / c.spend) * 100) + "%" : "—",
         c.conversions > 0 && c.spend > 0 ? fmtDecimal(c.spend / c.conversions, currency) : "—",
@@ -436,9 +436,9 @@ export default function GoogleAdsDetail() {
             {
               label: "ROAS",
               value: kpis.roas !== null ? Math.round(kpis.roas * 100) + "%" : "—",
-              sub: `${kpis.conversions.toFixed(1)} conversions · ${fmtDecimal(kpis.value, currency)} value`,
+              sub: `${Math.round(kpis.conversions).toLocaleString()} conversions · ${fmtDecimal(kpis.value, currency)} value`,
             },
-            { label: "Conversions", value: kpis.conversions.toFixed(1) },
+            { label: "Conversions", value: Math.round(kpis.conversions).toLocaleString() },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 4, md: 4, lg: 3, xl: 3 }}>
               <Card>

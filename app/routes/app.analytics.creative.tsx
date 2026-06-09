@@ -335,7 +335,7 @@ export default function CreativeAnalyticsPage() {
             </InlineStack>
             {lastSync && (
               <Text as="p" variant="bodySm" tone="subdued">
-                Last sync: {new Date(lastSync).toLocaleString()}
+                Last sync: {new Date(lastSync).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} {new Date(lastSync).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
               </Text>
             )}
           </InlineStack>
