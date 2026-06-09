@@ -110,11 +110,17 @@ export default function MetaAdsDetail() {
   const [targetCpa, setTargetCpa] = useState<string>("");
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncPermError, setSyncPermError] = useState(false);
   const windowDays = Number(window);
+
+  function isPermissionError(msg: string) {
+    return msg.includes("#200") || msg.toLowerCase().includes("ads_management") || msg.toLowerCase().includes("ads_read") || msg.toLowerCase().includes("permission");
+  }
 
   async function handleSync() {
     setSyncing(true);
     setSyncMessage(null);
+    setSyncPermError(false);
     try {
       const res = await authFetch("/api/meta/sync", {
         method: "POST",
@@ -127,14 +133,21 @@ export default function MetaAdsDetail() {
       if (result.ok) {
         setSyncMessage(`✓ Synced ${result.campaigns || 0} campaigns, ${result.ads || 0} ads`);
         revalidator.revalidate();
+        setTimeout(() => setSyncMessage(null), 5000);
       } else {
-        setSyncMessage(`✗ ${result.error || "Sync failed"}`);
+        const errMsg = result.error || "Sync failed";
+        if (isPermissionError(errMsg)) {
+          setSyncPermError(true);
+        } else {
+          setSyncMessage(`✗ ${errMsg}`);
+          setTimeout(() => setSyncMessage(null), 8000);
+        }
       }
     } catch (e: any) {
       setSyncMessage(`✗ ${e.message || "Sync failed"}`);
+      setTimeout(() => setSyncMessage(null), 8000);
     }
     setSyncing(false);
-    setTimeout(() => setSyncMessage(null), 5000);
   }
 
   const windowCutoff = useMemo(() => {
@@ -367,7 +380,33 @@ export default function MetaAdsDetail() {
       <BlockStack gap="600">
 
         {/* Sync status */}
-        {syncMessage && (
+        {syncPermError && (
+          <div style={{ padding: "16px 20px", borderRadius: 10, background: "#fef2f2", border: "1.5px solid #fecaca" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+              <span style={{ fontSize: 22, flexShrink: 0 }}>🔒</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#991b1b" }}>Missing Meta permissions — reconnect required</p>
+                <p style={{ margin: "4px 0 12px", fontSize: 13, color: "#7f1d1d" }}>
+                  Your connected Meta account hasn't granted <strong>ads_management</strong> and <strong>ads_read</strong> permissions.
+                  This happens when the original connection was made without those scopes.
+                  Reconnecting will request the correct permissions.
+                </p>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <Link
+                    to="/app/integrations/meta"
+                    style={{ display: "inline-block", background: "#dc2626", color: "#fff", borderRadius: 8, padding: "9px 18px", fontWeight: 700, fontSize: 13, textDecoration: "none" }}
+                  >
+                    Reconnect Meta →
+                  </Link>
+                  <button onClick={() => setSyncPermError(false)} style={{ background: "transparent", border: "1px solid #fca5a5", borderRadius: 8, padding: "9px 14px", color: "#991b1b", fontSize: 13, cursor: "pointer" }}>
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {syncMessage && !syncPermError && (
           <div style={{
             padding: "12px 16px",
             borderRadius: 8,

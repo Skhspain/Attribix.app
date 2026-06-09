@@ -70,6 +70,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
     authUrl.searchParams.set("state", state);
     authUrl.searchParams.set("config_id", BUSINESS_LOGIN_CONFIG_ID);
     authUrl.searchParams.set("response_type", "code");
+    // Request the scopes we need — Business Login config may add more;
+    // explicitly listing them here ensures they're requested even if config is missing them
+    authUrl.searchParams.set("scope", [
+      "ads_read",
+      "ads_management",
+      "business_management",
+      "pages_show_list",
+    ].join(","));
     return redirect(authUrl.toString());
   }
 
