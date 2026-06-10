@@ -10,10 +10,14 @@ import {
   useLoaderData,
 } from "@remix-run/react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
+import appStyles from "~/styles/fix-clicks.css?url";
 
 import AppBridgeProvider from "~/components/AppBridgeProvider";
 
-export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
+export const links = () => [
+  { rel: "stylesheet", href: polarisStyles },
+  { rel: "stylesheet", href: appStyles },
+];
 
 // Minimal: expose API key to the browser for App Bridge Provider
 export async function loader() {

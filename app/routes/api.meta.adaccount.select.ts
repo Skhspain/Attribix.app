@@ -86,6 +86,54 @@ export async function action({ request }: ActionFunctionArgs) {
     },
   });
 
+  // ── Auto-populate fbPixelId from the selected ad account ─────────────────
+  // Every time the merchant picks (or changes) their ad account, fetch the
+  // pixels attached to it and save the first one to trackingSettings.fbPixelId.
+  // This keeps Settings → Tracking & Attribution in sync automatically so
+  // the CAPI always sends to the correct pixel without any manual step.
+  const accessToken = saved.accessToken && saved.accessToken !== "__PENDING__"
+    ? saved.accessToken
+    : null;
+
+  if (accessToken) {
+    try {
+      const pixelRes = await fetch(
+        `https://graph.facebook.com/v20.0/${adAccountId}/adspixels?fields=id,name&access_token=${accessToken}`
+      );
+      const pixelData = await pixelRes.json() as { data?: Array<{ id: string; name: string }> };
+      const firstPixel = pixelData?.data?.[0];
+
+      if (firstPixel?.id) {
+        const anyDb = db as any;
+        const existing = await anyDb.trackingSettings?.findUnique?.({
+          where: { shop },
+          select: { fbToken: true },
+        }).catch(() => null);
+
+        await anyDb.trackingSettings?.upsert?.({
+          where: { shop },
+          create: {
+            shop,
+            fbPixelId: firstPixel.id,
+            // Only seed the token if nothing is set; merchant may have a
+            // proper non-expiring CAPI token they generated in Events Manager.
+            fbToken: accessToken,
+          },
+          update: {
+            fbPixelId: firstPixel.id,
+            // Update token only if empty — don't overwrite a manually-set CAPI token.
+            ...(existing?.fbToken ? {} : { fbToken: accessToken }),
+          },
+        });
+
+        console.log(`[meta/adaccount/select] auto-saved pixel ${firstPixel.id} (${firstPixel.name}) for ${shop}`);
+      }
+    } catch (pixelErr: any) {
+      // Non-fatal — ad account was still saved, pixel sync just failed.
+      console.error("[meta/adaccount/select] pixel auto-sync failed:", pixelErr?.message);
+    }
+  }
+
   return json({
     ok: true,
     shop: saved.shop,

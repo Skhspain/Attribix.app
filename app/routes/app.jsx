@@ -1,6 +1,6 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
-import { Outlet, useLoaderData } from "@remix-run/react";
+import { Outlet, useLoaderData, useNavigation } from "@remix-run/react";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import shopify, { authenticate } from "~/shopify.server";
 
@@ -35,6 +35,27 @@ async function ensureScriptTags(admin) {
   }
 }
 
+// Throttle per-shop setup (webhook registration + script tags) so these
+// expensive Shopify API calls don't block every single page navigation.
+// One run per shop per hour per server process is more than enough.
+const lastSetupMs = new Map();
+const SETUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+function runSetupFireAndForget(shop, session, admin) {
+  const now = Date.now();
+  const last = lastSetupMs.get(shop) ?? 0;
+  if (now - last < SETUP_INTERVAL_MS) return;
+  lastSetupMs.set(shop, now);
+
+  // Fire-and-forget — never await; page response is not blocked
+  shopify.registerWebhooks({ session }).catch((e) =>
+    console.error("[app] webhook reg error:", e?.message)
+  );
+  ensureScriptTags(admin).catch((e) =>
+    console.error("[app] scriptTag error:", e?.message)
+  );
+}
+
 // Partner / development stores that bypass the billing gate.
 // Their plans are managed directly via the Shopify Partner Dashboard.
 // Once their subscription is active, getShopPlan() detects it automatically.
@@ -48,8 +69,9 @@ const PARTNER_SHOPS = new Set([
 
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
-  await shopify.registerWebhooks({ session });
-  await ensureScriptTags(admin);
+  // Run webhook registration + script tag setup at most once per hour.
+  // Non-blocking — response is not delayed by these Shopify API calls.
+  runSetupFireAndForget(session.shop, session, admin);
 
   // Gate: require an active plan — redirect to billing page if none selected.
   // Partner shops bypass this gate; their billing is managed via Partner Dashboard.
@@ -82,23 +104,54 @@ export function shouldRevalidate({
   formAction,
   formMethod,
   actionResult,
+  currentUrl,
+  nextUrl,
   defaultShouldRevalidate,
 }) {
   const normalizedMethod =
     typeof formMethod === "string" ? formMethod.toUpperCase() : "";
+  const isPost = normalizedMethod === "POST";
+
+  // Settings POST: skip if the action already succeeded
   const isSettingsPost =
-    normalizedMethod === "POST" &&
+    isPost &&
     typeof formAction === "string" &&
     formAction.includes("/app/settings");
   if (isSettingsPost && actionResult?.ok) return false;
-  return defaultShouldRevalidate;
+
+  // Always re-run for POSTs (form submissions may change billing state)
+  if (isPost) return true;
+
+  // Always re-run when entering or leaving the billing page
+  const involvesBilling =
+    (currentUrl?.pathname ?? "").includes("/billing") ||
+    (nextUrl?.pathname ?? "").includes("/billing");
+  if (involvesBilling) return true;
+
+  // For regular GET navigations between app pages, skip re-running the
+  // top-level loader. The billing gate, webhook reg, and script tag checks
+  // were already done when the app first loaded. Rerunning them on every
+  // click is the main source of the per-navigation Shopify API calls.
+  return false;
 }
 
 export default function AppRoute() {
   const { apiKey } = useLoaderData();
+  const navigation = useNavigation();
+  const isNavigating = navigation.state !== "idle";
 
   return (
     <AppProvider apiKey={apiKey} isEmbeddedApp>
+      {isNavigating && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0,
+          height: 3, background: "#008060",
+          zIndex: 9999,
+          animation: "attribix-progress 1.2s ease-in-out infinite",
+          borderRadius: "0 2px 2px 0",
+          transformOrigin: "left center",
+        }} />
+      )}
       {/* ui-nav-menu is an App Bridge web component — renders the embedded app sidebar nav */}
       <ui-nav-menu>
         <a href="/app" rel="home">Overview</a>

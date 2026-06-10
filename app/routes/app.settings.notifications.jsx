@@ -3,7 +3,7 @@ import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import {
-  BlockStack, Button, Card, Checkbox, Divider, InlineStack,
+  Banner, BlockStack, Button, Card, Checkbox, Divider, InlineStack,
   Page, Text, TextField,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
@@ -81,6 +81,15 @@ export default function NotificationsSettings() {
 
           <div style={{ marginTop: 24 }}>
             <BlockStack gap="500">
+
+              {(weeklyDigest || alertLowRoas || alertNewOrders) && !notifyEmail.trim() && (
+                <Banner
+                  tone="warning"
+                  title="No email address set"
+                >
+                  You have notifications enabled but no email address saved. Add an email address below so Attribix knows where to send reports and alerts.
+                </Banner>
+              )}
 
               <Card>
                 <BlockStack gap="400">

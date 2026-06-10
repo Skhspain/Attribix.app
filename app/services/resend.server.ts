@@ -89,10 +89,13 @@ export async function sendEmailBatch(
   return { sent, failed, errors };
 }
 
-export function buildUnsubscribeFooter(unsubscribeUrl: string): string {
+export function buildUnsubscribeFooter(unsubscribeUrl: string, footerText?: string): string {
+  const storeFooter = footerText?.trim()
+    ? `<p style="margin:0 0 6px;">${footerText.replace(/\n/g, "<br>")}</p>`
+    : "";
   return `
 <div style="text-align:center;padding:24px 0 16px;border-top:1px solid #e5e5e5;margin-top:32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:12px;color:#9ca3af;">
-  <p style="margin:0 0 8px;">
+  ${storeFooter}<p style="margin:0 0 8px;">
     You're receiving this because you subscribed to updates from this store.
   </p>
   <p style="margin:0;">

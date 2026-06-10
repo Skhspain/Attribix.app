@@ -19,7 +19,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (!conn.adCustomerId) {
-    return json({ ok: false, error: "No selected Google Ads customer ID (adCustomerId is null)" }, { status: 400 });
+    return json({ ok: false, error: "No Google Ads account selected. Go to Integrations → Google and complete the setup by selecting your ad account." }, { status: 400 });
   }
 
   // Auto-refresh expired token

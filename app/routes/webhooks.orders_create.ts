@@ -225,6 +225,13 @@ export async function action({ request }: ActionFunctionArgs) {
         enrollInFlows({ shop, trigger: "order_created", email: customerEmail, firstName, triggeredBy: orderId ?? undefined }).catch(() => null);
       }
 
+      // Look up per-shop pixel credentials so each merchant's conversions go
+      // to their own Meta pixel, not the global env-var fallback.
+      const shopTrackingSettings = await (db as any).trackingSettings?.findUnique?.({
+        where: { shop },
+        select: { fbPixelId: true, fbToken: true },
+      }).catch(() => null);
+
       try {
         const conversionResult = await sendServerConversions({
           eventName: "Purchase",
@@ -245,6 +252,8 @@ export async function action({ request }: ActionFunctionArgs) {
           phone,
           fbclid: utm.fbclid,
           externalId: visitorId || email || null,
+          shopPixelId: shopTrackingSettings?.fbPixelId,
+          shopToken: shopTrackingSettings?.fbToken,
         });
 
         console.log("[webhooks.orders_create] server conversions", conversionResult);

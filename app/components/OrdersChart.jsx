@@ -82,7 +82,16 @@ export function OrdersChart({ data, currency = "USD" }) {
     ? [{ v: 0, y: yPos(0) }]
     : [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: maxVal * f, y: yPos(maxVal * f) }));
   const labelStep = n <= 14 ? 2 : n <= 31 ? 7 : 14;
-  const xLabels = data.map((d, i) => ({ i, label: d.label, x: xPos(i) })).filter((_, i) => i % labelStep === 0 || i === n - 1);
+  const xLabels = data.map((d, i) => ({ i, label: d.label, x: xPos(i) })).filter((_, i) => {
+    if (i % labelStep === 0) return true;
+    if (i === n - 1) {
+      // Only show the last label if it is far enough from the previous step mark to avoid collision.
+      // "Far enough" = at least half a labelStep gap from the previous regular tick.
+      const prevStep = Math.floor((n - 2) / labelStep) * labelStep;
+      return (n - 1 - prevStep) >= Math.ceil(labelStep / 2);
+    }
+    return false;
+  });
 
   function handleMouseMove(e) {
     const svg = svgRef.current;

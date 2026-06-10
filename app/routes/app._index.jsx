@@ -247,7 +247,10 @@ export async function loader({ request }) {
   const pixelStatus = hoursSincePixel === null ? "never" : hoursSincePixel < 24 ? "healthy" : hoursSincePixel < 168 ? "warning" : "error";
 
   const metaConnected = !!(metaConn?.accessToken && metaConn.accessToken !== "__PENDING__" && metaConn.adAccountId);
+  // OAuth done but ad account not yet selected — show a warning badge rather than "not connected"
+  const metaPartialConnect = !!(metaConn?.accessToken && metaConn.accessToken !== "__PENDING__" && !metaConn.adAccountId);
   const googleConnected = !!(googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && googleConn.adCustomerId);
+  const googlePartialConnect = !!(googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && !googleConn.adCustomerId);
 
   const reqUrl = new URL(request.url);
   if (reqUrl.searchParams.get("skip") === "1") {
@@ -340,7 +343,8 @@ export async function loader({ request }) {
     metaKpis, bestAd, sourceSummary,
     pixelStatus,
     pixelLastSeen: pixelLastSeen?.toISOString() ?? null,
-    metaConnected, googleConnected,
+    metaConnected, metaPartialConnect,
+    googleConnected, googlePartialConnect,
     isNewInstall,
     recentPurchases,
     attributionModel: settings?.attributionModel ?? "last_touch",
@@ -881,12 +885,12 @@ export default function AppIndex() {
             </BlockStack>
             <InlineStack gap="150" wrap={false}>
               <Badge tone={trackingOk ? "success" : "critical"}>{trackingOk ? "Tracking active" : "Pixel not seen"}</Badge>
-              <Badge tone={data.metaConnected ? "success" : "new"}>Meta {data.metaConnected ? "connected" : "not connected"}</Badge>
-              <Badge tone={data.googleConnected ? "success" : "new"}>Google {data.googleConnected ? "connected" : "not connected"}</Badge>
+              <Badge tone={data.metaConnected ? "success" : data.metaPartialConnect ? "warning" : "new"}>Meta {data.metaConnected ? "connected" : data.metaPartialConnect ? "setup incomplete" : "not connected"}</Badge>
+              <Badge tone={data.googleConnected ? "success" : data.googlePartialConnect ? "warning" : "new"}>Google {data.googleConnected ? "connected" : data.googlePartialConnect ? "setup incomplete" : "not connected"}</Badge>
             </InlineStack>
           </InlineStack>
           {!allSetUp && (
-            <Button variant="primary" size="slim" onClick={() => navigate("/app/ads")}>Finish setup</Button>
+            <Button variant="primary" size="slim" url="/app/ads">Finish setup</Button>
           )}
         </div>
 

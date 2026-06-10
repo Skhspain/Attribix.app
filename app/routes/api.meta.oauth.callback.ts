@@ -92,8 +92,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const hasSavedAccount = !!currentConn?.adAccountId;
 
     if (hasSavedAccount) {
-      // User already picked an account — don't overwrite it on reconnect
+      // User already picked an account — don't overwrite it on reconnect.
       console.log(`[meta-oauth] keeping existing adAccountId: ${currentConn.adAccountId}`);
+
+      // However, if trackingSettings.fbToken is empty (merchant never configured
+      // a CAPI token manually), seed it with the fresh OAuth token so CAPI works
+      // without requiring any manual step in Settings → Tracking & Attribution.
+      try {
+        const anyDb = db as any;
+        const existing = await anyDb.trackingSettings?.findUnique?.({
+          where: { shop },
+          select: { fbToken: true },
+        }).catch(() => null);
+
+        if (existing && !existing.fbToken) {
+          await anyDb.trackingSettings?.update?.({
+            where: { shop },
+            data: { fbToken: token.access_token },
+          }).catch(() => null);
+          console.log(`[meta-oauth] seeded empty fbToken for reconnected shop ${shop}`);
+        }
+      } catch (e) {
+        // Non-fatal — reconnect itself succeeded
+      }
     } else {
       const { fetchUserAdAccounts } = await import("~/services/metaGraph.server");
       const accounts = await fetchUserAdAccounts({ accessToken: token.access_token });

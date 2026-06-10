@@ -20,6 +20,10 @@ type SendServerConversionInput = {
   fbp?: string | null;
   gclid?: string | null;
   externalId?: string | null;
+  // Per-shop credentials — take precedence over global env vars.
+  // Populated from trackingSettings.fbPixelId / fbToken for multi-tenant correctness.
+  shopPixelId?: string | null;
+  shopToken?: string | null;
 };
 
 function sha256(value: string) {
@@ -94,8 +98,10 @@ export async function sendServerConversions(input: SendServerConversionInput) {
     google?: { ok: boolean; status?: number; body?: unknown; skipped?: boolean; reason?: string };
   } = {};
 
-  const metaPixelId = getMetaPixelId();
-  const metaAccessToken = getMetaAccessToken();
+  // Per-shop credentials take precedence over global env vars so that in a
+  // multi-tenant deployment each shop's events go to the right Meta pixel.
+  const metaPixelId = input.shopPixelId?.trim() || getMetaPixelId();
+  const metaAccessToken = input.shopToken?.trim() || getMetaAccessToken();
 
   if (metaPixelId && metaAccessToken) {
     try {

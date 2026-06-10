@@ -11,14 +11,14 @@ import {
 import { useState } from "react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const url = new URL(request.url);
   const days = Number(url.searchParams.get("days") || 30);
   const since = new Date(Date.now() - days * 86400_000);
   const anyDb = db as any;
 
-  const [metaAds, metaCampaigns, adSpend, metaConn, googleConn] = await Promise.all([
+  const [metaAds, metaCampaigns, adSpend, metaConn, googleConn, trackingSettings] = await Promise.all([
     anyDb.metaAdDailyInsight?.findMany?.({
       where: { shop, date: { gte: since } },
       select: {
@@ -46,6 +46,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     db.metaConnection.findUnique({ where: { shop }, select: { adAccountId: true, lastSyncedAt: true } }).catch(() => null),
     anyDb.googleConnection?.findUnique?.({ where: { shop }, select: { adCustomerId: true } }).catch(() => null),
+    anyDb.trackingSettings?.findUnique?.({ where: { shop }, select: { storeCurrency: true } }).catch(() => null),
   ]);
 
   // ── Aggregate meta ads by adId ──
@@ -150,12 +151,24 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const googleConnected = !!(googleConn?.adCustomerId);
   const lastSync = metaConn?.lastSyncedAt ?? null;
 
+  // Fetch store currency from Shopify as the authoritative source;
+  // fall back to user-configured setting, then "USD"
+  let storeCurrency: string = (trackingSettings as any)?.storeCurrency ?? "USD";
+  try {
+    const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
+    const shopData = await shopRes.json();
+    storeCurrency = shopData?.data?.shop?.currencyCode || storeCurrency;
+  } catch {
+    // non-fatal — use DB/fallback value
+  }
+
   return json({
     adRows: adRows.slice(0, 50),
     campaignRows: campaignRows.slice(0, 30),
     dailyTrend,
     totalSpend, totalRevFromAds, totalImpressions, totalClicks, totalPurchases,
     metaConnected, googleConnected, lastSync, days,
+    storeCurrency,
   });
 }
 
@@ -266,7 +279,7 @@ export default function CreativeAnalyticsPage() {
   const overallRoas = totalSpend > 0 ? totalRevFromAds / totalSpend : 0;
   const overallCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
   const overallCpa = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
-  const currency = "USD";
+  const currency = data.storeCurrency || "USD";
 
   const maxCampSpend = Math.max(...campaignRows.map(c => c.spend), 1);
   const maxAdSpend = Math.max(...adRows.map(a => a.spend), 1);

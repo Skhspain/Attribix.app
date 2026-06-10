@@ -23,7 +23,7 @@ import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -238,7 +238,7 @@ export default function GoogleAdsDetail() {
     };
   }, [campaigns]);
 
-  const currency = "NOK";
+  const currency = data.storeCurrency || "NOK";
 
   // Chart data — daily spend vs conversion value
   const chartData = useMemo(() => {
@@ -334,7 +334,7 @@ export default function GoogleAdsDetail() {
           content: syncing ? "Syncing…" : "Sync now",
           onAction: handleSync,
           loading: syncing,
-          disabled: syncing,
+          disabled: syncing || !data.hasConnection,
         },
       ]}
       primaryAction={

@@ -227,6 +227,13 @@ export async function sendCampaign(campaignId: string): Promise<{
     }
   }
 
+  // Fetch newsletter settings for footer text (separate from monthly-limit check above)
+  const nlSettings = await anyDb.newsletterSettings?.findUnique?.({
+    where: { shop: campaign.shop },
+    select: { footerText: true },
+  }).catch(() => null);
+  const footerText: string = (nlSettings?.footerText ?? "").trim();
+
   // Mark as sending
   await anyDb.newsletterCampaign.update({
     where: { id: campaignId },
@@ -251,20 +258,25 @@ export async function sendCampaign(campaignId: string): Promise<{
   const emails: BatchEmailItem[] = subscribers.map((sub) => {
     const token = generateUnsubscribeToken(campaign.shop, sub.email);
     const unsubUrl = `${APP_URL}/newsletter/unsubscribe?token=${token}`;
-    const footer = buildUnsubscribeFooter(unsubUrl);
+    const footer = buildUnsubscribeFooter(unsubUrl, footerText);
 
     // Personalise: replace all template placeholders
     const firstName = sub.firstName || "";
     const shopDomain = campaign.shop.replace(".myshopify.com", "");
     const shopUrl = `https://${campaign.shop.includes(".") ? campaign.shop : campaign.shop + ".myshopify.com"}`;
 
+    const currentYear = new Date().getFullYear().toString();
     let html = campaign.htmlContent
       .replace(/\{\{first_name\}\}/gi, firstName)
       .replace(/\{\{name\}\}/gi, firstName)
       .replace(/\{\{email\}\}/gi, sub.email)
       .replace(/\{\{shop_url\}\}/gi, shopUrl)
       .replace(/\{\{shop\}\}/gi, shopDomain)
-      .replace(/\{\{unsubscribe_url\}\}/gi, `${APP_URL}/newsletter/unsubscribe?token=${generateUnsubscribeToken(campaign.shop, sub.email)}`);
+      .replace(/\{\{unsubscribe_url\}\}/gi, `${APP_URL}/newsletter/unsubscribe?token=${generateUnsubscribeToken(campaign.shop, sub.email)}`)
+      // Replace {year} / {{year}} and the common typo {year}} with the actual year
+      .replace(/\{year\}\}/g, currentYear) // catches {year}} typo first
+      .replace(/\{\{year\}\}/gi, currentYear)
+      .replace(/\{year\}/gi, currentYear);
 
     // Wrap all http(s) links with click-tracking redirect (skip mailto: and #)
     html = html.replace(

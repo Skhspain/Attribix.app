@@ -878,6 +878,42 @@ export async function action({ request }: ActionFunctionArgs) {
         (type || "").toLowerCase(),
       );
 
+    // ── InitiateCheckout server-side CAPI ────────────────────────────────
+    // checkout_started events carry the customer's email — forward to Meta CAPI
+    // so that the InitiateCheckout EMQ benefits from the same server-side match
+    // quality as Purchase (where we already have email from the order).
+    const isCheckoutStart =
+      ["checkout_started", "checkout_start", "initiate_checkout"].includes((eventName || "").toLowerCase()) ||
+      ["checkout_started", "checkout_start", "initiate_checkout"].includes((type || "").toLowerCase());
+
+    if (isCheckoutStart && possibleEmail) {
+      try {
+        await sendServerConversions({
+          eventName: "InitiateCheckout",
+          eventTime: Math.floor(Date.now() / 1000),
+          eventId: eventId || `checkout_start_${sessionId}`,
+          value: possibleTotal ?? undefined,
+          currency: possibleCurrency ?? "USD",
+          url: url || undefined,
+          sourceUrl: url || undefined,
+          actionSource: "website",
+          shop: resolvedShop,
+          ip,
+          userAgent: ua,
+          email: possibleEmail,
+          phone: possiblePhone ?? undefined,
+          fbclid,
+          fbp,
+          fbc,
+          externalId: visitorId,
+          shopPixelId: matchedSettings?.fbPixelId,
+          shopToken: matchedSettings?.fbToken,
+        });
+      } catch (e: any) {
+        console.error("[/api/track] InitiateCheckout CAPI error:", e?.message);
+      }
+    }
+
     if (possibleOrderId && isPurchaseLike) {
       const fallbackContext = await findLatestBrowserContext({
         shop: resolvedShop,
@@ -1103,6 +1139,8 @@ export async function action({ request }: ActionFunctionArgs) {
           fbc,
           gclid,
           externalId: visitorId,
+          shopPixelId: matchedSettings?.fbPixelId,
+          shopToken: matchedSettings?.fbToken,
         });
 
         console.log("[/api/track] server conversions", conversionResult);

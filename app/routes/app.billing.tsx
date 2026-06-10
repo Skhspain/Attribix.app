@@ -1,34 +1,61 @@
 // app/routes/app.billing.tsx
-// Billing gate — uses shopify-app-remix's exit-iframe mechanism to redirect
-// the merchant to Shopify's managed pricing page without needing client-side JS.
+// Billing gate landing page. Shown when a shop has no active plan.
+// Renders a UI within the app (so App Bridge is loaded) and lets the user
+// click a button to navigate to Shopify's managed pricing page.
+// Using a client-side button avoids the server-side exit-iframe redirect chain,
+// which caused a blank "200" screen due to popup-blocker interference with
+// the automatic window.open() call.
 
-import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData } from "@remix-run/react";
+import { BlockStack, Button, Page, Text } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
-
   const shopHandle = session.shop.replace(".myshopify.com", "");
-  // Shopify Managed Pricing URL uses the app *handle* (from shopify.app.toml),
-  // NOT the API key / client_id. Using the API key causes Shopify to bounce
-  // the merchant back to the app without showing plan selection.
   const APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || "attribix-app";
   const pricingUrl = `https://admin.shopify.com/store/${shopHandle}/charges/${APP_HANDLE}/pricing_plans`;
-
-  // Use shopify-app-remix's exit-iframe redirect so App Bridge properly
-  // navigates the top-level Shopify admin window to the pricing page.
-  // Direct window.top manipulation is blocked in Shopify's sandboxed iframe.
-  const url = new URL(request.url);
-  const shop = session.shop;
-  const host = url.searchParams.get("host") ?? "";
-
-  console.log(`[billing] redirecting ${shop} → ${pricingUrl} (host=${host ? "present" : "missing"}, handle=${APP_HANDLE})`);
-
-  const exitIframeParams = new URLSearchParams({ shop, host, exitIframe: pricingUrl });
-  throw redirect(`/auth/exit-iframe?${exitIframeParams.toString()}`);
+  return json({ pricingUrl });
 }
 
-// No component needed — the loader always redirects.
-export default function BillingRedirect() {
-  return null;
+export default function BillingPage() {
+  const { pricingUrl } = useLoaderData<typeof loader>();
+
+  function handleGoToBilling() {
+    // window.open with _top is the correct way to escape the Shopify iframe.
+    // Calling it from a click event avoids popup-blocker restrictions.
+    window.open(pricingUrl, "_top");
+  }
+
+  return (
+    <Page title="Choose a Plan">
+      <div
+        style={{
+          maxWidth: 480,
+          margin: "80px auto",
+          textAlign: "center",
+        }}
+      >
+        <BlockStack gap="500" inlineAlign="center">
+          <div style={{ fontSize: 52 }}>📋</div>
+          <BlockStack gap="200">
+            <Text as="h2" variant="headingXl">
+              Select a plan to continue
+            </Text>
+            <Text as="p" variant="bodyMd" tone="subdued">
+              Attribix requires an active subscription. Choose a plan that fits
+              your store and start tracking revenue attribution today.
+            </Text>
+          </BlockStack>
+          <Button variant="primary" size="large" onClick={handleGoToBilling}>
+            View pricing plans →
+          </Button>
+          <Text as="p" variant="bodySm" tone="subdued">
+            You&apos;ll be taken to Shopify&apos;s secure billing page.
+          </Text>
+        </BlockStack>
+      </div>
+    </Page>
+  );
 }

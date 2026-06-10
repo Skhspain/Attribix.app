@@ -228,7 +228,7 @@ export default function NewsletterSettingsPage() {
                     <Text as="p" variant="bodySm" tone="subdued">This color will be used for buttons and links.</Text>
                   </BlockStack>
 
-                  <TextField label="Email footer text" value={footerText} onChange={setFooterText} multiline={3} autoComplete="off" placeholder={"© {year}} Demo Store. All rights reserved.\n123 Example Street, Oslo, Norway"} helpText="This will appear in the footer of your emails." />
+                  <TextField label="Email footer text" value={footerText} onChange={setFooterText} multiline={3} autoComplete="off" placeholder={"© 2024 Your Store Name. All rights reserved.\nYour Address, City, Country"} helpText="This will appear in the footer of your emails." />
                 </BlockStack>
               </Card>
 
