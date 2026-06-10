@@ -151,6 +151,99 @@ export async function fetchUserAdAccounts(args: { accessToken: string }) {
 }
 
 /**
+ * Fetch the single best pixel for an ad account.
+ *
+ * Strategy (in order):
+ *  1. Business-owned pixels via /me/businesses → owned_pixels
+ *     These are pixels the merchant OWNS in their Business Manager.
+ *     This avoids third-party app pixels (e.g. PBA Pixel) that share the ad
+ *     account but were created by another app, not the store owner.
+ *  2. Fallback: /{adAccountId}/adspixels — all pixels connected to the account.
+ */
+export async function fetchBestPixel(args: {
+  accessToken: string;
+  adAccountId: string;
+}): Promise<{ id: string; name: string } | null> {
+  // Try 1: business-owned pixels
+  try {
+    const bizRes = await fetch(
+      `https://graph.facebook.com/v20.0/me/businesses?fields=owned_pixels{id,name}&access_token=${args.accessToken}`
+    );
+    const bizData = await bizRes.json() as any;
+    const bizPixels: Array<{ id: string; name: string }> = (bizData?.data || [])
+      .flatMap((b: any) => b.owned_pixels?.data || []);
+    if (bizPixels[0]?.id) {
+      console.log(`[meta/fetchBestPixel] using business-owned pixel: ${bizPixels[0].name} (${bizPixels[0].id})`);
+      return { id: bizPixels[0].id, name: bizPixels[0].name };
+    }
+  } catch (e: any) {
+    console.error("[meta/fetchBestPixel] business pixel lookup failed:", e?.message);
+  }
+
+  // Try 2: adspixels fallback
+  try {
+    const actId = args.adAccountId.startsWith("act_") ? args.adAccountId : `act_${args.adAccountId}`;
+    const pixRes = await fetch(
+      `https://graph.facebook.com/v20.0/${actId}/adspixels?fields=id,name&access_token=${args.accessToken}`
+    );
+    const pixData = await pixRes.json() as any;
+    if (pixData?.data?.[0]?.id) {
+      console.log(`[meta/fetchBestPixel] fallback adspixels: ${pixData.data[0].name} (${pixData.data[0].id})`);
+      return { id: pixData.data[0].id, name: pixData.data[0].name };
+    }
+  } catch (e: any) {
+    console.error("[meta/fetchBestPixel] adspixels fallback failed:", e?.message);
+  }
+
+  return null;
+}
+
+/**
+ * Fetch all available pixels, business-owned ones first so the merchant's
+ * store pixel surfaces at the top of any selection UI.
+ */
+export async function fetchAllPixels(args: {
+  accessToken: string;
+  adAccountId: string;
+}): Promise<Array<{ id: string; name: string }>> {
+  const all: Array<{ id: string; name: string }> = [];
+  const seenIds = new Set<string>();
+
+  // Business-owned pixels first (de-duplicated)
+  try {
+    const bizRes = await fetch(
+      `https://graph.facebook.com/v20.0/me/businesses?fields=owned_pixels{id,name}&access_token=${args.accessToken}`
+    );
+    const bizData = await bizRes.json() as any;
+    const bizPixels: Array<{ id: string; name: string }> = (bizData?.data || [])
+      .flatMap((b: any) => b.owned_pixels?.data || []);
+    for (const p of bizPixels) {
+      if (p.id && !seenIds.has(p.id)) {
+        all.push({ id: p.id, name: p.name });
+        seenIds.add(p.id);
+      }
+    }
+  } catch {}
+
+  // Then any ad-account pixels not already included
+  try {
+    const actId = args.adAccountId.startsWith("act_") ? args.adAccountId : `act_${args.adAccountId}`;
+    const pixRes = await fetch(
+      `https://graph.facebook.com/v20.0/${actId}/adspixels?fields=id,name&access_token=${args.accessToken}`
+    );
+    const pixData = await pixRes.json() as any;
+    for (const p of (pixData?.data || [])) {
+      if (p.id && !seenIds.has(p.id)) {
+        all.push({ id: p.id, name: p.name || p.id });
+        seenIds.add(p.id);
+      }
+    }
+  } catch {}
+
+  return all;
+}
+
+/**
  * Create a new Meta Pixel in an ad account.
  */
 export async function createMetaPixel(args: { accessToken: string; adAccountId: string; name: string }) {

@@ -401,6 +401,9 @@ function MetaIntegrationsInner({ data }) {
                   </Form>
                 )}
               </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Please wait 10 seconds after connecting for the page to load.
+              </Text>
             </BlockStack>
           </Card>
         </Layout.Section>
@@ -448,14 +451,7 @@ function MetaIntegrationsInner({ data }) {
                       ) : (
                         <div style={{ fontSize: 13, color: "#9ca3af", marginBottom: 8 }}>Not selected</div>
                       )}
-                      {!showPixelSelector ? (
-                        <button
-                          onClick={() => setShowPixelSelector(true)}
-                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
-                        >
-                          Change pixel
-                        </button>
-                      ) : pixelsLoading ? (
+                      {pixelsLoading ? (
                         <InlineStack gap="200" blockAlign="center">
                           <Spinner size="small" />
                           <Text as="p" variant="bodySm" tone="subdued">Loading pixels…</Text>
@@ -464,7 +460,7 @@ function MetaIntegrationsInner({ data }) {
                         <InlineStack gap="200" blockAlign="end" wrap={false}>
                           <div style={{ flex: 1 }}>
                             <Select
-                              label="Change pixel"
+                              label="Pixel"
                               labelHidden
                               options={[
                                 { label: "Select a pixel…", value: "" },
@@ -478,7 +474,23 @@ function MetaIntegrationsInner({ data }) {
                             {pixelSaved ? "Saved ✓" : "Save"}
                           </Button>
                         </InlineStack>
-                      ) : null}
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setPixelsLoading(true);
+                            authFetch("/api/meta/pixels")
+                              .then(r => r.json())
+                              .then(result => {
+                                if (result.ok && result.pixels?.length > 0) setAvailablePixels(result.pixels);
+                              })
+                              .catch(() => {})
+                              .finally(() => setPixelsLoading(false));
+                          }}
+                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
+                        >
+                          Change pixel
+                        </button>
+                      )}
                     </div>
                     {data.connectedAssets.pixel
                       ? <Badge tone="success">Active</Badge>

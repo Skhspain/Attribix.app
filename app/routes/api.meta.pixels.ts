@@ -1,9 +1,12 @@
 // app/routes/api.meta.pixels.ts
-// Fetches available Meta Pixels from the connected ad account
+// Fetches available Meta Pixels for the connected ad account.
+// Business-owned pixels are returned first to surface the store's own pixel
+// at the top of any selection UI (avoids 3rd-party app pixels like PBA Pixel).
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import { db } from "~/db.server";
+import { fetchAllPixels } from "~/services/metaGraph.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -15,24 +18,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   try {
-    // Fetch pixels from the ad account
-    const actId = conn.adAccountId.startsWith("act_") ? conn.adAccountId : `act_${conn.adAccountId}`;
-    console.log("[meta/pixels] fetching pixels for", actId);
-    const res = await fetch(
-      `https://graph.facebook.com/v21.0/${actId}/adspixels?fields=id,name,is_unavailable&access_token=${conn.accessToken}`
-    );
-    const data = await res.json();
-    console.log("[meta/pixels] response:", JSON.stringify(data).slice(0, 300));
-    if (data.error) {
-      return json({ ok: false, error: data.error.message, pixels: [] });
-    }
-
-    const pixels = (data.data || []).map((p: any) => ({
-      id: p.id,
-      name: p.name || p.id,
-      unavailable: p.is_unavailable || false,
-    }));
-
+    const pixels = await fetchAllPixels({
+      accessToken: conn.accessToken,
+      adAccountId: conn.adAccountId,
+    });
+    console.log(`[meta/pixels] found ${pixels.length} pixel(s) for ${shop}`);
     return json({ ok: true, pixels });
   } catch (e: any) {
     return json({ ok: false, error: e.message, pixels: [] });

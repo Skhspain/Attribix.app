@@ -2,7 +2,7 @@
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import { exchangeMetaCodeForToken } from "~/services/metaGraph.server";
+import { exchangeMetaCodeForToken, fetchBestPixel } from "~/services/metaGraph.server";
 
 function ensureEmbeddedParams(urlPath: string, shop: string, host?: string, embedded?: string) {
   try {
@@ -95,9 +95,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       // User already picked an account — don't overwrite it on reconnect.
       console.log(`[meta-oauth] keeping existing adAccountId: ${currentConn.adAccountId}`);
 
-      // However, if trackingSettings.fbToken is empty (merchant never configured
-      // a CAPI token manually), seed it with the fresh OAuth token so CAPI works
-      // without requiring any manual step in Settings → Tracking & Attribution.
+      // On reconnect, re-detect the pixel for the existing ad account using the
+      // fresh token. This corrects stale/wrong pixel IDs (e.g. PBA Pixel selected
+      // during initial auto-detect). Also seed fbToken if it was previously empty.
       try {
         const anyDb = db as any;
         const existing = await anyDb.trackingSettings?.findUnique?.({
@@ -105,7 +105,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
           select: { fbToken: true },
         }).catch(() => null);
 
-        if (existing && !existing.fbToken) {
+        const adAccountId = currentConn?.adAccountId;
+        if (adAccountId) {
+          const bestPixel = await fetchBestPixel({ accessToken: token.access_token, adAccountId });
+          if (bestPixel?.id) {
+            await anyDb.trackingSettings?.upsert?.({
+              where: { shop },
+              create: { shop, fbPixelId: bestPixel.id, fbToken: token.access_token },
+              update: {
+                fbPixelId: bestPixel.id,
+                ...(existing?.fbToken ? {} : { fbToken: token.access_token }),
+              },
+            }).catch(() => null);
+            console.log(`[meta-oauth] reconnect: updated pixel to ${bestPixel.id} (${bestPixel.name}) for ${shop}`);
+          }
+        } else if (existing && !existing.fbToken) {
+          // No ad account yet — at least seed the token
           await anyDb.trackingSettings?.update?.({
             where: { shop },
             data: { fbToken: token.access_token },
@@ -125,18 +140,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
         data: { adAccountId: String(firstAccount.id) },
       });
 
-      // Auto-detect and save first pixel
+      // Auto-detect and save best pixel (business-owned first to avoid 3rd-party pixels)
       try {
-        const pixelUrl = `https://graph.facebook.com/v20.0/${firstAccount.id}/adspixels?fields=id,name&access_token=${token.access_token}`;
-        const pixelRes = await fetch(pixelUrl);
-        const pixelData = await pixelRes.json();
-        if (pixelData?.data?.[0]?.id) {
+        const bestPixel = await fetchBestPixel({ accessToken: token.access_token, adAccountId: firstAccount.id });
+        if (bestPixel?.id) {
           const anyDb = db as any;
           await anyDb.trackingSettings?.upsert?.({
             where: { shop },
-            create: { shop, fbPixelId: pixelData.data[0].id, fbToken: token.access_token },
-            update: { fbPixelId: pixelData.data[0].id, fbToken: token.access_token },
+            create: { shop, fbPixelId: bestPixel.id, fbToken: token.access_token },
+            update: { fbPixelId: bestPixel.id, fbToken: token.access_token },
           });
+          console.log(`[meta-oauth] auto-saved pixel ${bestPixel.id} (${bestPixel.name})`);
         }
       } catch (e) {
         console.error("[meta-oauth] pixel auto-detect failed:", e);

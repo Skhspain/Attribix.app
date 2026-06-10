@@ -3,6 +3,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { fetchBestPixel } from "~/services/metaGraph.server";
 
 function pickFirst(...vals: Array<string | null | undefined>) {
   for (const v of vals) {
@@ -97,11 +98,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (accessToken) {
     try {
-      const pixelRes = await fetch(
-        `https://graph.facebook.com/v20.0/${adAccountId}/adspixels?fields=id,name&access_token=${accessToken}`
-      );
-      const pixelData = await pixelRes.json() as { data?: Array<{ id: string; name: string }> };
-      const firstPixel = pixelData?.data?.[0];
+      // fetchBestPixel tries business-owned pixels first so we avoid picking
+      // third-party app pixels (e.g. PBA Pixel) that share the ad account.
+      const firstPixel = await fetchBestPixel({ accessToken, adAccountId });
 
       if (firstPixel?.id) {
         const anyDb = db as any;
