@@ -174,6 +174,8 @@ function MetaIntegrationsInner({ data }) {
         body: JSON.stringify({ fbPixelId: pixelId, fbToken: capiToken }),
       });
       setPixelSaved(true);
+      setShowPixelSelector(false);  // collapse dropdown after saving
+      revalidator.revalidate();     // refresh loader so displayed pixel name updates
       setTimeout(() => setPixelSaved(false), 3000);
     } catch (e) { console.error(e); }
     setPixelSaving(false);
@@ -456,6 +458,13 @@ function MetaIntegrationsInner({ data }) {
                           <Spinner size="small" />
                           <Text as="p" variant="bodySm" tone="subdued">Loading pixels…</Text>
                         </InlineStack>
+                      ) : !showPixelSelector ? (
+                        <button
+                          onClick={() => setShowPixelSelector(true)}
+                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
+                        >
+                          Change pixel
+                        </button>
                       ) : availablePixels.length > 0 ? (
                         <InlineStack gap="200" blockAlign="end" wrap={false}>
                           <div style={{ flex: 1 }}>
@@ -474,23 +483,7 @@ function MetaIntegrationsInner({ data }) {
                             {pixelSaved ? "Saved ✓" : "Save"}
                           </Button>
                         </InlineStack>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setPixelsLoading(true);
-                            authFetch("/api/meta/pixels")
-                              .then(r => r.json())
-                              .then(result => {
-                                if (result.ok && result.pixels?.length > 0) setAvailablePixels(result.pixels);
-                              })
-                              .catch(() => {})
-                              .finally(() => setPixelsLoading(false));
-                          }}
-                          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
-                        >
-                          Change pixel
-                        </button>
-                      )}
+                      ) : null}
                     </div>
                     {data.connectedAssets.pixel
                       ? <Badge tone="success">Active</Badge>
