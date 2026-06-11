@@ -1119,10 +1119,15 @@ export async function action({ request }: ActionFunctionArgs) {
       });
 
       try {
+        // Normalize GID (gid://shopify/Order/12345 → 12345) so event_id matches
+        // the webhook's shopify_order_${numericId} format, enabling Meta dedup.
+        const numericOrderId = possibleOrderId?.replace(/^gid:\/\/shopify\/Order\//i, "") ?? possibleOrderId;
+        const purchaseEventId = numericOrderId ? `shopify_order_${numericOrderId}` : (eventId ?? undefined);
+
         const conversionResult = await sendServerConversions({
           eventName: "Purchase",
           eventTime: Math.floor(Date.now() / 1000),
-          eventId: eventId || `purchase_${possibleOrderId}`,
+          eventId: purchaseEventId,
           orderId: possibleOrderId,
           value: possibleTotal ?? 0,
           currency: possibleCurrency ?? "USD",
@@ -1138,6 +1143,7 @@ export async function action({ request }: ActionFunctionArgs) {
           fbp,
           fbc,
           gclid,
+          ttclid,
           externalId: visitorId,
           shopPixelId: matchedSettings?.fbPixelId,
           shopToken: matchedSettings?.fbToken,

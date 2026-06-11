@@ -236,6 +236,31 @@ export async function action({ request }: ActionFunctionArgs) {
         enrollInFlows({ shop, trigger: "order_created", email: customerEmail, firstName, triggeredBy: orderId ?? undefined }).catch(() => null);
       }
 
+      // Recover real fbc/fbp stored by the browser pixel on page views.
+      // The webhook has no direct access to browser cookies, so we look up
+      // the most recent trackedEvent that matched this session.
+      let realFbc: string | null = null;
+      let realFbp: string | null = null;
+      try {
+        const fbcMatchClauses: any[] = [];
+        if (utm.fbclid) fbcMatchClauses.push({ fbclid: utm.fbclid });
+        if (visitorId) fbcMatchClauses.push({ visitorId });
+        if (fbcMatchClauses.length > 0) {
+          const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+          const ctx = await db.trackedEvent.findFirst({
+            where: {
+              shop,
+              createdAt: { gte: recentCutoff },
+              OR: fbcMatchClauses,
+            },
+            orderBy: { createdAt: "desc" },
+            select: { fbc: true, fbp: true },
+          });
+          realFbc = ctx?.fbc ?? null;
+          realFbp = ctx?.fbp ?? null;
+        }
+      } catch {}
+
       // Look up per-shop pixel credentials so each merchant's conversions go
       // to their own Meta pixel, not the global env-var fallback.
       const shopTrackingSettings = await (db as any).trackingSettings?.findUnique?.({
@@ -268,6 +293,10 @@ export async function action({ request }: ActionFunctionArgs) {
           state,
           country,
           fbclid: utm.fbclid,
+          fbc: realFbc,
+          fbp: realFbp,
+          gclid: utm.gclid,
+          ttclid: utm.ttclid,
           externalId: visitorId || email || null,
           shopPixelId: shopTrackingSettings?.fbPixelId,
           shopToken: shopTrackingSettings?.fbToken,

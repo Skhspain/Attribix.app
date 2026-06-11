@@ -19,6 +19,7 @@ type SendServerConversionInput = {
   fbc?: string | null;
   fbp?: string | null;
   gclid?: string | null;
+  ttclid?: string | null;
   externalId?: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -104,10 +105,42 @@ function buildMetaPayload(input: SendServerConversionInput) {
   };
 }
 
+function buildTiktokPayload(input: SendServerConversionInput, pixelCode: string) {
+  const user: Record<string, unknown> = {};
+  if (input.email) user.email = hashIfPresent(input.email);
+  if (input.phone) user.phone_number = hashIfPresent(input.phone);
+  if (input.externalId) user.external_id = hashIfPresent(input.externalId);
+
+  const context: Record<string, unknown> = { user };
+  if (input.ip) context.ip = input.ip;
+  if (input.userAgent) context.user_agent = input.userAgent;
+  const pageUrl = input.sourceUrl || input.url;
+  if (pageUrl) context.page = { url: pageUrl };
+  if (input.ttclid) context.ad = { callback: input.ttclid };
+
+  const eventTime = input.eventTime ?? Math.floor(Date.now() / 1000);
+
+  return {
+    pixel_code: pixelCode,
+    event: "PlaceAnOrder",
+    event_id: input.eventId || undefined,
+    timestamp: new Date(eventTime * 1000).toISOString(),
+    context,
+    properties: {
+      currency: input.currency || "USD",
+      value: typeof input.value === "number" ? input.value : 0,
+      order_id: input.orderId || undefined,
+      content_type: "product",
+    },
+    partner_name: "Attribix",
+  };
+}
+
 export async function sendServerConversions(input: SendServerConversionInput) {
   const results: {
     meta?: { ok: boolean; status?: number; body?: unknown; skipped?: boolean; reason?: string };
     google?: { ok: boolean; status?: number; body?: unknown; skipped?: boolean; reason?: string };
+    tiktok?: { ok: boolean; status?: number; body?: unknown; skipped?: boolean; reason?: string };
   } = {};
 
   // Per-shop credentials take precedence over global env vars so that in a
@@ -267,6 +300,37 @@ export async function sendServerConversions(input: SendServerConversionInput) {
     }
   } catch (googleError: any) {
     results.google = { ok: false, reason: googleError?.message || "Google Ads upload failed" };
+  }
+
+  // ── TikTok Events API ───────────────────────────────────────────────────
+  try {
+    const tiktokPixelId = process.env.TIKTOK_PIXEL_ID;
+    const tiktokAccessToken = process.env.TIKTOK_ACCESS_TOKEN;
+
+    if (!tiktokPixelId || !tiktokAccessToken) {
+      results.tiktok = { ok: false, skipped: true, reason: "TIKTOK_PIXEL_ID / TIKTOK_ACCESS_TOKEN not configured" };
+    } else {
+      const tiktokPayload = buildTiktokPayload(input, tiktokPixelId);
+
+      const tiktokRes = await fetch(
+        "https://business-api.tiktok.com/open_api/v1.3/event/track/",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Token": tiktokAccessToken,
+          },
+          body: JSON.stringify(tiktokPayload),
+        },
+      );
+
+      let tiktokBody: unknown = null;
+      try { tiktokBody = await tiktokRes.json(); } catch {}
+
+      results.tiktok = { ok: tiktokRes.ok, status: tiktokRes.status, body: tiktokBody };
+    }
+  } catch (tiktokError: any) {
+    results.tiktok = { ok: false, reason: tiktokError?.message || "TikTok Events API failed" };
   }
 
   return results;
