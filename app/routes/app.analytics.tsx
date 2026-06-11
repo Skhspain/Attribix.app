@@ -322,10 +322,10 @@ export default function AppAnalytics() {
   const totalOrders = purchases.length;
   const aov = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-  const totalSpend = useMemo(() => spendRows.reduce((s: number, r: any) => s + safeNum(r.spend), 0), [spendRows]);
-  const metaSpend = useMemo(() => spendRows.filter((r: any) => String(r.platform).toLowerCase().includes("meta")).reduce((s: number, r: any) => s + safeNum(r.spend), 0), [spendRows]);
+  // Use metaCampaigns30d for meta spend (complete, exchange-rate-converted)
+  // adSpend30d is unreliable for meta — use it only for google
   const googleSpend = useMemo(() => spendRows.filter((r: any) => String(r.platform).toLowerCase().includes("google")).reduce((s: number, r: any) => s + safeNum(r.spend), 0), [spendRows]);
-  const blendedRoas = totalSpend > 0 ? totalRevenue / totalSpend : null;
+  // metaSpend and totalSpend are derived after metaAdsKpis is computed below
 
   // ── Meta Ads Manager aggregated ──
   const metaAdsKpis = useMemo(() => {
@@ -337,6 +337,11 @@ export default function AppAnalytics() {
     }
     return { spend, purchases, value, roas: spend > 0 ? value / spend : null };
   }, [metaCampaigns]);
+
+  // Derive accurate spend totals from campaign data (more complete than adSpendDaily)
+  const metaSpend = metaAdsKpis.spend;
+  const totalSpend = metaSpend + googleSpend;
+  const blendedRoas = totalSpend > 0 ? totalRevenue / totalSpend : null;
 
   // ── Meta campaign table (Ads Manager) ──
   const metaCampaignRows = useMemo(() => {
@@ -618,13 +623,20 @@ export default function AppAnalytics() {
       const cur = map.get(k);
       if (cur) cur.revenue += safeNum((p as any).totalValue);
     }
+    // Use metaCampaigns30d for spend (complete + converted); google from adSpend30d
+    for (const r of data.metaCampaigns30d) {
+      const k = dayKey((r as any).date);
+      const cur = map.get(k);
+      if (cur) cur.spend += safeNum((r as any).spend);
+    }
     for (const r of data.adSpend30d) {
+      if (!String((r as any).platform).toLowerCase().includes("google")) continue;
       const k = dayKey((r as any).date);
       const cur = map.get(k);
       if (cur) cur.spend += safeNum((r as any).spend);
     }
     return Array.from(map.values());
-  }, [data.purchases30d, data.adSpend30d, windowDays]);
+  }, [data.purchases30d, data.metaCampaigns30d, data.adSpend30d, windowDays]);
 
   const hasMetaData = metaCampaignRows.length > 0;
   const hasGoogleData = googleSpend > 0;
