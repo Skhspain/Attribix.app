@@ -914,6 +914,32 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
+    // ── ViewContent CAPI for product pages ──────────────────────────────────
+    const isProductView = type === "product_viewed" || eventName === "product_viewed";
+    if (isProductView && resolvedShop) {
+      try {
+        await sendServerConversions({
+          eventName: "ViewContent",
+          eventTime: Math.floor(Date.now() / 1000),
+          eventId: eventId || undefined,
+          url,
+          sourceUrl: url,
+          actionSource: "website",
+          shop: resolvedShop,
+          ip,
+          userAgent: ua,
+          fbclid,
+          fbp,
+          fbc,
+          externalId: visitorId,
+          shopPixelId: matchedSettings?.fbPixelId,
+          shopToken: matchedSettings?.fbToken,
+        });
+      } catch (e: any) {
+        console.error("[/api/track] ViewContent CAPI error:", e?.message);
+      }
+    }
+
     if (possibleOrderId && isPurchaseLike) {
       const fallbackContext = await findLatestBrowserContext({
         shop: resolvedShop,

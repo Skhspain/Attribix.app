@@ -5,6 +5,7 @@
 
 import db from "~/db.server";
 import { fetchCampaignDailyInsights, fetchCampaignObjectives } from "~/services/metaGraph.server";
+import { sendEmail } from "~/services/resend.server";
 
 function formatDay(d: Date) {
   const yyyy = d.getFullYear();
@@ -107,6 +108,60 @@ async function syncShop(shop: string, accessToken: string, adAccountId: string) 
   console.log(`[metaSync] synced shop=${shop} campaigns=${campaignRows.length} ads=${adRows.length}`);
 }
 
+async function checkSpendAlert(shop: string) {
+  try {
+    const settings = await (db as any).trackingSettings?.findUnique?.({
+      where: { shop },
+      select: { alertSpendDrop: true, alertSpendDropPct: true, notifyEmail: true, lastAlertSentAt: true },
+    }).catch(() => null);
+
+    if (!settings?.alertSpendDrop || !settings?.notifyEmail) return;
+
+    // Throttle: max one alert per 24h per shop
+    if (settings.lastAlertSentAt && Date.now() - new Date(settings.lastAlertSentAt).getTime() < 24 * 60 * 60 * 1000) return;
+
+    // Compare yesterday's spend to the prior 7-day daily average
+    const since = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000);
+    const rows = await (db as any).metaCampaignDailyInsight?.groupBy?.({
+      by: ["date"],
+      where: { shop, date: { gte: since } },
+      _sum: { spend: true },
+      orderBy: { date: "desc" },
+    }).catch(() => []) ?? [];
+
+    if (rows.length < 2) return;
+
+    const yesterday = rows[0]._sum?.spend ?? 0;
+    const priorDays = rows.slice(1);
+    const priorAvg = priorDays.reduce((s: number, r: any) => s + (r._sum?.spend ?? 0), 0) / priorDays.length;
+
+    if (priorAvg < 1) return;
+
+    const dropPct = ((priorAvg - yesterday) / priorAvg) * 100;
+    const threshold = settings.alertSpendDropPct ?? 50;
+    if (dropPct < threshold) return;
+
+    const shopName = shop.replace(".myshopify.com", "");
+    await sendEmail({
+      from: process.env.SMTP_FROM_EMAIL || "alerts@attribix.com",
+      to: settings.notifyEmail,
+      subject: `Ad spend dropped ${Math.round(dropPct)}% — ${shopName}`,
+      html: `<p>Your Meta ad spend yesterday was <strong>$${yesterday.toFixed(2)}</strong>, down ${Math.round(dropPct)}% from your recent daily average of <strong>$${priorAvg.toFixed(2)}</strong>.</p>
+<p>This may indicate a paused campaign, budget cap, or account issue.</p>
+<p><a href="https://attribix-app.fly.dev/app/meta-ads">View your Meta Ads dashboard →</a></p>`,
+    });
+
+    await (db as any).trackingSettings?.update?.({
+      where: { shop },
+      data: { lastAlertSentAt: new Date() },
+    }).catch(() => null);
+
+    console.log(`[metaSync] spend alert sent for ${shop}: ${Math.round(dropPct)}% drop`);
+  } catch (e: any) {
+    console.error(`[metaSync] checkSpendAlert error for ${shop}:`, e?.message);
+  }
+}
+
 async function runSyncCycle() {
   const staleThreshold = new Date(Date.now() - 55 * 60 * 1000); // 55min ago → syncs every ~1h
 
@@ -124,6 +179,7 @@ async function runSyncCycle() {
   for (const conn of connections) {
     try {
       await syncShop(conn.shop, conn.accessToken, conn.adAccountId!);
+      await checkSpendAlert(conn.shop);
     } catch (err) {
       console.error(`[metaSync] failed for shop=${conn.shop}:`, err);
     }

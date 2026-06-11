@@ -4,7 +4,7 @@ import { useFetcher, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import {
   BlockStack, Button, Card, Divider, InlineStack,
-  Page, Select, Text,
+  Page, Select, Text, Banner,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import { SettingsNav } from "~/components/SettingsNav";
@@ -49,6 +49,7 @@ export default function GeneralSettings() {
   const [attributionWindow, setAttributionWindow] = useState(String(data.attributionWindow ?? 30));
   const [attributionModel, setAttributionModel] = useState(data.attributionModel ?? "last_touch");
   const [storeCurrency, setStoreCurrency] = useState(data.storeCurrency ?? "USD");
+  const backfillFetcher = useFetcher();
 
   const saving = fetcher.state !== "idle";
   const saved = fetcher.data?.ok && !saving;
@@ -154,6 +155,38 @@ export default function GeneralSettings() {
                       ]}
                     />
                   </div>
+                </BlockStack>
+              </Card>
+
+              <Card>
+                <BlockStack gap="400">
+                  <BlockStack gap="050">
+                    <Text as="h2" variant="headingMd">Historical order backfill</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Import the last 90 days of Shopify orders into Attribix so attribution data covers orders placed before the app was installed.
+                    </Text>
+                  </BlockStack>
+
+                  <Divider />
+
+                  {backfillFetcher.data?.ok && (
+                    <Banner tone="success">
+                      Backfill complete — {backfillFetcher.data.created} orders imported, {backfillFetcher.data.skipped} already tracked.
+                    </Banner>
+                  )}
+                  {backfillFetcher.data?.error && (
+                    <Banner tone="critical">{backfillFetcher.data.error}</Banner>
+                  )}
+
+                  <backfillFetcher.Form method="post" action="/api/backfill-orders">
+                    <Button
+                      submit
+                      loading={backfillFetcher.state !== "idle"}
+                      disabled={backfillFetcher.state !== "idle"}
+                    >
+                      {backfillFetcher.state !== "idle" ? "Importing…" : "Run backfill"}
+                    </Button>
+                  </backfillFetcher.Form>
                 </BlockStack>
               </Card>
 

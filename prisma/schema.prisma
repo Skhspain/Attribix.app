@@ -219,6 +219,17 @@ model TrackingSettings {
   // Onboarding
   onboardingCompletedAt DateTime?
 
+  // Notification settings
+  storeCurrency        String?
+  notifyEmail          String?
+  weeklyDigest         Boolean  @default(true)
+  alertLowRoas         Boolean  @default(false)
+  alertRoasThreshold   Float    @default(1.5)
+  alertNewOrders       Boolean  @default(false)
+  alertSpendDrop       Boolean  @default(false)
+  alertSpendDropPct    Float    @default(50)
+  lastAlertSentAt      DateTime?
+
   @@index([shop])
   @@index([trackingKey])
   @@index([trackingEnabled])
