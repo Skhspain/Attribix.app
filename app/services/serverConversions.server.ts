@@ -20,6 +20,12 @@ type SendServerConversionInput = {
   fbp?: string | null;
   gclid?: string | null;
   externalId?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  city?: string | null;
+  zip?: string | null;
+  state?: string | null;
+  country?: string | null;
   // Per-shop credentials — take precedence over global env vars.
   // Populated from trackingSettings.fbPixelId / fbToken for multi-tenant correctness.
   shopPixelId?: string | null;
@@ -72,6 +78,12 @@ function buildMetaPayload(input: SendServerConversionInput) {
   if (input.externalId) user_data.external_id = [hashIfPresent(input.externalId)].filter(Boolean);
   if (input.email) user_data.em = [hashIfPresent(input.email)].filter(Boolean);
   if (input.phone) user_data.ph = [hashIfPresent(input.phone)].filter(Boolean);
+  if (input.firstName) user_data.fn = [hashIfPresent(input.firstName)].filter(Boolean);
+  if (input.lastName) user_data.ln = [hashIfPresent(input.lastName)].filter(Boolean);
+  if (input.city) user_data.ct = [hashIfPresent(input.city)].filter(Boolean);
+  if (input.zip) user_data.zp = [hashIfPresent(input.zip)].filter(Boolean);
+  if (input.state) user_data.st = [hashIfPresent(input.state)].filter(Boolean);
+  if (input.country) user_data.country = [hashIfPresent(input.country)].filter(Boolean);
 
   return {
     data: [

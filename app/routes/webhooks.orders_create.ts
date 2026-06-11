@@ -120,6 +120,17 @@ export async function action({ request }: ActionFunctionArgs) {
       pickFirstString(payload?.billing_address?.last_name) ||
       pickFirstString(payload?.shipping_address?.last_name) ||
       null;
+
+    const zip =
+      pickFirstString(payload?.billing_address?.zip) ||
+      pickFirstString(payload?.shipping_address?.zip) ||
+      null;
+
+    const state =
+      pickFirstString(payload?.billing_address?.province_code) ||
+      pickFirstString(payload?.shipping_address?.province_code) ||
+      null;
+
     const customerName = firstName || lastName
       ? `${firstName || ""} ${lastName || ""}`.trim()
       : null;
@@ -250,6 +261,12 @@ export async function action({ request }: ActionFunctionArgs) {
           userAgent,
           email,
           phone,
+          firstName,
+          lastName,
+          city,
+          zip,
+          state,
+          country,
           fbclid: utm.fbclid,
           externalId: visitorId || email || null,
           shopPixelId: shopTrackingSettings?.fbPixelId,
