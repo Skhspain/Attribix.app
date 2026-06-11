@@ -1,9 +1,11 @@
 // app/routes/app.seo._index.tsx
 // SEO Audit — fetches all products from Shopify, scores them, surfaces issues.
+// Also shows AI referral traffic (ChatGPT, Perplexity, Gemini, Copilot) from Purchase records.
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
+import db from "~/db.server";
 import {
   Page, Card, BlockStack, InlineStack, Text, Badge, Button,
   Grid, ProgressBar, DataTable, Spinner, Divider, Box,
@@ -11,6 +13,56 @@ import {
 import { useState, useCallback } from "react";
 
 const METAFIELD_LIMIT = 50;
+
+// ─── AI Traffic ───────────────────────────────────────────────────────────────
+
+const AI_SOURCES: { name: string; domains: string[]; icon: string; color: string; bg: string }[] = [
+  { name: "ChatGPT",           domains: ["chat.openai.com", "chatgpt.com"],         icon: "🤖", color: "#10A37F", bg: "#F0FDF4" },
+  { name: "Perplexity",        domains: ["perplexity.ai"],                          icon: "🔮", color: "#7C3AED", bg: "#F5F3FF" },
+  { name: "Google Gemini",     domains: ["gemini.google.com", "bard.google.com"],   icon: "✨", color: "#4285F4", bg: "#EFF6FF" },
+  { name: "Microsoft Copilot", domains: ["copilot.microsoft.com","bing.com/chat"],  icon: "💡", color: "#0078D4", bg: "#EFF6FF" },
+  { name: "Claude",            domains: ["claude.ai"],                              icon: "🧠", color: "#D97706", bg: "#FFFBEB" },
+  { name: "Meta AI",           domains: ["meta.ai"],                                icon: "🌀", color: "#1877F2", bg: "#EFF6FF" },
+];
+
+function classifyReferrer(referrer: string | null): string | null {
+  if (!referrer) return null;
+  const r = referrer.toLowerCase();
+  for (const src of AI_SOURCES) {
+    if (src.domains.some(d => r.includes(d))) return src.name;
+  }
+  return null;
+}
+
+interface AiSourceStat { name: string; orders: number; revenue: number; icon: string; color: string; bg: string }
+
+async function fetchAiTraffic(shop: string): Promise<{ sources: AiSourceStat[]; totalOrders: number; totalRevenue: number; currency: string }> {
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+  const orClauses = AI_SOURCES.flatMap(s => s.domains.map(d => ({ referrer: { contains: d } })));
+
+  const purchases = await (db as any).purchase.findMany({
+    where: { shop, createdAt: { gte: since }, OR: orClauses },
+    select: { referrer: true, totalValue: true, currency: true },
+  }).catch(() => []) as { referrer: string | null; totalValue: number; currency: string }[];
+
+  const map = new Map<string, { orders: number; revenue: number }>();
+  for (const p of purchases) {
+    const key = classifyReferrer(p.referrer);
+    if (!key) continue;
+    const cur = map.get(key) ?? { orders: 0, revenue: 0 };
+    map.set(key, { orders: cur.orders + 1, revenue: cur.revenue + p.totalValue });
+  }
+
+  const sources: AiSourceStat[] = AI_SOURCES
+    .filter(s => map.has(s.name))
+    .map(s => ({ name: s.name, icon: s.icon, color: s.color, bg: s.bg, ...map.get(s.name)! }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  const totalOrders  = sources.reduce((s, r) => s + r.orders,  0);
+  const totalRevenue = sources.reduce((s, r) => s + r.revenue, 0);
+  const currency     = purchases[0]?.currency ?? "USD";
+  return { sources, totalOrders, totalRevenue, currency };
+}
 
 // ─── Scoring ──────────────────────────────────────────────────────────────────
 
@@ -170,7 +222,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = session.shop;
 
   // Fetch all products with metafields via GraphQL (includes global metafields inline)
-  const products = await fetchAllProducts(admin);
+  const [products, aiTraffic] = await Promise.all([
+    fetchAllProducts(admin),
+    fetchAiTraffic(shop),
+  ]);
   const allEnriched = products.map((p) => ({ ...p, shop }));
 
   const audits = allEnriched.map(scoreProduct);
@@ -212,6 +267,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     goodCount,
     products: sorted,
     metafieldLimit: METAFIELD_LIMIT,
+    aiTraffic,
   });
 }
 
@@ -242,7 +298,7 @@ export default function SeoIndex() {
     shop, totalProducts, avgScore, estimatedAvgScore,
     missingMetaDesc, missingAltText, thinContent, missingMetaTitle,
     errorCount, warningCount, goodCount,
-    products, metafieldLimit,
+    products, metafieldLimit, aiTraffic,
   } = useLoaderData<typeof loader>();
 
   const { revalidate, state } = useRevalidator();
@@ -405,6 +461,80 @@ export default function SeoIndex() {
               </BlockStack>
             </Card>
           )}
+
+          {/* AI Traffic */}
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <InlineStack gap="200" blockAlign="center">
+                  <span style={{ fontSize: 22 }}>🤖</span>
+                  <BlockStack gap="025">
+                    <Text as="h2" variant="headingMd">AI Traffic</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Orders referred from AI assistants in the last 90 days — ChatGPT, Perplexity, Gemini, and more.
+                    </Text>
+                  </BlockStack>
+                </InlineStack>
+                {aiTraffic.totalOrders > 0 && (
+                  <BlockStack gap="025">
+                    <Text as="p" variant="headingLg" fontWeight="bold">
+                      {aiTraffic.currency} {aiTraffic.totalRevenue.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </Text>
+                    <Text as="p" variant="bodySm" tone="subdued" alignment="end">{aiTraffic.totalOrders} order{aiTraffic.totalOrders !== 1 ? "s" : ""}</Text>
+                  </BlockStack>
+                )}
+              </InlineStack>
+
+              <Divider />
+
+              {aiTraffic.sources.length === 0 ? (
+                <div style={{ padding: "20px 0", textAlign: "center" }}>
+                  <BlockStack gap="200" inlineAlign="center">
+                    <span style={{ fontSize: 32 }}>🔍</span>
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">No AI referrals detected yet</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      When customers click through to your store from ChatGPT, Perplexity, Gemini, or Copilot,<br />
+                      their orders will appear here. This typically picks up after 1–2 weeks of data.
+                    </Text>
+                  </BlockStack>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                  {aiTraffic.sources.map(src => (
+                    <div key={src.name} style={{ border: "1px solid #E5E7EB", borderRadius: 10, padding: "16px", background: src.bg }}>
+                      <InlineStack gap="200" blockAlign="center">
+                        <span style={{ fontSize: 24 }}>{src.icon}</span>
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">{src.name}</Text>
+                      </InlineStack>
+                      <div style={{ marginTop: 12 }}>
+                        <Text as="p" variant="headingLg" fontWeight="bold">
+                          <span style={{ color: src.color }}>
+                            {aiTraffic.currency} {src.revenue.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">{src.orders} order{src.orders !== 1 ? "s" : ""}</Text>
+                      </div>
+                      <div style={{ marginTop: 10, height: 4, borderRadius: 99, background: "#E5E7EB" }}>
+                        <div style={{
+                          height: 4, borderRadius: 99, background: src.color,
+                          width: aiTraffic.totalRevenue > 0 ? `${Math.round((src.revenue / aiTraffic.totalRevenue) * 100)}%` : "0%",
+                        }} />
+                      </div>
+                      <Text as="p" variant="bodySm" tone="subdued" alignment="end">
+                        {aiTraffic.totalRevenue > 0 ? Math.round((src.revenue / aiTraffic.totalRevenue) * 100) : 0}% of AI revenue
+                      </Text>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ padding: "10px 0 2px", borderTop: "1px solid #F3F4F6" }}>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Detected using HTTP referrer headers. Orders without referrers (direct, dark social) are not counted.
+                </Text>
+              </div>
+            </BlockStack>
+          </Card>
 
           {/* Products table */}
           <Card padding="0">
