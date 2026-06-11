@@ -47,17 +47,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const hasConnection = !!(metaConn && metaConn.accessToken && metaConn.accessToken !== "__PENDING__");
 
-  // Get Shopify revenue for comparison (7-day) + store currency
-  const since7 = new Date(); since7.setDate(since7.getDate() - 7); since7.setHours(0,0,0,0);
-  const [shopifyPurchases7, storeCurrencyRes] = await Promise.all([
+  // Get attributed purchases (fbclid or meta UTM) within plan history + store currency
+  const [attributedPurchases, storeCurrencyRes] = await Promise.all([
     db.purchase.findMany({
-      where: { shop, createdAt: { gte: since7 } },
-      select: { totalValue: true },
+      where: {
+        shop,
+        createdAt: { gte: historyCutoff },
+        OR: [
+          { fbclid: { not: null } },
+          { utmSource: { contains: "facebook" } },
+          { utmSource: { contains: "meta" } },
+          { utmSource: { contains: "instagram" } },
+        ],
+      },
+      select: { totalValue: true, createdAt: true },
     }).catch(() => []),
     admin.graphql(`{ shop { currencyCode } }`).then((r: any) => r.json()).catch(() => null),
   ]);
-  const shopifyRev7 = shopifyPurchases7.reduce((s: number, p: any) => s + Number(p.totalValue || 0), 0);
-  const shopifyOrders7 = shopifyPurchases7.length;
   const storeCurrency = storeCurrencyRes?.data?.shop?.currencyCode || "NOK";
 
   // Detect ad account currency from Meta Graph API and convert if needed
@@ -97,8 +103,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     lastSyncedAt: metaConn?.lastSyncedAt ?? null,
     hasConnection,
     adAccountId: metaConn?.adAccountId ?? null,
-    shopifyRev7,
-    shopifyOrders7,
+    attributedPurchases: attributedPurchases as Array<{ totalValue: number | null; createdAt: string }>,
     storeCurrency,
     adAccountCurrency,
     exchangeRate,
@@ -205,7 +210,7 @@ export default function MetaAdsDetail() {
 
   const windowCutoff = useMemo(() => {
     const d = new Date(data.nowMs);
-    d.setUTCDate(d.getUTCDate() - windowDays);
+    d.setUTCDate(d.getUTCDate() - (windowDays - 1));
     d.setUTCHours(0, 0, 0, 0);
     return d;
   }, [windowDays, data.nowMs]);
@@ -232,10 +237,23 @@ export default function MetaAdsDetail() {
     return { spend, impressions, clicks, purchases, value, roas: spend > 0 ? value / spend : null, ctr: impressions > 0 ? (clicks / impressions) * 100 : null, cpc: clicks > 0 ? spend / clicks : null };
   }, [campaigns]);
 
+  // Attribix-attributed revenue: orders tracked via fbclid/meta UTM within the window
+  const { attributedRevenue, attributedOrders } = useMemo(() => {
+    const ps = (data.attributedPurchases as any[]).filter(
+      (p) => new Date(p.createdAt) >= windowCutoff
+    );
+    return {
+      attributedRevenue: ps.reduce((s: number, p: any) => s + safeNum(p.totalValue), 0),
+      attributedOrders: ps.length,
+    };
+  }, [data.attributedPurchases, windowCutoff]);
+
+  const attributedRoas = kpis.spend > 0 && attributedRevenue > 0 ? attributedRevenue / kpis.spend : null;
+
   // Use store currency (values already converted in loader)
   const currency = data.storeCurrency || "NOK";
 
-  // Chart data — daily spend vs purchase value
+  // Chart data — daily spend vs Attribix-attributed revenue
   const chartData = useMemo(() => {
     const map = new Map<string, { label: string; revenue: number; spend: number }>();
     for (let i = windowDays - 1; i >= 0; i--) {
@@ -247,13 +265,15 @@ export default function MetaAdsDetail() {
     for (const r of campaigns) {
       const k = dayKey(r.date);
       const cur = map.get(k);
-      if (cur) {
-        cur.spend += safeNum(r.spend);
-        cur.revenue += safeNum(r.purchaseValue);
-      }
+      if (cur) cur.spend += safeNum(r.spend);
+    }
+    for (const p of data.attributedPurchases as any[]) {
+      const k = dayKey(p.createdAt);
+      const cur = map.get(k);
+      if (cur) cur.revenue += safeNum(p.totalValue);
     }
     return Array.from(map.values());
-  }, [campaigns, windowDays]);
+  }, [campaigns, data.attributedPurchases, windowDays]);
 
   // Top performers
   const topCampaign = useMemo(() => {
@@ -483,13 +503,15 @@ export default function MetaAdsDetail() {
           </div>
         )}
 
-        {/* Decision banner */}
+        {/* Decision banner — uses Attribix-attributed revenue (fbclid/UTM tracked orders) */}
         {campaigns.length > 0 && (
           <div style={{
             borderRadius: 12,
-            background: kpis.roas !== null && kpis.roas >= 1
+            background: attributedRoas !== null && attributedRoas >= 1
               ? "linear-gradient(135deg, #064e3b 0%, #065f46 100%)"
-              : "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)",
+              : attributedRoas !== null
+              ? "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)"
+              : "linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%)",
             padding: "24px 28px",
             display: "flex", alignItems: "center", justifyContent: "space-between",
             gap: 20, flexWrap: "wrap",
@@ -497,18 +519,21 @@ export default function MetaAdsDetail() {
           }}>
             <div>
               <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>
-                {kpis.roas !== null && kpis.roas >= 2
+                {attributedRoas !== null && attributedRoas >= 2
                   ? "Your ads are profitable"
-                  : kpis.roas !== null && kpis.roas >= 1
+                  : attributedRoas !== null && attributedRoas >= 1
                   ? "Your ads are breaking even"
-                  : kpis.roas !== null
+                  : attributedRoas !== null
                   ? "Your ads are losing money"
-                  : "No purchase data yet"}
+                  : "No attributed sales yet"}
+              </p>
+              <p style={{ margin: 0, marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+                Based on {attributedOrders} Attribix-tracked order{attributedOrders !== 1 ? "s" : ""} (fbclid / Meta UTM)
               </p>
               <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{kpis.roas !== null ? fmtRoas(kpis.roas) : "—"}</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{attributedRoas !== null ? fmtRoas(attributedRoas) : "—"}</p>
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
@@ -516,17 +541,17 @@ export default function MetaAdsDetail() {
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Revenue</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(kpis.value, currency)}</p>
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(attributedRevenue, currency)}</p>
                 </div>
                 <div>
                   <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Net</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: kpis.value - kpis.spend >= 0 ? "#86efac" : "#fca5a5" }}>
-                    {kpis.value - kpis.spend >= 0 ? "+" : ""}{fmtDecimal(kpis.value - kpis.spend, currency)}
+                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: attributedRevenue - kpis.spend >= 0 ? "#86efac" : "#fca5a5" }}>
+                    {attributedRevenue - kpis.spend >= 0 ? "+" : ""}{fmtDecimal(attributedRevenue - kpis.spend, currency)}
                   </p>
                 </div>
               </div>
             </div>
-            {kpis.roas !== null && kpis.roas < 1 && (
+            {attributedRoas !== null && attributedRoas < 1 && (
               <div style={{ background: "rgba(255,255,255,0.12)", borderRadius: 10, padding: "16px 20px", minWidth: 200 }}>
                 <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>What's losing money?</p>
                 <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>Scroll down to see which campaigns and ads are burning budget.</p>
@@ -559,11 +584,11 @@ export default function MetaAdsDetail() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Daily spend vs purchase value</Text>
+              <Text as="h2" variant="headingMd">Daily spend vs attributed revenue</Text>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />
-                  <Text as="span" variant="bodySm" tone="subdued">Purchase value</Text>
+                  <Text as="span" variant="bodySm" tone="subdued">Attributed revenue</Text>
                 </InlineStack>
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: "#38bdf8" }} />
@@ -571,7 +596,7 @@ export default function MetaAdsDetail() {
                 </InlineStack>
               </InlineStack>
             </InlineStack>
-            {chartData.length > 0 ? <RevenueSpendChart data={chartData} currency="NOK" showRoasLabels={windowDays <= 14} revenueLabel="Purchase value" /> : <Text as="p" tone="subdued">No data for this window.</Text>}
+            {chartData.length > 0 ? <RevenueSpendChart data={chartData} currency={currency} showRoasLabels={windowDays <= 14} revenueLabel="Attributed revenue" /> : <Text as="p" tone="subdued">No data for this window.</Text>}
           </BlockStack>
         </Card>
 
@@ -1141,13 +1166,14 @@ export default function MetaAdsDetail() {
           </div>
         </div>
 
-        {/* Shopify vs Meta Sales Comparison */}
+        {/* Attribix attributed vs Meta reported comparison */}
         <SalesComparison
-          shopifyRevenue={data.shopifyRev7 || 0}
-          shopifyOrders={data.shopifyOrders7 || 0}
+          shopifyRevenue={attributedRevenue}
+          shopifyOrders={attributedOrders}
           platformName="Meta"
           platformRevenue={kpis.value || 0}
           currency={data.storeCurrency || "NOK"}
+          period={`${window}d`}
         />
 
         <InlineStack align="center" blockAlign="center" gap="300">

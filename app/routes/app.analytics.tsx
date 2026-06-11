@@ -127,25 +127,61 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const [metaConn, trackingSettings] = await Promise.all([
     db.metaConnection
-      .findUnique({ where: { shop }, select: { lastSyncedAt: true, adAccountId: true } })
+      .findUnique({ where: { shop }, select: { lastSyncedAt: true, adAccountId: true, accessToken: true } })
       .catch(() => null),
     (anyDb.trackingSettings?.findUnique?.({ where: { shop }, select: { storeCurrency: true } }) as Promise<{ storeCurrency: string | null } | null>)
       .catch(() => null),
   ]);
 
+  const storeCurrency = trackingSettings?.storeCurrency ?? "USD";
+
+  // Fetch Meta ad account currency and exchange rate (same as meta-ads page does)
+  let metaExchangeRate = 1;
+  const hasMetaConn = !!(metaConn?.accessToken && metaConn.accessToken !== "__PENDING__" && metaConn?.adAccountId);
+  if (hasMetaConn) {
+    try {
+      const res = await fetch(
+        `https://graph.facebook.com/v20.0/${metaConn!.adAccountId}?fields=currency&access_token=${metaConn!.accessToken}`
+      );
+      const acct = await res.json();
+      if (acct?.currency && !acct.error && acct.currency !== storeCurrency) {
+        const { convertCurrency } = await import("~/services/currency.server");
+        metaExchangeRate = await convertCurrency(1, acct.currency, storeCurrency).catch(() => 1);
+      }
+    } catch {}
+  }
+
+  // Apply exchange rate to meta spend & campaign values (stored in ad account currency)
+  const convertedAdSpend30d = (adSpend30d ?? []).map((r: any) => ({
+    ...r,
+    spend: String(r.platform).toLowerCase().includes("meta")
+      ? Number(r.spend || 0) * metaExchangeRate
+      : Number(r.spend || 0),
+  }));
+  const convertedMetaCampaigns30d = (metaCampaigns30d ?? []).map((r: any) => ({
+    ...r,
+    spend: Number(r.spend || 0) * metaExchangeRate,
+    purchaseValue: Number(r.purchaseValue || 0) * metaExchangeRate,
+  }));
+  const convertedMetaAds30d = ((metaAds as any) ?? []).map((r: any) => ({
+    ...r,
+    spend: Number(r.spend || 0) * metaExchangeRate,
+    purchaseValue: Number(r.purchaseValue || 0) * metaExchangeRate,
+  }));
+
   return json({
     shop,
     purchases30d: purchases30d ?? [],
     allPurchases: allPurchases ?? [],
-    adSpend30d: adSpend30d ?? [],
+    adSpend30d: convertedAdSpend30d,
     trackedEvents30d: trackedEvents30d ?? [],
-    metaCampaigns30d: metaCampaigns30d ?? [],
-    metaAds30d: (metaAds as any) ?? [],
+    metaCampaigns30d: convertedMetaCampaigns30d,
+    metaAds30d: convertedMetaAds30d,
     metaLastSyncedAt: metaConn?.lastSyncedAt ?? null,
     metaConnected: !!(metaConn?.adAccountId),
     plan,
     historyDays: plan === "starter" ? 30 : plan === "growth" ? 90 : 365,
-    storeCurrency: trackingSettings?.storeCurrency ?? "USD",
+    storeCurrency,
   });
 }
 
@@ -258,7 +294,7 @@ export default function AppAnalytics() {
   const windowDays = Number(window);
   const windowCutoff = useMemo(() => {
     const d = new Date();
-    d.setDate(d.getDate() - windowDays);
+    d.setDate(d.getDate() - (windowDays - 1));
     d.setHours(0, 0, 0, 0);
     return d;
   }, [windowDays]);
