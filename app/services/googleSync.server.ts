@@ -31,7 +31,7 @@ async function syncShop(shop: string, adCustomerId: string) {
 }
 
 async function runSyncCycle() {
-  const staleThreshold = new Date(Date.now() - 23 * 60 * 60 * 1000); // 23h ago
+  const staleThreshold = new Date(Date.now() - 55 * 60 * 1000); // 55min ago → syncs every ~1h
 
   const connections = await (db as any).googleConnection.findMany({
     where: {
