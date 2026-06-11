@@ -18,8 +18,8 @@ export function RevenueSpendChart({
 }) {
   const maxRev = Math.max(1, ...data.map((d) => d.revenue));
   const maxSpend = Math.max(1, ...data.map((d) => d.spend));
+  const maxVal = Math.max(maxRev, maxSpend);
   const CHART_H = 150;
-  const SPEND_MAX_H = 48;
   const allEmpty = data.every((d) => d.revenue === 0 && d.spend === 0);
 
   const [tooltip, setTooltip] = useState<{ x: number; y: number } & ChartDay | null>(null);
@@ -135,8 +135,8 @@ export function RevenueSpendChart({
             ? "linear-gradient(180deg, #f87171 0%, #dc2626 100%)"
             : "linear-gradient(180deg, #818cf8 0%, #6366f1 100%)";
 
-          const revH = row.revenue > 0 ? Math.max((row.revenue / maxRev) * CHART_H, 3) : 0;
-          const spendH = row.spend > 0 ? Math.max((row.spend / maxSpend) * SPEND_MAX_H, 6) : 0;
+          const revH = row.revenue > 0 ? Math.max((row.revenue / maxVal) * CHART_H, 3) : 0;
+          const spendH = row.spend > 0 ? Math.max((row.spend / maxVal) * CHART_H, 3) : 0;
           const dayRoas = row.spend > 0 ? row.revenue / row.spend : null;
 
           return (

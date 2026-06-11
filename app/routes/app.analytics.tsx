@@ -729,7 +729,7 @@ export default function AppAnalytics() {
                   Revenue vs Spend{blendedRoas ? ` — ROAS: ${Math.round(blendedRoas * 100)}%` : ""} — last {window} days
                 </Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Green/red = revenue on days with ad spend (ROAS positive/negative). Indigo = revenue with no ad spend that day (organic/direct orders). Spend bars use independent scale.
+                  Green/red = revenue on days with ad spend (ROAS positive/negative). Indigo = revenue with no ad spend that day (organic/direct orders). Revenue and spend bars share the same scale.
                 </Text>
               </BlockStack>
               <InlineStack gap="300" blockAlign="center">
