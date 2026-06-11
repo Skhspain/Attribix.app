@@ -133,7 +133,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .catch(() => null),
   ]);
 
-  const storeCurrency = trackingSettings?.storeCurrency ?? "USD";
+  // Get store currency from Shopify (authoritative) — trackingSettings may be unset or stale
+  let storeCurrency = trackingSettings?.storeCurrency ?? "";
+  if (!storeCurrency || storeCurrency === "USD") {
+    try {
+      const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
+      const shopData = await shopRes.json();
+      storeCurrency = shopData?.data?.shop?.currencyCode || storeCurrency || "USD";
+    } catch {}
+  }
 
   // Fetch Meta ad account currency and exchange rate (same as meta-ads page does)
   let metaExchangeRate = 1;
