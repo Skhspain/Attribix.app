@@ -510,6 +510,83 @@ async function findLatestBrowserContext(input: {
   return scored[0]?.row || null;
 }
 
+// Shopify web-pixel event → Meta standard event. Purchase is handled separately
+// (it needs order enrichment + dedup with the orders/create webhook).
+const META_FUNNEL_EVENTS: Record<string, string> = {
+  product_viewed: "ViewContent",
+  search_submitted: "Search",
+  product_added_to_cart: "AddToCart",
+  checkout_started: "InitiateCheckout",
+  payment_info_submitted: "AddPaymentInfo",
+};
+
+function shopifyGidToId(value: unknown): string | null {
+  const s = pickFirstString(value) ?? (typeof value === "number" ? String(value) : null);
+  if (!s) return null;
+  return s.replace(/^gid:\/\/shopify\/\w+\//i, "");
+}
+
+/**
+ * Pull content_ids / value / currency out of the Shopify web-pixel payload.
+ * Uses variant IDs, which is what Shopify's own Meta channel sends, so catalog
+ * matching keeps working.
+ */
+function extractFunnelData(event: any): {
+  contentIds: string[] | null;
+  numItems: number | null;
+  value: number | null;
+  currency: string | null;
+  searchString: string | null;
+} {
+  const d = event?.data ?? {};
+
+  // product_viewed
+  const variant = d?.productVariant;
+  if (variant) {
+    const id = shopifyGidToId(variant?.id);
+    return {
+      contentIds: id ? [id] : null,
+      numItems: null,
+      value: pickNumber(variant?.price?.amount),
+      currency: pickFirstString(variant?.price?.currencyCode),
+      searchString: null,
+    };
+  }
+
+  // product_added_to_cart
+  const line = d?.cartLine;
+  if (line) {
+    const id = shopifyGidToId(line?.merchandise?.id);
+    return {
+      contentIds: id ? [id] : null,
+      numItems: pickNumber(line?.quantity),
+      value: pickNumber(line?.cost?.totalAmount?.amount),
+      currency: pickFirstString(line?.cost?.totalAmount?.currencyCode),
+      searchString: null,
+    };
+  }
+
+  // checkout_started / payment_info_submitted
+  const checkout = d?.checkout;
+  if (checkout) {
+    const items: any[] = Array.isArray(checkout?.lineItems) ? checkout.lineItems : [];
+    const ids = items.map((li) => shopifyGidToId(li?.variant?.id)).filter(Boolean) as string[];
+    const qty = items.reduce((sum, li) => sum + (pickNumber(li?.quantity) ?? 0), 0);
+    return {
+      contentIds: ids.length ? ids : null,
+      numItems: items.length ? qty : null,
+      value: pickNumber(checkout?.totalPrice?.amount),
+      currency:
+        pickFirstString(checkout?.totalPrice?.currencyCode) ?? pickFirstString(checkout?.currencyCode),
+      searchString: null,
+    };
+  }
+
+  // search_submitted
+  const query = pickFirstString(d?.searchResult?.query);
+  return { contentIds: null, numItems: null, value: null, currency: null, searchString: query };
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   if (request.method === "OPTIONS") {
     return corsify(request, new Response(null, { status: 204 }));
@@ -870,6 +947,17 @@ export async function action({ request }: ActionFunctionArgs) {
       pickFirstString(event?.data?.checkout?.phone) ||
       null;
 
+    // Name/address match keys (from checkout addresses or the logged-in customer)
+    // lift EMQ on InitiateCheckout / AddPaymentInfo / Purchase.
+    const matchKeys = {
+      firstName: pickFirstString(eventSnapshot?.firstName) ?? undefined,
+      lastName: pickFirstString(eventSnapshot?.lastName) ?? undefined,
+      city: pickFirstString(eventSnapshot?.city) ?? undefined,
+      zip: pickFirstString(eventSnapshot?.zip) ?? undefined,
+      state: pickFirstString(eventSnapshot?.state) ?? undefined,
+      country: pickFirstString(eventSnapshot?.country) ?? undefined,
+    };
+
     const isPurchaseLike =
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
         (eventName || "").toLowerCase(),
@@ -878,56 +966,38 @@ export async function action({ request }: ActionFunctionArgs) {
         (type || "").toLowerCase(),
       );
 
-    // ── InitiateCheckout server-side CAPI ────────────────────────────────
-    // checkout_started events carry the customer's email — forward to Meta CAPI
-    // so that the InitiateCheckout EMQ benefits from the same server-side match
-    // quality as Purchase (where we already have email from the order).
-    const isCheckoutStart =
-      ["checkout_started", "checkout_start", "initiate_checkout"].includes((eventName || "").toLowerCase()) ||
-      ["checkout_started", "checkout_start", "initiate_checkout"].includes((type || "").toLowerCase());
+    // ── Funnel events → Meta CAPI ───────────────────────────────────────
+    // Previously InitiateCheckout was only sent when the checkout already had an
+    // email (rare at checkout start), so Meta received a tiny fraction of real
+    // checkouts. Every funnel event is now forwarded; email/phone are included
+    // when present to lift EMQ.
+    const capiEventName = META_FUNNEL_EVENTS[(type || "").toLowerCase()] ?? null;
 
-    if (isCheckoutStart && possibleEmail) {
+    if (capiEventName && resolvedShop) {
+      const funnel = extractFunnelData(event);
+      // Dedup key: Shopify's own customer-event id (e.g. "sh-…"), which browser
+      // Meta pixels on Shopify pass as eventID. Our random per-post eventId never
+      // matched anything, so Meta counted the browser and CAPI copies twice.
+      const funnelEventId = pickFirstString(event?.id) ?? eventId ?? undefined;
       try {
         await sendServerConversions({
-          eventName: "InitiateCheckout",
+          eventName: capiEventName,
           eventTime: Math.floor(Date.now() / 1000),
-          eventId: eventId || `checkout_start_${sessionId}`,
-          value: possibleTotal ?? undefined,
-          currency: possibleCurrency ?? "USD",
-          url: url || undefined,
-          sourceUrl: url || undefined,
-          actionSource: "website",
-          shop: resolvedShop,
-          ip,
-          userAgent: ua,
-          email: possibleEmail,
-          phone: possiblePhone ?? undefined,
-          fbclid,
-          fbp,
-          fbc,
-          externalId: visitorId,
-          shopPixelId: matchedSettings?.fbPixelId,
-          shopToken: matchedSettings?.fbToken,
-        });
-      } catch (e: any) {
-        console.error("[/api/track] InitiateCheckout CAPI error:", e?.message);
-      }
-    }
-
-    // ── ViewContent CAPI for product pages ──────────────────────────────────
-    const isProductView = type === "product_viewed" || eventName === "product_viewed";
-    if (isProductView && resolvedShop) {
-      try {
-        await sendServerConversions({
-          eventName: "ViewContent",
-          eventTime: Math.floor(Date.now() / 1000),
-          eventId: eventId || undefined,
+          eventId: funnelEventId,
+          value: funnel.value ?? possibleTotal ?? undefined,
+          currency: funnel.currency ?? possibleCurrency ?? undefined,
+          contentIds: funnel.contentIds,
+          numItems: funnel.numItems,
+          searchString: funnel.searchString,
           url,
           sourceUrl: url,
           actionSource: "website",
           shop: resolvedShop,
           ip,
           userAgent: ua,
+          email: possibleEmail ?? undefined,
+          phone: possiblePhone ?? undefined,
+          ...matchKeys,
           fbclid,
           fbp,
           fbc,
@@ -936,7 +1006,7 @@ export async function action({ request }: ActionFunctionArgs) {
           shopToken: matchedSettings?.fbToken,
         });
       } catch (e: any) {
-        console.error("[/api/track] ViewContent CAPI error:", e?.message);
+        console.error(`[/api/track] ${capiEventName} CAPI error:`, e?.message);
       }
     }
 
@@ -1165,6 +1235,7 @@ export async function action({ request }: ActionFunctionArgs) {
           userAgent: ua,
           email: possibleEmail,
           phone: possiblePhone,
+          ...matchKeys,
           fbclid,
           fbp,
           fbc,

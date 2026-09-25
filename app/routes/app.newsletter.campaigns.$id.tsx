@@ -159,10 +159,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
         return json({ ok: false, error: "No email content yet — design your email first, then send a test." });
       }
       const fromName = campaign.fromName || "Newsletter";
-      const fromEmail = campaign.fromEmail || process.env.SMTP_FROM_EMAIL || "";
+      // Always send from the verified SMTP domain; merchant's email becomes Reply-To
+      const fromEmail = process.env.SMTP_FROM_EMAIL || "";
       if (!fromEmail) {
-        return json({ ok: false, error: "Sender email not configured. Go to Newsletter → Settings and set a From email address first." });
+        return json({ ok: false, error: "Sender email not configured. Contact support to enable sending." });
       }
+      const merchantReplyTo = campaign.replyTo || campaign.fromEmail || undefined;
       const shopDomain = shop.replace(".myshopify.com", "");
       const html = campaign.htmlContent
         .replace(/\{\{first_name\}\}/gi, "Test Subscriber")
@@ -176,7 +178,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
         to: testEmail,
         subject: `[TEST] ${campaign.subject || "(no subject)"}`,
         html,
-        replyTo: campaign.replyTo || undefined,
+        replyTo: merchantReplyTo,
       });
       return json(result.ok
         ? { ok: true, message: `Test email sent to ${testEmail}` }
@@ -468,9 +470,9 @@ export default function CampaignEditor() {
     if (!testEmail) return;
     setTestSending(true);
     try {
-      // Use a dedicated HMAC-authenticated endpoint so this call never goes
-      // through the Shopify session-token flow — that was causing "session
-      // expired" errors before the request even reached the server.
+      // Save settings (no Unlayer export — just text fields) so DB is fresh
+      await saveData(campaign.htmlContent || "", null);
+      // Pass current UI values as well in case save hasn't propagated
       const res = await fetch("/api/newsletter/test-send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -479,6 +481,9 @@ export default function CampaignEditor() {
           shop,
           token: testSendToken,
           testEmail,
+          subject,
+          fromName,
+          previewText,
         }),
       });
       const result = await res.json().catch(() => ({
@@ -496,7 +501,7 @@ export default function CampaignEditor() {
     } finally {
       setTestSending(false);
     }
-  }, [testEmail, campaign.id, shop, testSendToken]);
+  }, [testEmail, campaign.id, shop, testSendToken, subject, fromName, previewText, saveData, campaign.htmlContent]);
 
   const STEPS: { key: BuilderTab; label: string }[] = [
     { key: "edit", label: "Edit" },
@@ -725,7 +730,7 @@ export default function CampaignEditor() {
               </InlineStack>
               <InlineStack gap="400" wrap>
                 <div style={{ flex: 1, minWidth: 200 }}>
-                  <TextField label="From email" value={fromEmailVal} onChange={setFromEmailVal} autoComplete="email" type="email" disabled={isSent} helpText="Must be a verified sending domain" />
+                  <TextField label="From email" value={fromEmailVal} onChange={setFromEmailVal} autoComplete="email" type="email" disabled={isSent} helpText="Used as the Reply-To address so replies reach you directly" />
                 </div>
                 <div style={{ flex: 1, minWidth: 200 }}>
                   <TextField label="Reply-to (optional)" value={replyTo} onChange={setReplyTo} autoComplete="email" type="email" disabled={isSent} />

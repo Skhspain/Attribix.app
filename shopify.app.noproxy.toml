@@ -2,9 +2,11 @@
 
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix"
-application_url = "https://attribix-app.fly.dev"
+application_url = "https://api.attribix.app"
 embedded = true
 handle = "attribix-app"
+# Only the root web config — stops the CLI picking up copies in .claude/worktrees/
+web_directories = ["."]
 
 [build]
 automatically_update_urls_on_dev = false
@@ -18,13 +20,16 @@ scopes = "read_customer_events,read_orders,read_products,read_script_tags,write_
 
 [auth]
 redirect_urls = [
+  "https://api.attribix.app/auth/callback",
+  "https://api.attribix.app/auth/login",
+  "https://api.attribix.app/auth",
   "https://attribix-app.fly.dev/auth/callback",
   "https://attribix-app.fly.dev/auth/login",
   "https://attribix-app.fly.dev/auth"
 ]
 
 [app_proxy]
-url = "https://attribix-app.fly.dev/app-proxy"
+url = "https://api.attribix.app/app-proxy"
 subpath = "pixel"
 prefix = "apps"
 

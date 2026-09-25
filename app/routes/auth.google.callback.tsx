@@ -40,6 +40,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
   try {
     const token = await exchangeGoogleCodeForToken({ code, redirectUri });
 
+    // Google's consent screen lets users untick individual scopes. Without the
+    // Ads scope every Ads API call fails with ACCESS_TOKEN_SCOPE_INSUFFICIENT,
+    // so refuse to save a connection that can't actually read ad accounts.
+    if (token.scope && !token.scope.includes("https://www.googleapis.com/auth/adwords")) {
+      console.warn("[google-oauth] adwords scope not granted", { shop, scope: token.scope });
+      return errorPage(
+        "Google Ads access was not granted. Please connect again and make sure the checkbox for " +
+          "<b>“See, edit, create and delete your Google Ads accounts and data”</b> is ticked on Google's consent screen."
+      );
+    }
+
     const expiresAt = new Date(Date.now() + (token.expires_in ?? 3600) * 1000);
 
     await db.googleConnection.upsert({
@@ -60,6 +71,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     const isWooCommerce = state?.platform === "woocommerce" || !shop.includes(".myshopify.com");
 
+    // Send the merchant back to the embedded page they started from (e.g. the
+    // Google integration page, where they pick an ad account) — not admin home.
+    const returnTo =
+      typeof state?.returnTo === "string" && state.returnTo.startsWith("/app")
+        ? state.returnTo
+        : "/app/integrations/google";
+    const storeHandle = shop.replace(".myshopify.com", "");
+    const appHandle = process.env.SHOPIFY_APP_HANDLE || "attribix-app";
+    const shopifyReturnUrl = `https://admin.shopify.com/store/${storeHandle}/apps/${appHandle}${returnTo}`;
+
     const successHtml = `<!DOCTYPE html>
 <html>
   <head>
@@ -79,10 +100,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     <div class="card">
       <div class="icon">✅</div>
       <h1>Google Ads connected!</h1>
-      <p>${isWooCommerce ? "You can close this window and refresh your WordPress admin." : "Redirecting you back to Shopify…"}</p>
-      <a href="${isWooCommerce ? "#" : `https://${shop}/admin`}" ${isWooCommerce ? `onclick="window.close(); return false;"` : ""}>${isWooCommerce ? "Close this window" : "Return to Shopify Admin"}</a>
+      <p>${isWooCommerce ? "You can close this window and refresh your WordPress admin." : "Taking you back to Attribix…"}</p>
+      <a href="${isWooCommerce ? "#" : shopifyReturnUrl}" ${isWooCommerce ? `onclick="window.close(); return false;"` : ""}>${isWooCommerce ? "Close this window" : "Back to Attribix"}</a>
     </div>
-    ${isWooCommerce ? "" : `<script>setTimeout(function(){window.location.href="https://${shop}/admin";},2000);</script>`}
+    ${isWooCommerce ? "" : `<script>setTimeout(function(){window.location.href=${JSON.stringify(shopifyReturnUrl)};},1000);</script>`}
   </body>
 </html>`;
 

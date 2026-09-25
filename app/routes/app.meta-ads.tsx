@@ -276,6 +276,9 @@ export default function MetaAdsDetail() {
   }, [campaigns, data.attributedPurchases, windowDays]);
 
   // Top performers
+  // Minimum spend before we draw any performance conclusions (~$20 USD equivalent)
+  const minSpend = ["USD", "GBP", "EUR", "AUD", "CAD", "CHF", "SGD"].includes(currency) ? 20 : 200;
+
   const topCampaign = useMemo(() => {
     const map = new Map<string, { name: string; spend: number; value: number; purchases: number }>();
     for (const r of campaigns) {
@@ -306,16 +309,31 @@ export default function MetaAdsDetail() {
       cur.purchases += safeNum(r.purchases);
       map.set(id, cur);
     }
-    // Only flag conversion/sales campaigns that lost money.
-    // If objective is unknown, fall back to: had real revenue but ROAS < 1.
+    // Only flag conversion/sales campaigns that lost money AND have enough spend to judge.
     const rows = Array.from(map.values()).filter((c) => {
-      if (c.spend <= 0) return false;
+      if (c.spend < minSpend) return false;
       const isSalesCampaign = c.objective ? SALES_OBJECTIVES.has(c.objective) : c.value > 0;
       return isSalesCampaign && c.value / c.spend < 1;
     });
     if (rows.length < 1) return null;
     return rows.sort((a, b) => (a.value / a.spend) - (b.value / b.spend))[0];
-  }, [campaigns]);
+  }, [campaigns, minSpend]);
+
+  // Campaigns below the minimum spend threshold — show as "too early to tell"
+  const tooEarlyCampaign = useMemo(() => {
+    if (worstCampaign) return null; // already showing a real worst campaign
+    const map = new Map<string, { name: string; spend: number; value: number }>();
+    for (const r of campaigns) {
+      const id = String(r.campaignId);
+      const cur = map.get(id) || { name: r.campaignName || id, spend: 0, value: 0 };
+      cur.spend += safeNum(r.spend);
+      cur.value += safeNum(r.purchaseValue);
+      map.set(id, cur);
+    }
+    const rows = Array.from(map.values()).filter((c) => c.spend > 0 && c.spend < minSpend);
+    if (!rows.length) return null;
+    return rows.sort((a, b) => a.spend - b.spend)[0];
+  }, [campaigns, worstCampaign, minSpend]);
 
   const topAd = useMemo(() => {
     const map = new Map<string, { name: string; adSet: string; campaign: string; spend: number; value: number; clicks: number; impressions: number; purchases: number }>();
@@ -656,8 +674,9 @@ export default function MetaAdsDetail() {
                 </div>
               </Grid.Cell>
             )}
-            {worstCampaign && (
+            {(worstCampaign || tooEarlyCampaign) && (
               <Grid.Cell columnSpan={{ xs: 6, sm: 6, md: 6, lg: 6, xl: 6 }}>
+                {worstCampaign ? (
                 <div style={{
                   background: "linear-gradient(135deg, #fff7f7 0%, #fee2e2 100%)",
                   border: "1.5px solid #fca5a5",
@@ -707,6 +726,33 @@ export default function MetaAdsDetail() {
                     </div>
                   </BlockStack>
                 </div>
+                ) : (
+                <div style={{
+                  background: "#f9fafb",
+                  border: "1.5px solid #e5e7eb",
+                  borderRadius: 12, padding: "20px 24px",
+                  height: "100%", boxSizing: "border-box",
+                }}>
+                  <BlockStack gap="300">
+                    <InlineStack align="space-between" blockAlign="start">
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#6b7280", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Too early to tell</p>
+                        <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#374151", marginTop: 4, lineHeight: 1.3 }}>{tooEarlyCampaign!.name}</p>
+                      </div>
+                      <Badge>Low data</Badge>
+                    </InlineStack>
+                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                      <div>
+                        <p style={{ margin: 0, fontSize: 11, color: "#6b7280", fontWeight: 600 }}>Spend so far</p>
+                        <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#374151" }}>{fmtDecimal(tooEarlyCampaign!.spend, currency)}</p>
+                      </div>
+                    </div>
+                    <p style={{ margin: 0, fontSize: 13, color: "#6b7280" }}>
+                      Not enough spend to judge performance yet. Results will appear once this campaign passes {fmtDecimal(minSpend, currency)}.
+                    </p>
+                  </BlockStack>
+                </div>
+                )}
               </Grid.Cell>
             )}
           </Grid>

@@ -38,7 +38,7 @@ export type PlanId = keyof typeof PLAN_LIMITS;
 // ─── In-memory plan cache (single Fly.io instance) ───────────────────────────
 
 const cache = new Map<string, { plan: PlanId; exp: number }>();
-const TTL = 5 * 60 * 1000; // 5 minutes
+const TTL = 30 * 60 * 1000; // 30 minutes
 
 export function setCachedPlan(shop: string, plan: PlanId) {
   cache.set(shop, { plan, exp: Date.now() + TTL });

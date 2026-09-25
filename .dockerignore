@@ -1,5 +1,6 @@
 node_modules
 extensions/node_modules
+.claude
 build
 .cache
 .npm

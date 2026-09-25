@@ -51,6 +51,23 @@ type EventSnapshot = {
 
   email?: string | null;
   phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  city?: string | null;
+  zip?: string | null;
+  state?: string | null;
+  country?: string | null;
+  customerId?: string | null;
+};
+
+// Logged-in customer from the web pixel `init` payload. Lets pre-checkout events
+// (AddToCart, InitiateCheckout) carry email/phone/name when the shopper is signed in.
+type KnownCustomer = {
+  id?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
 };
 
 type TrackBody = {
@@ -345,8 +362,14 @@ function buildEventSnapshot(
   type: string,
   resolvedUrl: string | null,
   resolvedReferrer: string | null,
+  customer: KnownCustomer | null,
 ): EventSnapshot {
   const checkoutId = getBestCheckoutId(ev, resolvedUrl);
+  const checkout = ev?.data?.checkout;
+  const billing = checkout?.billingAddress;
+  const shipping = checkout?.shippingAddress;
+  const pickAddr = (key: string) =>
+    safePickString(billing?.[key]) || safePickString(shipping?.[key]) || null;
 
   return {
     id: safePickString(ev?.id) ?? safePickString(ev?.data?.id) ?? null,
@@ -400,18 +423,43 @@ function buildEventSnapshot(
       safePickString(ev?.data?.email) ||
       safePickString(ev?.data?.checkout?.email) ||
       safePickString(ev?.email) ||
+      safePickString(customer?.email) ||
       null,
 
     phone:
       safePickString(ev?.data?.phone) ||
       safePickString(ev?.data?.checkout?.phone) ||
       safePickString(ev?.phone) ||
+      pickAddr("phone") ||
+      safePickString(customer?.phone) ||
       null,
+
+    firstName: pickAddr("firstName") || safePickString(customer?.firstName) || null,
+    lastName: pickAddr("lastName") || safePickString(customer?.lastName) || null,
+    city: pickAddr("city"),
+    zip: pickAddr("zip"),
+    state: pickAddr("provinceCode") || pickAddr("province"),
+    country: pickAddr("countryCode") || pickAddr("country"),
+    customerId: safePickString(customer?.id),
   };
 }
 
-export default register(({ analytics, settings }) => {
+export default register(({ analytics, settings, init }) => {
   const typedSettings = (settings as Settings) ?? {};
+
+  let customer: KnownCustomer | null = null;
+  try {
+    const c = (init as any)?.data?.customer;
+    if (c) {
+      customer = {
+        id: safePickString(c.id),
+        email: safePickString(c.email),
+        phone: safePickString(c.phone),
+        firstName: safePickString(c.firstName),
+        lastName: safePickString(c.lastName),
+      };
+    }
+  } catch {}
 
   const accountID = typedSettings.accountID ?? typedSettings.accountId;
   const trackingShop = typedSettings.trackingShop ?? typedSettings.shop ?? null;
@@ -443,7 +491,7 @@ export default register(({ analytics, settings }) => {
     sessionId = checkoutScopedSessionId || getOrCreateSessionId();
     touchSession(sessionId);
 
-    const eventSnapshot = buildEventSnapshot(ev, type, url, referrer);
+    const eventSnapshot = buildEventSnapshot(ev, type, url, referrer, customer);
 
     const body: TrackBody = {
       type,
@@ -490,7 +538,9 @@ export default register(({ analytics, settings }) => {
       trackingShop,
       hasTrackingKey: Boolean(trackingKey),
       topLevelKeys: Object.keys(body),
-      eventSnapshot,
+      hasEmail: Boolean(eventSnapshot.email),
+      hasPhone: Boolean(eventSnapshot.phone),
+      hasAddress: Boolean(eventSnapshot.city || eventSnapshot.zip),
     });
 
     try {
@@ -562,7 +612,9 @@ export default register(({ analytics, settings }) => {
   sub("product_viewed");
   sub("collection_viewed");
   sub("search_submitted");
+  sub("product_added_to_cart");
   sub("checkout_started");
+  sub("payment_info_submitted");
   sub("checkout_completed");
 
   // Optional:

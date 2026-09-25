@@ -1,41 +1,17 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
-import { Outlet, useLoaderData, useNavigation } from "@remix-run/react";
+import { Outlet, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+import { Banner, Button, InlineStack, Text } from "@shopify/polaris";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import shopify, { authenticate } from "~/shopify.server";
-
-const APP_BASE = (process.env.SHOPIFY_APP_URL || "https://api.attribix.app").replace(/\/$/, "");
-const WIDGET_SRC = `${APP_BASE}/reviews/widget.js`;
+import { useState } from "react";
 
 // Meta Pixel browser-side tracking is handled by the attribix-pixel web pixel
-// extension (extensions/attribix-pixel), which forwards events to the backend
-// for server-side Meta CAPI delivery. We no longer register a browser ScriptTag
-// for the Meta pixel — that path was redundant with the web pixel extension.
-//
-// The reviews widget is still ScriptTag-based until migrated to a theme app
-// extension block. Once migrated, this function + the read_script_tags /
-// write_script_tags scopes can be removed entirely.
-async function ensureScriptTags(admin) {
-  try {
-    const existing = await admin.graphql(`
-      { scriptTags(first: 20) { edges { node { id src } } } }
-    `);
-    const body = await existing.json();
-    const tags = body?.data?.scriptTags?.edges ?? [];
-    const existingSrcs = tags.map((e) => e.node.src);
+// extension (extensions/attribix-pixel). Storefront widgets (reviews, newsletter,
+// buy now) ship via the attribix-tracker theme app extension — we no longer
+// create ScriptTags (Shopify blocks scriptTagCreate from Oct 1, 2026).
 
-    // Register reviews widget if missing
-    if (!existingSrcs.some((s) => s.includes("reviews/widget"))) {
-      await admin.graphql(`
-        mutation { scriptTagCreate(input: { src: "${WIDGET_SRC}", displayScope: ALL }) { scriptTag { id } userErrors { message } } }
-      `);
-    }
-  } catch (e) {
-    console.error("[app] scriptTag registration error:", e?.message ?? e);
-  }
-}
-
-// Throttle per-shop setup (webhook registration + script tags) so these
+// Throttle per-shop setup (webhook registration) so these
 // expensive Shopify API calls don't block every single page navigation.
 // One run per shop per hour per server process is more than enough.
 const lastSetupMs = new Map();
@@ -50,9 +26,6 @@ function runSetupFireAndForget(shop, session, admin) {
   // Fire-and-forget — never await; page response is not blocked
   shopify.registerWebhooks({ session }).catch((e) =>
     console.error("[app] webhook reg error:", e?.message)
-  );
-  ensureScriptTags(admin).catch((e) =>
-    console.error("[app] scriptTag error:", e?.message)
   );
 }
 
@@ -69,7 +42,7 @@ const PARTNER_SHOPS = new Set([
 
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
-  // Run webhook registration + script tag setup at most once per hour.
+  // Run webhook registration at most once per hour.
   // Non-blocking — response is not delayed by these Shopify API calls.
   runSetupFireAndForget(session.shop, session, admin);
 
@@ -92,7 +65,12 @@ export const loader = async ({ request }) => {
     }
   }
 
+  const { hasLegacyScriptTags, appEmbedUrl } = await import("~/services/themeEditor.server");
+  const legacyScriptTags = await hasLegacyScriptTags(session.shop, admin);
+
   return json({
+    legacyScriptTags,
+    embedUrl: appEmbedUrl(session.shop),
     apiKey:
       process.env.SHOPIFY_API_KEY ||
       process.env.VITE_SHOPIFY_API_KEY ||
@@ -136,7 +114,7 @@ export function shouldRevalidate({
 }
 
 export default function AppRoute() {
-  const { apiKey } = useLoaderData();
+  const { apiKey, legacyScriptTags, embedUrl } = useLoaderData();
   const navigation = useNavigation();
   const isNavigating = navigation.state !== "idle";
 
@@ -169,10 +147,50 @@ export default function AppRoute() {
         <a href="/app/seo">SEO Audit</a>
         <a href="/app/feeds">Feeds</a>
         {/* Setup */}
-        <a href="/app/integrations/meta">Integrations</a>
+        <a href="/app/integrations">Integrations</a>
+        <a href="/app/setup">Setup guide</a>
         <a href="/app/settings">Settings</a>
       </ui-nav-menu>
+      {legacyScriptTags && <LegacyScriptTagBanner embedUrl={embedUrl} />}
       <Outlet />
     </AppProvider>
+  );
+}
+
+// Shown while the shop still has legacy ScriptTags. Shopify stops running them
+// on Mar 1, 2027, so the merchant needs to switch on the "Attribix Widgets"
+// app embed. "I've enabled it" deletes the old tags so widgets don't load twice.
+function LegacyScriptTagBanner({ embedUrl }) {
+  const fetcher = useFetcher();
+  const [opened, setOpened] = useState(false);
+  if (fetcher.data?.ok) return null;
+
+  return (
+    <div style={{ maxWidth: 998, margin: "16px auto 0", padding: "0 16px" }}>
+      <Banner tone="warning" title="Action needed: turn on Attribix Widgets in your theme">
+        <Text as="p">
+          Shopify is retiring script tags. Your reviews and newsletter widgets will stop showing on
+          March 1, 2027 unless you switch on the <strong>Attribix Widgets</strong> app embed. Open the
+          theme editor, make sure the embed is on, click <strong>Save</strong>, then come back here.
+        </Text>
+        <div style={{ marginTop: 12 }}>
+          <InlineStack gap="200">
+            <Button url={embedUrl} target="_blank" onClick={() => setOpened(true)}>
+              Open theme editor
+            </Button>
+            <Button
+              variant={opened ? "primary" : "secondary"}
+              loading={fetcher.state !== "idle"}
+              onClick={() => fetcher.submit({}, { method: "post", action: "/app/legacy-script-tags" })}
+            >
+              I've enabled it and saved
+            </Button>
+          </InlineStack>
+        </div>
+        {fetcher.data?.ok === false && (
+          <Text as="p" tone="critical">Couldn't finish the switch. Please try again.</Text>
+        )}
+      </Banner>
+    </div>
   );
 }

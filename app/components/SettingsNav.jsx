@@ -5,7 +5,7 @@ import { useLocation, Link } from "@remix-run/react";
 const ITEMS = [
   { label: "General",                href: "/app/settings/general",       match: "prefix" },
   { label: "Tracking & Attribution", href: "/app/settings",               match: "exact"  },
-  { label: "Integrations",           href: "/app/integrations/meta",      match: "prefix" },
+  { label: "Integrations",           href: "/app/integrations",           match: "prefix" },
   { label: "Notifications",          href: "/app/settings/notifications",  match: "prefix" },
   { label: "Billing",                href: "/app/billing",                match: "prefix" },
 ];

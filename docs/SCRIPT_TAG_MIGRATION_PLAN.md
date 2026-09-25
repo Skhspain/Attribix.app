@@ -8,9 +8,30 @@ app embed blocks. This document tracks our migration progress and plan.
 | Feature | Current | Target | Status |
 |---|---|---|---|
 | Meta Pixel (browser) | — | `attribix-pixel` web pixel extension | ✅ Migrated |
-| Reviews widget | `/reviews/widget.js` ScriptTag | Theme app extension block | ⏳ Planned |
-| Buy Now button | `buy-now.js` ScriptTag | Theme app extension block | ⏳ Planned |
-| Newsletter widget | `newsletter.js` ScriptTag | Theme app extension block | ⏳ Planned |
+| Reviews widget | `/reviews/widget.js` ScriptTag | `widgets` app embed / `reviews` app block | ✅ Migrated (Sep 2026) |
+| Buy Now button | `buy-now.js` ScriptTag | `buy-now-button` app block | ✅ Migrated (Sep 2026) |
+| Newsletter widget | `newsletter.js` ScriptTag | `widgets` app embed | ✅ Migrated (Sep 2026) |
+
+## Shopify deadlines
+
+- **Oct 1, 2026:** `scriptTagCreate` / update no longer allowed. We stopped
+  creating ScriptTags before this date.
+- **Mar 1, 2027:** existing ScriptTags stop running.
+
+## Current state (Sep 2026)
+
+- No code path creates ScriptTags anymore.
+- `extensions/attribix-tracker/blocks/widgets.liquid` ("Attribix Widgets"
+  app embed) loads `/reviews/widget.js` on product pages and
+  `/scripts/newsletter-widget.js` everywhere.
+- Shops that still have legacy ScriptTags see a banner in the app layout
+  (`LegacyScriptTagBanner` in `app/routes/app.jsx`) linking to the theme
+  editor. Confirming deletes the old tags via `/app/legacy-script-tags`.
+- Deep links live in `app/services/themeEditor.server.ts`.
+
+**Remaining cleanup (after most merchants have switched, before Mar 1, 2027):**
+remove the `read_script_tags` / `write_script_tags` scopes, the legacy
+banner + `app.legacy-script-tags.ts`, and `/pixel/loader.js`.
 
 ## Why this is staged
 

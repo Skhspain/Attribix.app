@@ -151,15 +151,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const googleConnected = !!(googleConn?.adCustomerId);
   const lastSync = metaConn?.lastSyncedAt ?? null;
 
-  // Fetch store currency from Shopify as the authoritative source;
-  // fall back to user-configured setting, then "USD"
-  let storeCurrency: string = (trackingSettings as any)?.storeCurrency ?? "USD";
+  let storeCurrency: string;
   try {
     const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
     const shopData = await shopRes.json();
-    storeCurrency = shopData?.data?.shop?.currencyCode || storeCurrency;
+    storeCurrency = shopData?.data?.shop?.currencyCode
+      || (trackingSettings as any)?.storeCurrency
+      || "USD";
   } catch {
-    // non-fatal — use DB/fallback value
+    storeCurrency = (trackingSettings as any)?.storeCurrency || "USD";
   }
 
   return json({
@@ -270,7 +270,7 @@ export default function CreativeAnalyticsPage() {
   const {
     adRows, campaignRows, dailyTrend,
     totalSpend, totalRevFromAds, totalImpressions, totalClicks, totalPurchases,
-    metaConnected, googleConnected, lastSync, days,
+    metaConnected, googleConnected, lastSync, days, storeCurrency,
   } = useLoaderData<typeof loader>();
 
   const [windowDays, setWindowDays] = useState(String(days));
@@ -279,7 +279,7 @@ export default function CreativeAnalyticsPage() {
   const overallRoas = totalSpend > 0 ? totalRevFromAds / totalSpend : 0;
   const overallCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
   const overallCpa = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
-  const currency = data.storeCurrency || "USD";
+  const currency = storeCurrency || "USD";
 
   const maxCampSpend = Math.max(...campaignRows.map(c => c.spend), 1);
   const maxAdSpend = Math.max(...adRows.map(a => a.spend), 1);

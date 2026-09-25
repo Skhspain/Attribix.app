@@ -160,6 +160,8 @@ function MetaIntegrationsInner({ data }) {
   const [pixelSaved, setPixelSaved] = useState(false);
   const [availablePixels, setAvailablePixels] = useState([]);
   const [pixelsLoading, setPixelsLoading] = useState(false);
+  const [pixelsError, setPixelsError] = useState(false);
+  const [pixelsRetryKey, setPixelsRetryKey] = useState(0);
   const [pixelInputMode, setPixelInputMode] = useState("auto"); // "auto" or "manual"
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPixelSelector, setShowPixelSelector] = useState(false);
@@ -193,18 +195,36 @@ function MetaIntegrationsInner({ data }) {
   // Auto-fetch pixels from Meta
   useEffect(() => {
     if (!connected || !data.adAccountId) return;
+    let cancelled = false;
     setPixelsLoading(true);
-    authFetch("/api/meta/pixels")
+    setPixelsError(false);
+
+    const timeoutMs = 15000;
+    const timeout = new Promise(function(_, reject) {
+      setTimeout(function() { reject(new Error("Timed out loading pixels")); }, timeoutMs);
+    });
+
+    Promise.race([authFetch("/api/meta/pixels"), timeout])
       .then(function(r) { return r.json(); })
       .then(function(result) {
+        if (cancelled) return;
         if (result.ok && result.pixels && result.pixels.length > 0) {
           setAvailablePixels(result.pixels);
           if (!pixelId && result.pixels[0]) setPixelId(result.pixels[0].id);
+        } else if (!result.ok) {
+          setPixelsError(true);
         }
       })
-      .catch(function(e) { console.error(e); })
-      .finally(function() { setPixelsLoading(false); });
-  }, [connected, data.adAccountId]);
+      .catch(function(e) {
+        console.error(e);
+        if (!cancelled) setPixelsError(true);
+      })
+      .finally(function() {
+        if (!cancelled) setPixelsLoading(false);
+      });
+
+    return function() { cancelled = true; };
+  }, [connected, data.adAccountId, pixelsRetryKey]);
 
   async function fetchAdAccounts() {
     try {
@@ -458,6 +478,16 @@ function MetaIntegrationsInner({ data }) {
                           <Spinner size="small" />
                           <Text as="p" variant="bodySm" tone="subdued">Loading pixels…</Text>
                         </InlineStack>
+                      ) : pixelsError ? (
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text as="p" variant="bodySm" tone="critical">Couldn't load pixels from Meta.</Text>
+                          <button
+                            onClick={() => setPixelsRetryKey((k) => k + 1)}
+                            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
+                          >
+                            Retry
+                          </button>
+                        </InlineStack>
                       ) : !showPixelSelector ? (
                         <button
                           onClick={() => setShowPixelSelector(true)}
@@ -567,7 +597,7 @@ function MetaIntegrationsInner({ data }) {
           <Layout.Section>
             <Banner tone="info">
               <Text as="p">
-                ✓ Ad data syncs automatically every 24 hours. To sync manually or view campaign performance, go to{" "}
+                ✓ Ad data syncs automatically every hour. To sync manually or view campaign performance, go to{" "}
                 <Link to="/app/meta-ads" style={{ color: "#2563eb", fontWeight: 600 }}>Meta Ads →</Link>
               </Text>
             </Banner>
@@ -609,6 +639,18 @@ function MetaIntegrationsInner({ data }) {
                   <InlineStack gap="200" blockAlign="center">
                     <Spinner size="small" />
                     <Text as="p" variant="bodySm" tone="subdued">Loading pixels from Meta...</Text>
+                  </InlineStack>
+                )}
+
+                {pixelsError && !pixelsLoading && (
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="critical">Couldn't load pixels from Meta.</Text>
+                    <button
+                      onClick={() => setPixelsRetryKey((k) => k + 1)}
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
+                    >
+                      Retry
+                    </button>
                   </InlineStack>
                 )}
 

@@ -219,6 +219,10 @@ model TrackingSettings {
   // Onboarding
   onboardingCompletedAt DateTime?
 
+  // Consent mode (Google Consent Mode v2)
+  consentModeEnabled   Boolean  @default(false)
+  consentModeDefault   String   @default("denied")
+
   // Notification settings
   storeCurrency        String?
   notifyEmail          String?
@@ -317,6 +321,11 @@ model NewsletterSettings {
   replyTo           String  @default("")
   footerText        String  @default("")
   monthlyEmailLimit Int     @default(2500)
+
+  // Resend domain verification
+  resendDomainId      String?
+  resendDomainStatus  String?  // "pending" | "verified" | "failed"
+  resendDomainRecords Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

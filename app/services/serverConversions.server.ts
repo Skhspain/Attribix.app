@@ -27,6 +27,10 @@ type SendServerConversionInput = {
   zip?: string | null;
   state?: string | null;
   country?: string | null;
+  contentIds?: string[] | null;
+  contentType?: string | null;
+  numItems?: number | null;
+  searchString?: string | null;
   // Per-shop credentials — take precedence over global env vars.
   // Populated from trackingSettings.fbPixelId / fbToken for multi-tenant correctness.
   shopPixelId?: string | null;
@@ -42,6 +46,14 @@ function hashIfPresent(value?: string | null) {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
   return sha256(trimmed);
+}
+
+// Meta match keys must be normalized before hashing or they never match:
+// phone = digits only (with country code), zip/city = no spaces, names = no punctuation.
+function hashNormalized(value: string | null | undefined, strip: RegExp) {
+  if (!value) return undefined;
+  const cleaned = value.trim().toLowerCase().replace(strip, "");
+  return cleaned ? sha256(cleaned) : undefined;
 }
 
 function buildFbcFromFbclid(fbclid?: string | null) {
@@ -66,6 +78,27 @@ function getMetaAccessToken() {
   );
 }
 
+function buildMetaCustomData(input: SendServerConversionInput) {
+  const custom_data: Record<string, unknown> = {};
+  const hasValue = typeof input.value === "number" && Number.isFinite(input.value);
+  // Purchase always needs value + currency; other events only send them when known,
+  // so we don't report a fake "0 USD" for every product view.
+  if (hasValue || input.eventName === "Purchase") {
+    custom_data.value = hasValue ? input.value : 0;
+    custom_data.currency = input.currency || "USD";
+  } else if (input.currency) {
+    custom_data.currency = input.currency;
+  }
+  if (input.orderId) custom_data.order_id = input.orderId;
+  if (input.contentIds?.length) {
+    custom_data.content_ids = input.contentIds;
+    custom_data.content_type = input.contentType || "product";
+  }
+  if (typeof input.numItems === "number") custom_data.num_items = input.numItems;
+  if (input.searchString) custom_data.search_string = input.searchString;
+  return custom_data;
+}
+
 function buildMetaPayload(input: SendServerConversionInput) {
   const user_data: Record<string, unknown> = {};
 
@@ -78,11 +111,11 @@ function buildMetaPayload(input: SendServerConversionInput) {
 
   if (input.externalId) user_data.external_id = [hashIfPresent(input.externalId)].filter(Boolean);
   if (input.email) user_data.em = [hashIfPresent(input.email)].filter(Boolean);
-  if (input.phone) user_data.ph = [hashIfPresent(input.phone)].filter(Boolean);
-  if (input.firstName) user_data.fn = [hashIfPresent(input.firstName)].filter(Boolean);
-  if (input.lastName) user_data.ln = [hashIfPresent(input.lastName)].filter(Boolean);
-  if (input.city) user_data.ct = [hashIfPresent(input.city)].filter(Boolean);
-  if (input.zip) user_data.zp = [hashIfPresent(input.zip)].filter(Boolean);
+  if (input.phone) user_data.ph = [hashNormalized(input.phone, /\D/g)].filter(Boolean);
+  if (input.firstName) user_data.fn = [hashNormalized(input.firstName, /[\s\p{P}]/gu)].filter(Boolean);
+  if (input.lastName) user_data.ln = [hashNormalized(input.lastName, /[\s\p{P}]/gu)].filter(Boolean);
+  if (input.city) user_data.ct = [hashNormalized(input.city, /[\s\p{P}]/gu)].filter(Boolean);
+  if (input.zip) user_data.zp = [hashNormalized(input.zip, /[\s-]/g)].filter(Boolean);
   if (input.state) user_data.st = [hashIfPresent(input.state)].filter(Boolean);
   if (input.country) user_data.country = [hashIfPresent(input.country)].filter(Boolean);
 
@@ -95,11 +128,7 @@ function buildMetaPayload(input: SendServerConversionInput) {
         action_source: input.actionSource || "website",
         event_source_url: input.sourceUrl || input.url || undefined,
         user_data,
-        custom_data: {
-          currency: input.currency || "USD",
-          value: typeof input.value === "number" ? input.value : 0,
-          order_id: input.orderId || undefined,
-        },
+        custom_data: buildMetaCustomData(input),
       },
     ],
   };
@@ -200,8 +229,11 @@ export async function sendServerConversions(input: SendServerConversionInput) {
     const googleClientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
     const googleLoginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
 
-    // Only attempt upload when we have a gclid to match against
-    if (!input.gclid) {
+    // Only Purchase is a conversion for Google Ads — funnel events (ViewContent,
+    // InitiateCheckout, …) must never be uploaded to the purchase conversion action.
+    if (input.eventName !== "Purchase") {
+      results.google = { ok: false, skipped: true, reason: "Not a Purchase event" };
+    } else if (!input.gclid) {
       results.google = { ok: false, skipped: true, reason: "No gclid — skipping Google Ads upload" };
     } else if (!googleConversionActionId || !googleDeveloperToken || !googleClientId || !googleClientSecret) {
       results.google = { ok: false, skipped: true, reason: "Google Ads environment variables are not fully configured" };
@@ -307,7 +339,10 @@ export async function sendServerConversions(input: SendServerConversionInput) {
     const tiktokPixelId = process.env.TIKTOK_PIXEL_ID;
     const tiktokAccessToken = process.env.TIKTOK_ACCESS_TOKEN;
 
-    if (!tiktokPixelId || !tiktokAccessToken) {
+    // The TikTok payload is hard-wired to PlaceAnOrder, so only forward purchases.
+    if (input.eventName !== "Purchase") {
+      results.tiktok = { ok: false, skipped: true, reason: "Not a Purchase event" };
+    } else if (!tiktokPixelId || !tiktokAccessToken) {
       results.tiktok = { ok: false, skipped: true, reason: "TIKTOK_PIXEL_ID / TIKTOK_ACCESS_TOKEN not configured" };
     } else {
       const tiktokPayload = buildTiktokPayload(input, tiktokPixelId);

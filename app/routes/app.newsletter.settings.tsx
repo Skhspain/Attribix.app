@@ -6,10 +6,16 @@ import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import {
+  createResendDomain,
+  getResendDomain,
+  verifyResendDomain,
+  deleteResendDomain,
+} from "~/services/resend-api.server";
+import {
   Banner, Badge, BlockStack, Button, Card, Checkbox, Divider,
   InlineStack, Page, Select, Text, TextField,
 } from "@shopify/polaris";
-import { useState } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
@@ -48,10 +54,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const monthlyEmailLimit: number = settings?.monthlyEmailLimit ?? 2500;
 
   return json({
-    settings: settings ?? { fromName: "", fromEmail: "", replyTo: "", footerText: "", monthlyEmailLimit: 2500 },
+    settings: settings ?? { fromName: "", fromEmail: "", replyTo: "", footerText: "", monthlyEmailLimit: 2500, resendDomainId: null, resendDomainStatus: null, resendDomainRecords: null },
     domainStatus,
     smtpConfigured: !!process.env.SMTP_HOST,
-    // If SMTP_FROM_EMAIL is set as a fallback the sender warning is a false alarm
     envFromEmail: process.env.SMTP_FROM_EMAIL || "",
     emailsSentThisMonth,
     monthlyEmailLimit,
@@ -66,7 +71,84 @@ export async function action({ request }: ActionFunctionArgs) {
   const shop = session.shop;
   const anyDb = db as any;
   const body = await request.json().catch(() => ({}));
+  const { intent } = body as { intent?: string };
 
+  const settings = await anyDb.newsletterSettings?.findUnique?.({ where: { shop } }).catch(() => null);
+
+  // ── Domain: register ────────────────────────────────────────────────────
+  if (intent === "domain_register") {
+    const fe: string = body.fromEmail || settings?.fromEmail || "";
+    if (!fe || !fe.includes("@")) {
+      return json({ ok: false, error: "Enter a valid From email address first." });
+    }
+    const domain = fe.split("@")[1].toLowerCase();
+
+    if (settings?.resendDomainId) {
+      const existing = await getResendDomain(settings.resendDomainId);
+      if (existing.ok && existing.domain.name === domain) {
+        return json({ ok: true, domain: existing.domain });
+      }
+      await deleteResendDomain(settings.resendDomainId).catch(() => null);
+    }
+
+    const result = await createResendDomain(domain);
+    if (!result.ok) return json({ ok: false, error: result.error });
+
+    await anyDb.newsletterSettings?.upsert?.({
+      where: { shop },
+      create: {
+        shop,
+        fromEmail: settings?.fromEmail ?? "",
+        fromName: settings?.fromName ?? "",
+        replyTo: settings?.replyTo ?? "",
+        footerText: settings?.footerText ?? "",
+        resendDomainId: result.domain.id,
+        resendDomainStatus: result.domain.status,
+        resendDomainRecords: result.domain.records,
+      },
+      update: {
+        resendDomainId: result.domain.id,
+        resendDomainStatus: result.domain.status,
+        resendDomainRecords: result.domain.records,
+      },
+    }).catch(() => null);
+
+    return json({ ok: true, domain: result.domain });
+  }
+
+  // ── Domain: verify ──────────────────────────────────────────────────────
+  if (intent === "domain_verify") {
+    if (!settings?.resendDomainId) {
+      return json({ ok: false, error: "No domain registered yet." });
+    }
+    const result = await verifyResendDomain(settings.resendDomainId);
+    if (!result.ok) return json({ ok: false, error: result.error });
+
+    await anyDb.newsletterSettings?.update?.({
+      where: { shop },
+      data: {
+        resendDomainStatus: result.domain.status,
+        resendDomainRecords: result.domain.records,
+      },
+    }).catch(() => null);
+
+    return json({ ok: true, domain: result.domain });
+  }
+
+  // ── Domain: remove ──────────────────────────────────────────────────────
+  if (intent === "domain_remove") {
+    if (settings?.resendDomainId) {
+      await deleteResendDomain(settings.resendDomainId).catch(() => null);
+    }
+    await anyDb.newsletterSettings?.update?.({
+      where: { shop },
+      data: { resendDomainId: null, resendDomainStatus: null, resendDomainRecords: null },
+    }).catch(() => null);
+
+    return json({ ok: true, removed: true });
+  }
+
+  // ── Default: save settings ──────────────────────────────────────────────
   await anyDb.newsletterSettings?.upsert?.({
     where: { shop },
     create: { shop, fromName: body.fromName ?? "", fromEmail: body.fromEmail ?? "", replyTo: body.replyTo ?? "", footerText: body.footerText ?? "" },
@@ -97,18 +179,20 @@ function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
   );
 }
 
-function StubTab({ name }: { name: string }) {
+// ─── Copy cell ───────────────────────────────────────────────────────────────
+
+function CopyCell({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <Card>
-      <div style={{ padding: "48px 0", textAlign: "center" }}>
-        <Text as="p" variant="headingMd">{name}</Text>
-        <div style={{ marginTop: 8 }}>
-          <Text as="p" variant="bodySm" tone="subdued">
-            {name} settings will be available in an upcoming update.
-          </Text>
-        </div>
-      </div>
-    </Card>
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span style={{ fontFamily: "monospace", fontSize: 11, wordBreak: "break-all" }}>{value}</span>
+      <button
+        onClick={() => { navigator.clipboard.writeText(value).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}
+        style={{ flexShrink: 0, padding: "2px 8px", fontSize: 11, border: "1px solid #d1d5db", borderRadius: 4, background: copied ? "#dcfce7" : "#f9fafb", cursor: "pointer", color: copied ? "#166534" : "#374151" }}
+      >
+        {copied ? "Copied!" : "Copy"}
+      </button>
+    </div>
   );
 }
 
@@ -118,6 +202,7 @@ export default function NewsletterSettingsPage() {
   const { settings, domainStatus, smtpConfigured, envFromEmail, emailsSentThisMonth, monthlyEmailLimit, shop } =
     useLoaderData<typeof loader>();
   const fetcher = useFetcher<any>();
+  const domainFetcher = useFetcher<any>();
 
   const [activeTab, setActiveTab] = useState<Tab>("General");
 
@@ -139,12 +224,46 @@ export default function NewsletterSettingsPage() {
   const [physicalAddress, setPhysicalAddress] = useState("");
   const [useCustomReplyTo, setUseCustomReplyTo] = useState(!!settings.replyTo);
 
+  // Domain verification state
+  const [domainData, setDomainData] = useState<any>(
+    settings.resendDomainId
+      ? { id: settings.resendDomainId, status: settings.resendDomainStatus, records: settings.resendDomainRecords, name: settings.fromEmail?.split("@")[1] }
+      : null
+  );
+  const [domainError, setDomainError] = useState<string | null>(null);
+  const [lastDomainIntent, setLastDomainIntent] = useState<string | null>(null);
+
+  // Handle domain fetcher results
+  useEffect(() => {
+    if (domainFetcher.state === "idle" && domainFetcher.data !== undefined && lastDomainIntent) {
+      if (domainFetcher.data?.ok) {
+        if (lastDomainIntent === "domain_remove") {
+          setDomainData(null);
+        } else if (domainFetcher.data.domain) {
+          setDomainData(domainFetcher.data.domain);
+        }
+        setDomainError(null);
+      } else {
+        setDomainError(domainFetcher.data?.error ?? "Something went wrong");
+      }
+      setLastDomainIntent(null);
+    }
+  }, [domainFetcher.state, domainFetcher.data, lastDomainIntent]);
+
+  const handleDomainAction = useCallback((intent: string) => {
+    setLastDomainIntent(intent);
+    setDomainError(null);
+    domainFetcher.submit(
+      { intent, fromEmail },
+      { method: "POST", encType: "application/json" }
+    );
+  }, [domainFetcher, fromEmail]);
+
+  const domainLoading = domainFetcher.state !== "idle";
+
   const isSaving = fetcher.state !== "idle";
-  const saved = fetcher.data?.ok && !isSaving;
-  // Only warn when SMTP is live AND there's no env-var fallback AND both fields are blank.
-  // If SMTP_FROM_EMAIL is set server-side, sending works fine even with empty settings.
+  const saved = fetcher.data?.ok && !fetcher.data?.domain && !fetcher.data?.removed && !isSaving;
   const senderUnconfigured = smtpConfigured && !envFromEmail && (!fromEmail || !fromName);
-  const domainFromEmail = fromEmail.includes("@") ? fromEmail.split("@")[1] : null;
 
   function handleSave() {
     fetcher.submit(
@@ -362,49 +481,146 @@ export default function NewsletterSettingsPage() {
         {/* ── DOMAINS ──────────────────────────────────────────────── */}
         {activeTab === "Domains" && (
           <BlockStack gap="400">
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center">
-                  <BlockStack gap="050">
-                    <Text as="h2" variant="headingSm" fontWeight="semibold">Sender domain health</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">Proper DNS records ensure your emails land in the inbox, not spam.</Text>
+            {domainError && (
+              <Banner tone="critical" onDismiss={() => setDomainError(null)}>
+                <Text as="p">{domainError}</Text>
+              </Banner>
+            )}
+
+            {/* No domain registered yet */}
+            {!domainData && (
+              <Card>
+                <BlockStack gap="400">
+                  <BlockStack gap="100">
+                    <Text as="h2" variant="headingSm" fontWeight="semibold">Connect your sending domain</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Verify your domain so emails are sent from your own address (e.g. hello@yourstore.com) instead of newsletters@attribix.email. This also improves deliverability.
+                    </Text>
                   </BlockStack>
-                  {domainStatus === "ok" && <Badge tone="success">✓ Looks good</Badge>}
-                  {domainStatus === "warning" && <Badge tone="warning">Action needed</Badge>}
-                  {domainStatus === "unconfigured" && <Badge tone="attention">Set a from email first</Badge>}
-                </InlineStack>
-
-                {domainStatus === "warning" && domainFromEmail && (
-                  <Banner tone="warning">
-                    <BlockStack gap="200">
-                      <Text as="p" variant="bodyMd" fontWeight="semibold">SPF record not detected for {domainFromEmail}</Text>
-                      <Text as="p" variant="bodySm">Without SPF, your emails may be marked as spam. Add this TXT record to your DNS:</Text>
-                      <div style={{ background: "#fff", borderRadius: 6, padding: "8px 14px", fontFamily: "monospace", fontSize: 12, border: "1px solid #fcd34d" }}>
-                        <div style={{ color: "#6b7280", marginBottom: 4 }}>Host: {domainFromEmail}</div>
-                        <div>v=spf1 include:attribix-app.fly.dev ~all</div>
-                      </div>
-                    </BlockStack>
-                  </Banner>
-                )}
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px,1fr))", gap: 12 }}>
-                  {[
-                    { label: "SPF record", desc: "Authorises your sending server", status: domainStatus === "ok" ? "ok" : domainStatus === "warning" ? "warn" : "none", tip: `v=spf1 include:attribix-app.fly.dev ~all` },
-                    { label: "DKIM signing", desc: "Cryptographic email signature", status: "info", tip: "Managed by your SMTP provider" },
-                    { label: "DMARC policy", desc: "Protects your domain from spoofing", status: "info", tip: `v=DMARC1; p=none; rua=mailto:${fromEmail || "you@domain.com"}` },
-                  ].map(({ label, desc, status, tip }) => (
-                    <div key={label} style={{ border: `1.5px solid ${status === "ok" ? "#86efac" : status === "warn" ? "#fcd34d" : "#e5e7eb"}`, borderRadius: 8, padding: "12px 14px", background: status === "ok" ? "#f0fdf4" : status === "warn" ? "#fffbeb" : "#f9fafb" }}>
-                      <InlineStack gap="100" blockAlign="center">
-                        <span style={{ fontSize: 14 }}>{status === "ok" ? "✅" : status === "warn" ? "⚠️" : "ℹ️"}</span>
-                        <Text as="p" variant="bodySm" fontWeight="semibold">{label}</Text>
+                  <Divider />
+                  {!fromEmail ? (
+                    <Banner tone="warning">
+                      <Text as="p">Set your From email address in the Email tab first, then come back here to verify the domain.</Text>
+                    </Banner>
+                  ) : (
+                    <BlockStack gap="300">
+                      <Text as="p" variant="bodySm">
+                        Domain to verify: <strong>{fromEmail.split("@")[1]}</strong> (from your From email: {fromEmail})
+                      </Text>
+                      <InlineStack>
+                        <Button
+                          variant="primary"
+                          loading={domainLoading}
+                          onClick={() => handleDomainAction("domain_register")}
+                        >
+                          Connect {fromEmail.split("@")[1]}
+                        </Button>
                       </InlineStack>
-                      <Text as="p" variant="bodySm" tone="subdued">{desc}</Text>
-                      {tip && <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 10, color: "#6b7280", wordBreak: "break-all" }}>{tip}</div>}
-                    </div>
-                  ))}
-                </div>
-              </BlockStack>
-            </Card>
+                    </BlockStack>
+                  )}
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Domain registered — show DNS records */}
+            {domainData && domainData.status !== "verified" && (
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingSm" fontWeight="semibold">Add DNS records for {domainData.name ?? fromEmail.split("@")[1]}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Add these records to your domain registrar (e.g. GoDaddy, Cloudflare, Namecheap), then click "Check verification".
+                      </Text>
+                    </BlockStack>
+                    <Badge tone="warning">Pending verification</Badge>
+                  </InlineStack>
+                  <Divider />
+
+                  {/* DNS records table */}
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+                          {["Type", "Host / Name", "Value", "Status"].map(h => (
+                            <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(domainData.records ?? []).map((rec: any, i: number) => (
+                          <tr key={i} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                            <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+                              <Badge>{rec.type}</Badge>
+                            </td>
+                            <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+                              <CopyCell value={rec.name} />
+                            </td>
+                            <td style={{ padding: "8px 12px", maxWidth: 320 }}>
+                              <CopyCell value={rec.priority != null ? `${rec.value} (priority: ${rec.priority})` : rec.value} />
+                            </td>
+                            <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+                              {rec.status === "verified"
+                                ? <Badge tone="success">Verified</Badge>
+                                : <Badge tone="attention">Not detected</Badge>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <InlineStack gap="300" blockAlign="center">
+                    <Button
+                      variant="primary"
+                      loading={domainLoading}
+                      onClick={() => handleDomainAction("domain_verify")}
+                    >
+                      Check verification
+                    </Button>
+                    <Button
+                      tone="critical"
+                      variant="plain"
+                      loading={domainLoading}
+                      onClick={() => handleDomainAction("domain_remove")}
+                    >
+                      Remove domain
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+            )}
+
+            {/* Domain verified */}
+            {domainData && domainData.status === "verified" && (
+              <Card>
+                <BlockStack gap="400">
+                  <InlineStack align="space-between" blockAlign="center">
+                    <BlockStack gap="100">
+                      <Text as="h2" variant="headingSm" fontWeight="semibold">{domainData.name ?? fromEmail.split("@")[1]}</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Emails will be sent from your own domain. Replies go directly to your inbox.
+                      </Text>
+                    </BlockStack>
+                    <Badge tone="success">Verified</Badge>
+                  </InlineStack>
+                  <Divider />
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Your campaigns will now send from <strong>{fromEmail}</strong> instead of newsletters@attribix.email.
+                  </Text>
+                  <InlineStack>
+                    <Button
+                      tone="critical"
+                      variant="plain"
+                      loading={domainLoading}
+                      onClick={() => handleDomainAction("domain_remove")}
+                    >
+                      Disconnect domain
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+              </Card>
+            )}
           </BlockStack>
         )}
 

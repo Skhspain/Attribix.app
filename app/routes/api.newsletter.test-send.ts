@@ -28,7 +28,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const { campaignId, shop, token, testEmail } = body as Record<string, string>;
+  const { campaignId, shop, token, testEmail, subject: bodySubject, fromName: bodyFromName, previewText: bodyPreviewText } = body as Record<string, string>;
 
   if (!campaignId || !shop || !token || !testEmail) {
     return json({ ok: false, error: "Missing required fields" }, { status: 400 });
@@ -57,14 +57,26 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, error: "No email content yet — design your email first, then send a test." });
   }
 
-  const fromName = campaign.fromName || "Newsletter";
-  const fromEmail = campaign.fromEmail || process.env.SMTP_FROM_EMAIL || "";
+  const anyDb2 = db as any;
+  const nlSettings = await anyDb2.newsletterSettings?.findUnique?.({
+    where: { shop },
+    select: { resendDomainStatus: true },
+  }).catch(() => null);
+  const domainVerified = nlSettings?.resendDomainStatus === "verified";
+
+  const fromName = bodyFromName || campaign.fromName || "Newsletter";
+  // Use merchant's domain if verified; otherwise fall back to shared sending domain
+  const campaignFromEmail = bodyFromName ? (campaign.fromEmail || "") : campaign.fromEmail;
+  const fromEmail = domainVerified && campaignFromEmail
+    ? campaignFromEmail
+    : process.env.SMTP_FROM_EMAIL || "";
   if (!fromEmail) {
     return json({
       ok: false,
-      error: "Sender email not configured. Go to Newsletter → Settings and set a From email address first.",
+      error: "Sender email not configured. Contact support to enable sending.",
     });
   }
+  const replyTo = campaign.replyTo || (domainVerified ? undefined : campaign.fromEmail) || undefined;
 
   const shopDomain = shop.replace(".myshopify.com", "");
   const html = campaign.htmlContent
@@ -79,9 +91,9 @@ export async function action({ request }: ActionFunctionArgs) {
   const result = await sendEmail({
     from: `${fromName} <${fromEmail}>`,
     to: testEmail,
-    subject: `[TEST] ${campaign.subject || "(no subject)"}`,
+    subject: `[TEST] ${bodySubject || campaign.subject || "(no subject)"}`,
     html,
-    replyTo: campaign.replyTo || undefined,
+    replyTo,
   });
 
   return json(

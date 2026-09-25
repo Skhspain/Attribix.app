@@ -29,43 +29,46 @@ export async function loader({ request }) {
   const plan = await getShopPlan(shop, admin);
   const historyCutoff = getHistoryCutoff(plan);
 
-  const purchases = await db.purchase.findMany({
-    where: { shop, createdAt: { gte: historyCutoff } },
-    orderBy: { createdAt: "desc" },
-    take: 250,
-    select: {
-      id: true,
-      orderId: true,
-      totalValue: true,
-      currency: true,
-      utmSource: true,
-      utmMedium: true,
-      utmCampaign: true,
-      fbclid: true,
-      gclid: true,
-      landingPage: true,
-      referrer: true,
-      createdAt: true,
-      customerName: true,
-    },
-  }).catch(() => []);
+  const [purchases, totalRevenue, attributedCount, totalCount, shopCurrencyRes] = await Promise.all([
+    db.purchase.findMany({
+      where: { shop, createdAt: { gte: historyCutoff } },
+      orderBy: { createdAt: "desc" },
+      take: 250,
+      select: {
+        id: true,
+        orderId: true,
+        totalValue: true,
+        currency: true,
+        utmSource: true,
+        utmMedium: true,
+        utmCampaign: true,
+        fbclid: true,
+        gclid: true,
+        landingPage: true,
+        referrer: true,
+        createdAt: true,
+        customerName: true,
+      },
+    }).catch(() => []),
+    db.purchase.aggregate({
+      where: { shop, createdAt: { gte: historyCutoff } },
+      _sum: { totalValue: true },
+    }).catch(() => ({ _sum: { totalValue: 0 } })),
+    db.purchase.count({
+      where: { shop, createdAt: { gte: historyCutoff }, utmSource: { not: null } },
+    }).catch(() => 0),
+    db.purchase.count({ where: { shop, createdAt: { gte: historyCutoff } } }).catch(() => 0),
+    admin.graphql(`{ shop { currencyCode } }`).then(r => r.json()).catch(() => null),
+  ]);
 
-  const totalRevenue = await db.purchase.aggregate({
-    where: { shop, createdAt: { gte: historyCutoff } },
-    _sum: { totalValue: true },
-  }).catch(() => ({ _sum: { totalValue: 0 } }));
-
-  const attributedCount = await db.purchase.count({
-    where: { shop, createdAt: { gte: historyCutoff }, utmSource: { not: null } },
-  }).catch(() => 0);
-
-  const totalCount = await db.purchase.count({ where: { shop, createdAt: { gte: historyCutoff } } }).catch(() => 0);
+  const storeCurrency = shopCurrencyRes?.data?.shop?.currencyCode || "USD";
 
   return json({
     purchases,
     totalRevenue: totalRevenue._sum.totalValue ?? 0,
     attributedCount,
     totalCount,
+    storeCurrency,
   });
 }
 
@@ -133,7 +136,7 @@ function truncateUrl(url, maxLen = 45) {
 }
 
 export default function AppOrders() {
-  const { purchases, totalRevenue, attributedCount, totalCount } = useLoaderData();
+  const { purchases, totalRevenue, attributedCount, totalCount, storeCurrency } = useLoaderData();
   const navigate = useNavigate();
   const backfillFetcher = useFetcher();
 
@@ -248,7 +251,7 @@ export default function AppOrders() {
           <Card>
             <BlockStack gap="100">
               <Text as="p" variant="bodySm" tone="subdued">Total revenue</Text>
-              <Text as="p" variant="headingLg">{formatMoney(totalRevenue)}</Text>
+              <Text as="p" variant="headingLg">{formatMoney(totalRevenue, storeCurrency)}</Text>
             </BlockStack>
           </Card>
           <Card>
@@ -288,7 +291,7 @@ export default function AppOrders() {
             </InlineStack>
             <OrdersChart
               data={chartData}
-              currency={purchases[0]?.currency || "USD"}
+              currency={purchases[0]?.currency || storeCurrency || "USD"}
             />
           </BlockStack>
         </Card>
@@ -314,7 +317,7 @@ export default function AppOrders() {
                 <BlockStack gap="050">
                   <Text as="p" variant="headingXl" fontWeight="bold">{share}%</Text>
                   <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
-                  <Text as="p" variant="bodySm" tone="subdued">{orders} orders · {formatMoney(revenue)}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">{orders} orders · {formatMoney(revenue, storeCurrency)}</Text>
                 </BlockStack>
               </div>
             ))}

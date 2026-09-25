@@ -136,11 +136,19 @@ function GoogleIntegrationsInner({ data }) {
     }
   }, [data.connected, data.fromOnboarding]);
 
+  // Coming back from Google OAuth with no ad account chosen yet — load the
+  // account list straight away so the merchant can pick one.
+  useEffect(() => {
+    if (data.connected && !data.adCustomerId && !data.fromOnboarding) {
+      loadAdAccounts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.connected, data.adCustomerId]);
+
   function startGoogleOAuth() {
     const fromParam = data.fromOnboarding ? "?from=onboarding" : "";
     const returnTo = `/app/integrations/google${fromParam}`;
-    // Route through www.attribix.app to avoid Chrome lookalike warning on attribix-app.fly.dev
-    const startUrl = `https://www.attribix.app/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(returnTo)}`;
+    const startUrl = `https://attribix-app.fly.dev/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(returnTo)}`;
 
     // App Bridge-compatible top-level redirect (works when third-party cookies are blocked)
     window.open(startUrl, "_top");

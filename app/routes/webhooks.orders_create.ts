@@ -56,9 +56,11 @@ function findNoteAttribute(payload: any, name: string): string | null {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  try {
-    const { topic, shop, payload } = await shopify.authenticate.webhook(request);
+  // authenticate.webhook MUST be called outside any try/catch so HMAC
+  // verification failures propagate as 400 rather than being swallowed as 500.
+  const { topic, shop, payload } = await shopify.authenticate.webhook(request);
 
+  try {
     // Prefer the numeric ID — it matches what the pixel tracker stores.
     // The GID (admin_graphql_api_id) causes duplicate rows when both the
     // pixel and the webhook fire for the same order.

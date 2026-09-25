@@ -11,15 +11,27 @@ import { SettingsNav } from "~/components/SettingsNav";
 import db from "~/db.server";
 
 export async function loader({ request }) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db;
   const settings = await anyDb.trackingSettings?.findUnique?.({ where: { shop } }).catch(() => null);
+
+  let storeCurrency = settings?.storeCurrency ?? null;
+  if (!storeCurrency) {
+    try {
+      const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
+      const shopData = await shopRes.json();
+      storeCurrency = shopData?.data?.shop?.currencyCode || "USD";
+    } catch {
+      storeCurrency = "USD";
+    }
+  }
+
   return json({
     shop,
     attributionWindow: settings?.attributionWindowDays ?? 30,
     attributionModel: settings?.attributionModel ?? "last_touch",
-    storeCurrency: settings?.storeCurrency ?? "USD",
+    storeCurrency,
   });
 }
 

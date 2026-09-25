@@ -1,5 +1,5 @@
 import prisma from "~/db.server";
-import { AppDistribution, shopifyApp } from "@shopify/shopify-app-remix/server";
+import { ApiVersion, AppDistribution, shopifyApp } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import { DeliveryMethod } from "@shopify/shopify-api";
 
@@ -10,6 +10,9 @@ const APP_URL = (process.env.SHOPIFY_APP_URL || FALLBACK_APP_URL).replace(/\/$/,
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY!,
   apiSecretKey: process.env.SHOPIFY_API_SECRET!,
+  // Pinned to match the version this app was already running against before
+  // the shopify-api v14 upgrade made apiVersion a required field.
+  apiVersion: ApiVersion.July25,
   appUrl: APP_URL,
   scopes: (process.env.SCOPES ?? "")
     .split(",")

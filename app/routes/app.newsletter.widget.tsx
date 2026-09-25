@@ -5,6 +5,7 @@ import { json, type LoaderFunctionArgs, type ActionFunctionArgs } from "@remix-r
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { appEmbedUrl } from "~/services/themeEditor.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import { useState, useCallback } from "react";
 import {
@@ -12,24 +13,19 @@ import {
   Page, Select, Text, TextField,
 } from "@shopify/polaris";
 
-const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
-const SCRIPT_URL = `${APP_URL}/scripts/newsletter-widget.js`;
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session, admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
   const config = await anyDb.newsletterWidgetConfig?.findUnique?.({ where: { shop } }).catch(() => null);
 
-  let scriptTagInstalled = false;
-  try {
-    const res = await admin.graphql(`query { scriptTags(first:30){ edges{ node{ id src } } } }`);
-    const j = await res.json();
-    scriptTagInstalled = (j?.data?.scriptTags?.edges ?? []).some((e: any) => e.node?.src === SCRIPT_URL);
-  } catch {}
+  // Sign-up forms load through the "Attribix Widgets" app embed and only
+  // render when the widget config is enabled.
+  const widgetEnabled = !!config?.enabled;
 
   // Aggregate subscriber counts by source (each source is a "virtual form")
   const sourceCounts = await db.newsletterSubscriber.groupBy({
@@ -40,13 +36,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const totalSubscribers = await db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } }).catch(() => 0);
 
-  return json({ config, scriptTagInstalled, sourceCounts, totalSubscribers, shop });
+  return json({ config, widgetEnabled, embedUrl: appEmbedUrl(shop), sourceCounts, totalSubscribers, shop });
 }
 
 // ─── Action ──────────────────────────────────────────────────────────────────
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session, admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
   const body = await request.json().catch(() => ({}));
@@ -66,27 +62,11 @@ export async function action({ request }: ActionFunctionArgs) {
     };
     await anyDb.newsletterWidgetConfig?.upsert?.({ where: { shop }, create: data, update: data }).catch(() => null);
 
-    let installed = false;
-    try {
-      const tagsRes = await admin.graphql(`query { scriptTags(first:30){ edges{ node{ id src } } } }`);
-      const tags = (await tagsRes.json())?.data?.scriptTags?.edges ?? [];
-      const existing = tags.find((e: any) => e.node?.src === SCRIPT_URL);
-      if (!existing) {
-        const createRes = await admin.graphql(`mutation { scriptTagCreate(input: { src: "${SCRIPT_URL}", displayScope: ONLINE_STORE }) { scriptTag { id } userErrors { message } } }`);
-        installed = !((await createRes.json())?.data?.scriptTagCreate?.userErrors?.length);
-      } else { installed = true; }
-    } catch {}
-    return json({ ok: true, installed });
+    return json({ ok: true, installed: true });
   }
 
   if (intent === "uninstall") {
-    try {
-      const tagsRes = await admin.graphql(`query { scriptTags(first:30){ edges{ node{ id src } } } }`);
-      const tags = (await tagsRes.json())?.data?.scriptTags?.edges ?? [];
-      const existing = tags.find((e: any) => e.node?.src === SCRIPT_URL);
-      if (existing) await admin.graphql(`mutation { scriptTagDelete(id: "${existing.node.id}") { deletedScriptTagId } }`);
-      await anyDb.newsletterWidgetConfig?.update?.({ where: { shop }, data: { enabled: false } }).catch(() => null);
-    } catch {}
+    await anyDb.newsletterWidgetConfig?.update?.({ where: { shop }, data: { enabled: false } }).catch(() => null);
     return json({ ok: true, installed: false });
   }
 
@@ -189,7 +169,10 @@ function CreateFormModal({
               Signup forms page once installed.
             </Text>
             <Banner tone="info">
-              <Text as="p">The popup script tag will be added to your Online Store automatically.</Text>
+              <Text as="p">
+                After installing, make sure the <strong>Attribix Widgets</strong> app embed is switched on
+                in your theme editor (Online Store → Themes → Customize → App embeds).
+              </Text>
             </Banner>
           </BlockStack>
         </Modal.Section>
@@ -282,7 +265,7 @@ function CreateFormModal({
 // ─── Page component ───────────────────────────────────────────────────────────
 
 export default function SignupFormsPage() {
-  const { config, scriptTagInstalled, sourceCounts, totalSubscribers, shop } =
+  const { config, widgetEnabled, embedUrl, sourceCounts, totalSubscribers, shop } =
     useLoaderData<typeof loader>();
 
   const fetcher = useFetcher<any>();
@@ -311,7 +294,7 @@ export default function SignupFormsPage() {
     const src = s.source ?? "manual";
     const meta = getFormType(src);
     const count = s._count.source;
-    const isActive = scriptTagInstalled || idx === 0;
+    const isActive = widgetEnabled || idx === 0;
     return {
       id: src,
       name: src === "popup" ? "Popup" : src === "import" ? "CSV Import" : src === "shopify" ? "Shopify Customers" : src === "manual" ? "Manually added" : src.charAt(0).toUpperCase() + src.slice(1),
@@ -334,7 +317,7 @@ export default function SignupFormsPage() {
       description: "Centered modal with email input",
       type: "popup",
       typeMeta: FORM_TYPES.popup,
-      status: config.enabled && scriptTagInstalled ? "active" : "draft",
+      status: config.enabled && widgetEnabled ? "active" : "draft",
       views: 0, submissions: 0, conversionRate: "0",
       lastUpdated: "—",
     });
@@ -359,6 +342,16 @@ export default function SignupFormsPage() {
       primaryAction={{ content: "Create form", onAction: () => setCreateModalOpen(true) }}
     >
       <BlockStack gap="500">
+
+        {config?.enabled && (
+          <Banner
+            tone="info"
+            title="Sign-up forms show through the Attribix Widgets app embed"
+            action={{ content: "Open theme editor", url: embedUrl, target: "_blank" }}
+          >
+            <Text as="p">If your popup isn't showing, turn on Attribix Widgets under App embeds in your theme editor and save.</Text>
+          </Banner>
+        )}
 
         {/* KPI cards */}
         <Grid columns={{ xs: 2, sm: 3, md: 5, lg: 5, xl: 5 }}>

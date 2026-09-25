@@ -1,5 +1,5 @@
 # ---- base (common) ----
-FROM node:20-bookworm AS base
+FROM node:22-bookworm AS base
 WORKDIR /app
 
 # ---- deps (production deps only) ----
@@ -25,7 +25,7 @@ RUN npm run build:pixel
 RUN npm run build
 
 # ---- runner (final runtime image) ----
-FROM node:20-bookworm-slim AS runner
+FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 

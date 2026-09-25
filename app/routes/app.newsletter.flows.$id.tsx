@@ -6,7 +6,7 @@ import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import {
-  Badge, BlockStack, Button, Card, Checkbox, Divider,
+  Badge, Banner, BlockStack, Button, Card, Checkbox, Divider,
   InlineStack, Modal, Page, Select, Text, TextField,
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
@@ -47,6 +47,16 @@ export async function action({ params, request }: ActionFunctionArgs) {
   const body = await request.json().catch(() => ({}));
 
   if (body.intent === "update_flow") {
+    if (body.enabled) {
+      const steps = await anyDb.automationStep.findMany({ where: { flowId: params.id } });
+      const emptySteps = steps.filter((s: any) => !s.htmlContent);
+      if (emptySteps.length > 0) {
+        return json({
+          ok: false,
+          error: `${emptySteps.length} email step${emptySteps.length !== 1 ? "s are" : " is"} missing content. Add email content to every step before activating.`,
+        });
+      }
+    }
     await anyDb.automationFlow.updateMany({
       where: { id: params.id, shop },
       data: { name: body.name, description: body.description, enabled: !!body.enabled },
@@ -119,6 +129,18 @@ export default function FlowEditor() {
   const [unlayerReady, setUnlayerReady] = useState(false);
 
   const isSaving = fetcher.state !== "idle";
+  const [flowError, setFlowError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (fetcher.data && !fetcher.data.ok) {
+      if (fetcher.data.error) {
+        setFlowError(fetcher.data.error);
+        setEnabled(flow.enabled); // revert optimistic toggle
+      }
+    } else if (fetcher.data?.ok) {
+      setFlowError(null);
+    }
+  }, [fetcher.data]);
 
   // Load Unlayer script once on mount
   useEffect(() => {
@@ -152,6 +174,12 @@ export default function FlowEditor() {
 
   function saveFlow() {
     fetcher.submit({ intent: "update_flow", name, enabled }, { method: "post", encType: "application/json" });
+  }
+
+  function toggleEnabled() {
+    const next = !enabled;
+    setEnabled(next);
+    fetcher.submit({ intent: "update_flow", name, enabled: next }, { method: "post", encType: "application/json" });
   }
 
   function openEditStep(step: any | null) {
@@ -199,9 +227,15 @@ export default function FlowEditor() {
       title={flow.name}
       backAction={{ content: "Flows", url: "/app/newsletter/flows" }}
       primaryAction={{ content: isSaving ? "Saving…" : "Save", onAction: saveFlow, loading: isSaving }}
-      secondaryActions={[{ content: enabled ? "Pause flow" : "Activate flow", onAction: () => { setEnabled(!enabled); setTimeout(saveFlow, 50); } }]}
+      secondaryActions={[{ content: enabled ? "Pause flow" : "Activate flow", onAction: toggleEnabled }]}
     >
       <BlockStack gap="500">
+
+        {flowError && (
+          <Banner tone="warning" onDismiss={() => setFlowError(null)}>
+            {flowError}
+          </Banner>
+        )}
 
         {/* Flow settings */}
         <Card>

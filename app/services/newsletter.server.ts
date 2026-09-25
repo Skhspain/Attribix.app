@@ -227,12 +227,13 @@ export async function sendCampaign(campaignId: string): Promise<{
     }
   }
 
-  // Fetch newsletter settings for footer text (separate from monthly-limit check above)
+  // Fetch newsletter settings for footer text + domain verification status
   const nlSettings = await anyDb.newsletterSettings?.findUnique?.({
     where: { shop: campaign.shop },
-    select: { footerText: true },
+    select: { footerText: true, resendDomainStatus: true },
   }).catch(() => null);
   const footerText: string = (nlSettings?.footerText ?? "").trim();
+  const domainVerified = nlSettings?.resendDomainStatus === "verified";
 
   // Mark as sending
   await anyDb.newsletterCampaign.update({
@@ -252,8 +253,12 @@ export async function sendCampaign(campaignId: string): Promise<{
   }
 
   const fromName = campaign.fromName || "Newsletter";
-  const fromEmail = campaign.fromEmail || process.env.SMTP_FROM_EMAIL || "newsletters@attribix.email";
+  // Use merchant's domain if verified in Resend; otherwise fall back to shared sending domain
+  const fromEmail = domainVerified && campaign.fromEmail
+    ? campaign.fromEmail
+    : process.env.SMTP_FROM_EMAIL || "newsletters@attribix.email";
   const from = `${fromName} <${fromEmail}>`;
+  const merchantReplyTo = campaign.replyTo || (domainVerified ? undefined : campaign.fromEmail) || undefined;
 
   const emails: BatchEmailItem[] = subscribers.map((sub) => {
     const token = generateUnsubscribeToken(campaign.shop, sub.email);
@@ -300,7 +305,7 @@ export async function sendCampaign(campaignId: string): Promise<{
       to: sub.email,
       subject: campaign.subject,
       html,
-      replyTo: campaign.replyTo || undefined,
+      replyTo: merchantReplyTo,
       tags: [
         { name: "campaign_id", value: campaignId },
         { name: "shop", value: campaign.shop },
