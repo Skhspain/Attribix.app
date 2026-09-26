@@ -3,7 +3,18 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { db } from "~/db.server";
 import shopify from "~/shopify.server";
-import { sendServerConversions } from "~/services/serverConversions.server";
+import {
+  claimPurchaseConversion,
+  releasePurchaseConversion,
+  sendServerConversions,
+} from "~/services/serverConversions.server";
+
+// The thank-you page (web pixel → /api/track) usually reports the order within
+// seconds and has the browser context Meta matches on (fbp/fbc, IP, user agent),
+// so it gets first claim on the Purchase conversion. The webhook only sends if
+// nobody has after this delay — e.g. the buyer closed the tab before the
+// thank-you page loaded.
+const PURCHASE_FALLBACK_DELAY_MS = 30_000;
 import { scheduleReviewRequest } from "~/services/reviewEmail.server";
 import { enrollInFlows } from "~/services/automationEngine.server";
 import { buildJourneyCredits } from "~/services/touchpoints.server";
@@ -238,78 +249,108 @@ export async function action({ request }: ActionFunctionArgs) {
         enrollInFlows({ shop, trigger: "order_created", email: customerEmail, firstName, triggeredBy: orderId ?? undefined }).catch(() => null);
       }
 
-      // Recover real fbc/fbp stored by the browser pixel on page views.
-      // The webhook has no direct access to browser cookies, so we look up
-      // the most recent trackedEvent that matched this session.
-      let realFbc: string | null = null;
-      let realFbp: string | null = null;
-      try {
-        const fbcMatchClauses: any[] = [];
-        if (utm.fbclid) fbcMatchClauses.push({ fbclid: utm.fbclid });
-        if (visitorId) fbcMatchClauses.push({ visitorId });
-        if (fbcMatchClauses.length > 0) {
-          const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-          const ctx = await db.trackedEvent.findFirst({
-            where: {
-              shop,
-              createdAt: { gte: recentCutoff },
-              OR: fbcMatchClauses,
-            },
-            orderBy: { createdAt: "desc" },
-            select: { fbc: true, fbp: true },
-          });
-          realFbc = ctx?.fbc ?? null;
-          realFbp = ctx?.fbp ?? null;
-        }
-      } catch {}
+      // Variant ids, matching what Shopify's own Meta channel sends for catalog matching.
+      const contentIds = (Array.isArray(payload?.line_items) ? payload.line_items : [])
+        .map((li: any) => pickFirstString(li?.variant_id?.toString?.()))
+        .filter(Boolean) as string[];
+      const numItems = (Array.isArray(payload?.line_items) ? payload.line_items : [])
+        .reduce((sum: number, li: any) => sum + (pickFirstNumber(li?.quantity) ?? 0), 0);
 
-      // Look up per-shop pixel credentials so each merchant's conversions go
-      // to their own Meta pixel, not the global env-var fallback.
-      const shopTrackingSettings = await (db as any).trackingSettings?.findUnique?.({
-        where: { shop },
-        select: { fbPixelId: true, fbToken: true },
-      }).catch(() => null);
-
-      try {
-        const conversionResult = await sendServerConversions({
-          eventName: "Purchase",
-          eventTime: Math.floor(
-            new Date(payload?.created_at || Date.now()).getTime() / 1000,
-          ),
-          eventId: `shopify_order_${orderId}`,
-          orderId,
-          value: totalValue,
-          currency,
-          url: landingUrl,
-          sourceUrl: landingUrl || referringSite,
-          actionSource: "website",
-          shop,
-          ip,
-          userAgent,
-          email,
-          phone,
-          firstName,
-          lastName,
-          city,
-          zip,
-          state,
-          country,
-          fbclid: utm.fbclid,
-          fbc: realFbc,
-          fbp: realFbp,
-          gclid: utm.gclid,
-          ttclid: utm.ttclid,
-          externalId: visitorId || email || null,
-          shopPixelId: shopTrackingSettings?.fbPixelId,
-          shopToken: shopTrackingSettings?.fbToken,
-        });
-
-        console.log("[webhooks.orders_create] server conversions", conversionResult);
-      } catch (conversionError: any) {
-        console.error(
-          "[webhooks.orders_create] server conversion error:",
-          conversionError?.message || conversionError,
+      // Fire-and-forget after responding: Shopify retries webhooks that take
+      // longer than 5s, and every retry used to send another Purchase.
+      const purchaseOrderId = orderId;
+      setTimeout(() => {
+        sendFallbackPurchase().catch((e: any) =>
+          console.error("[webhooks.orders_create] fallback purchase error:", e?.message || e),
         );
+      }, PURCHASE_FALLBACK_DELAY_MS);
+
+      async function sendFallbackPurchase() {
+        if (!(await claimPurchaseConversion(purchaseOrderId))) return;
+
+        // Browser ids: whatever the pixel stored on this order's Purchase row,
+        // else the latest page event from the same click or visitor.
+        const row = await db.purchase.findUnique({
+          where: { orderId: purchaseOrderId },
+          select: { fbp: true, fbc: true, visitorId: true },
+        });
+        let realFbc: string | null = row?.fbc ?? null;
+        let realFbp: string | null = row?.fbp ?? null;
+        const rowVisitorId = row?.visitorId ?? visitorId;
+        if (!realFbc || !realFbp) {
+          try {
+            const fbcMatchClauses: any[] = [];
+            if (utm.fbclid) fbcMatchClauses.push({ fbclid: utm.fbclid });
+            if (rowVisitorId) fbcMatchClauses.push({ visitorId: rowVisitorId });
+            if (fbcMatchClauses.length > 0) {
+              const recentCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+              const ctx = await db.trackedEvent.findFirst({
+                where: {
+                  shop,
+                  createdAt: { gte: recentCutoff },
+                  OR: fbcMatchClauses,
+                },
+                orderBy: { createdAt: "desc" },
+                select: { fbc: true, fbp: true },
+              });
+              realFbc ??= ctx?.fbc ?? null;
+              realFbp ??= ctx?.fbp ?? null;
+            }
+          } catch {}
+        }
+
+        // Look up per-shop pixel credentials so each merchant's conversions go
+        // to their own Meta pixel, not the global env-var fallback.
+        const shopTrackingSettings = await (db as any).trackingSettings?.findUnique?.({
+          where: { shop },
+          select: { fbPixelId: true, fbToken: true },
+        }).catch(() => null);
+
+        try {
+          const conversionResult = await sendServerConversions({
+            eventName: "Purchase",
+            eventTime: Math.floor(
+              new Date(payload?.created_at || Date.now()).getTime() / 1000,
+            ),
+            eventId: `shopify_order_${purchaseOrderId}`,
+            orderId: purchaseOrderId,
+            value: totalValue,
+            currency,
+            contentIds: contentIds.length ? contentIds : null,
+            numItems: numItems || null,
+            url: landingUrl,
+            // Where the purchase happened (order status page), not the ad landing page.
+            sourceUrl: pickFirstString(payload?.order_status_url) || landingUrl || referringSite,
+            actionSource: "website",
+            shop,
+            ip,
+            userAgent,
+            email,
+            phone,
+            firstName,
+            lastName,
+            city,
+            zip,
+            state,
+            country,
+            fbclid: utm.fbclid,
+            fbc: realFbc,
+            fbp: realFbp,
+            gclid: utm.gclid,
+            ttclid: utm.ttclid,
+            externalId: rowVisitorId || email || null,
+            shopPixelId: shopTrackingSettings?.fbPixelId,
+            shopToken: shopTrackingSettings?.fbToken,
+          });
+
+          console.log("[webhooks.orders_create] fallback purchase sent", { orderId: purchaseOrderId, hasFbp: Boolean(realFbp), hasFbc: Boolean(realFbc), meta: conversionResult.meta });
+        } catch (conversionError: any) {
+          await releasePurchaseConversion(purchaseOrderId);
+          console.error(
+            "[webhooks.orders_create] server conversion error:",
+            conversionError?.message || conversionError,
+          );
+        }
       }
     }
 

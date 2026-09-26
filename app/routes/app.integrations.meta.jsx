@@ -1,7 +1,7 @@
 // app/routes/app.integrations.meta.jsx
 import React, { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData, useRevalidator, useNavigate, Form, Link } from "@remix-run/react";
+import { useLoaderData, useRevalidator, useNavigate, useFetcher, Form, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -15,6 +15,7 @@ import {
   Select,
   Divider,
   Spinner,
+  Checkbox,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
@@ -55,6 +56,17 @@ export async function action({ request }) {
     const { db } = await import("../db.server");
     await db.metaConnection.delete({ where: { shop } }).catch(() => null);
     return json({ ok: true, disconnected: true });
+  }
+
+  if (intent === "funnel-events") {
+    const { db } = await import("../db.server");
+    const metaFunnelEvents = form.get("enabled") === "true";
+    await db.trackingSettings.upsert({
+      where: { shop },
+      create: { shop, metaFunnelEvents },
+      update: { metaFunnelEvents },
+    });
+    return json({ ok: true, metaFunnelEvents });
   }
 
   return json({ ok: false });
@@ -129,6 +141,7 @@ export async function loader({ request }) {
     connectedAssets,
     fbPixelId: trackingSettings?.fbPixelId || "",
     fbToken: trackingSettings?.fbToken || "",
+    metaFunnelEvents: !!trackingSettings?.metaFunnelEvents,
     fromOnboarding,
   });
 }
@@ -708,6 +721,10 @@ function MetaIntegrationsInner({ data }) {
         </Layout.Section>
         )}
 
+        <Layout.Section>
+          <FunnelEventsCard enabled={data.metaFunnelEvents} />
+        </Layout.Section>
+
         {/* Not connected info */}
         {!connected && (
           <Layout.Section>
@@ -725,6 +742,35 @@ function MetaIntegrationsInner({ data }) {
 
       </Layout>
     </Page>
+  );
+}
+
+// Opt-in for sending browse/cart/checkout events to Meta CAPI. Purchases are
+// always sent; see TrackingSettings.metaFunnelEvents for why this defaults off.
+function FunnelEventsCard({ enabled }) {
+  const fetcher = useFetcher();
+  const pending = fetcher.formData?.get("enabled");
+  const checked = pending != null ? pending === "true" : enabled;
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingMd">Funnel events</Text>
+        <Text as="p" tone="subdued" variant="bodySm">
+          Attribix always sends one Purchase per order to Meta. It can also send ViewContent,
+          Search, AddToCart, InitiateCheckout and AddPaymentInfo.
+        </Text>
+        <Checkbox
+          label="Send funnel events to Meta Conversions API"
+          helpText="Leave this off if you use Shopify's Facebook & Instagram app with Maximum data sharing — it already sends these events, and a second copy makes Meta count them twice."
+          checked={checked}
+          disabled={fetcher.state !== "idle"}
+          onChange={(value) =>
+            fetcher.submit({ intent: "funnel-events", enabled: String(value) }, { method: "post" })
+          }
+        />
+      </BlockStack>
+    </Card>
   );
 }
 

@@ -4,7 +4,7 @@ import { Outlet, useFetcher, useLoaderData, useNavigation } from "@remix-run/rea
 import { Banner, Button, InlineStack, Text } from "@shopify/polaris";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import shopify, { authenticate } from "~/shopify.server";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // Meta Pixel browser-side tracking is handled by the attribix-pixel web pixel
 // extension (extensions/attribix-pixel). Storefront widgets (reviews, newsletter,
@@ -65,8 +65,9 @@ export const loader = async ({ request }) => {
     }
   }
 
-  const { hasLegacyScriptTags, appEmbedUrl } = await import("~/services/themeEditor.server");
-  const legacyScriptTags = await hasLegacyScriptTags(session.shop, admin);
+  // Hides the banner (and removes the old ScriptTags) once the embed is live.
+  const { needsEmbedMigration, appEmbedUrl } = await import("~/services/themeEditor.server");
+  const legacyScriptTags = await needsEmbedMigration(session.shop, admin);
 
   return json({
     legacyScriptTags,
@@ -159,35 +160,64 @@ export default function AppRoute() {
 
 // Shown while the shop still has legacy ScriptTags. Shopify stops running them
 // on Mar 1, 2027, so the merchant needs to switch on the "Attribix Widgets"
-// app embed. "I've enabled it" deletes the old tags so widgets don't load twice.
+// app embed. When they come back from the theme editor we check the live
+// storefront and clear the banner automatically; the manual button is a
+// fallback for storefronts we can't read.
 function LegacyScriptTagBanner({ embedUrl }) {
   const fetcher = useFetcher();
   const [opened, setOpened] = useState(false);
+
+  useEffect(() => {
+    if (!opened) return;
+    const check = () => {
+      if (document.visibilityState !== "visible" || fetcher.state !== "idle") return;
+      fetcher.submit({ intent: "check" }, { method: "post", action: "/app/legacy-script-tags" });
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [opened, fetcher]);
+
   if (fetcher.data?.ok) return null;
+  const checking = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "check";
+  const notDetected = fetcher.state === "idle" && fetcher.data?.intent === "check" && !fetcher.data.ok;
 
   return (
     <div style={{ maxWidth: 998, margin: "16px auto 0", padding: "0 16px" }}>
       <Banner tone="warning" title="Action needed: turn on Attribix Widgets in your theme">
         <Text as="p">
-          Shopify is retiring script tags. Your reviews and newsletter widgets will stop showing on
-          March 1, 2027 unless you switch on the <strong>Attribix Widgets</strong> app embed. Open the
-          theme editor, make sure the embed is on, click <strong>Save</strong>, then come back here.
+          Shopify is retiring script tags. Click <strong>Enable in theme</strong>, then click{" "}
+          <strong>Save</strong> in the theme editor. This message disappears once it's on.
+        </Text>
+        <Text as="p" tone="subdued">
+          Without it, your reviews and newsletter widgets stop showing on March 1, 2027.
         </Text>
         <div style={{ marginTop: 12 }}>
-          <InlineStack gap="200">
-            <Button url={embedUrl} target="_blank" onClick={() => setOpened(true)}>
-              Open theme editor
+          <InlineStack gap="200" blockAlign="center">
+            <Button variant="primary" url={embedUrl} target="_blank" onClick={() => setOpened(true)}>
+              Enable in theme
             </Button>
-            <Button
-              variant={opened ? "primary" : "secondary"}
-              loading={fetcher.state !== "idle"}
-              onClick={() => fetcher.submit({}, { method: "post", action: "/app/legacy-script-tags" })}
-            >
-              I've enabled it and saved
-            </Button>
+            {opened && (
+              <Button
+                variant="plain"
+                loading={fetcher.state !== "idle" && !checking}
+                onClick={() => fetcher.submit({}, { method: "post", action: "/app/legacy-script-tags" })}
+              >
+                I've enabled it and saved
+              </Button>
+            )}
+            {checking && <Text as="span" tone="subdued">Checking your storefront…</Text>}
           </InlineStack>
         </div>
-        {fetcher.data?.ok === false && (
+        {notDetected && (
+          <Text as="p" tone="subdued">
+            We don't see it on your storefront yet. Make sure you clicked <strong>Save</strong> in the theme editor.
+          </Text>
+        )}
+        {fetcher.data?.ok === false && !fetcher.data?.intent && (
           <Text as="p" tone="critical">Couldn't finish the switch. Please try again.</Text>
         )}
       </Banner>

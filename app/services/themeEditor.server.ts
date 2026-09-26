@@ -61,6 +61,54 @@ export async function hasLegacyScriptTags(shop: string, admin: Admin): Promise<b
   }
 }
 
+// ─── Embed detection ─────────────────────────────────────────────────────────
+
+// Rendered by extensions/attribix-tracker/blocks/widgets.liquid whenever the
+// embed is on, so the live storefront HTML tells us whether it was saved.
+const EMBED_MARKER = "data-attribix-widgets-embed";
+
+const embedCache = new Map<string, { live: boolean; at: number }>();
+const EMBED_CACHE_MS = 5 * 60 * 1000;
+
+/**
+ * True if the shop's published theme renders the Attribix Widgets embed.
+ * Fetches the storefront homepage; password-protected stores still render
+ * app embeds on the password page. Returns false on any fetch error.
+ */
+export async function isWidgetsEmbedLive(shop: string, { fresh = false } = {}): Promise<boolean> {
+  const cached = embedCache.get(shop);
+  if (!fresh && cached && Date.now() - cached.at < EMBED_CACHE_MS) return cached.live;
+  let live = false;
+  try {
+    const res = await fetch(`https://${shop}/?attribix_embed_check=${Date.now()}`, {
+      redirect: "follow",
+      headers: { "User-Agent": "Attribix-EmbedCheck/1.0", "Cache-Control": "no-cache" },
+      signal: AbortSignal.timeout(8000),
+    });
+    live = (await res.text()).includes(EMBED_MARKER);
+  } catch (e: any) {
+    console.error("[themeEditor] embed check error:", e?.message ?? e);
+  }
+  embedCache.set(shop, { live, at: Date.now() });
+  return live;
+}
+
+/**
+ * True if the legacy-ScriptTag banner should still be shown. When the embed is
+ * already live, removes the old ScriptTags so widgets don't load twice.
+ */
+export async function needsEmbedMigration(shop: string, admin: Admin, opts: { fresh?: boolean } = {}): Promise<boolean> {
+  if (!(await hasLegacyScriptTags(shop, admin))) return false;
+  if (!(await isWidgetsEmbedLive(shop, opts))) return true;
+  try {
+    await removeLegacyScriptTags(shop, admin);
+    return false;
+  } catch (e: any) {
+    console.error("[themeEditor] auto-remove scriptTags error:", e?.message ?? e);
+    return true;
+  }
+}
+
 /** Deletes all legacy Attribix ScriptTags. Call once the merchant has enabled the app embed. */
 export async function removeLegacyScriptTags(shop: string, admin: Admin): Promise<number> {
   const ids = await fetchLegacyScriptTagIds(admin);

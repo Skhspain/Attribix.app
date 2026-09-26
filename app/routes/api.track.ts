@@ -1,7 +1,11 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { db } from "~/db.server";
-import { sendServerConversions } from "~/services/serverConversions.server";
+import {
+  claimPurchaseConversion,
+  releasePurchaseConversion,
+  sendServerConversions,
+} from "~/services/serverConversions.server";
 import { normalizeTrackedEvent } from "~/services/trackingNormalizer.server";
 import { touchTrackingHealth } from "~/models/trackingSettings.server";
 import { upsertTouchpoint } from "~/services/touchpoints.server";
@@ -169,10 +173,12 @@ function getShopFromOriginOrUrl(origin: string | null, url: string | null): stri
   return null;
 }
 
+// Numeric order id, the same format the orders/create webhook stores, so both
+// paths share one Purchase row (and one conversion claim).
 function normalizeOrderId(value: unknown): string | null {
-  const s = pickFirstString(value);
+  const s = pickFirstString(value) ?? (typeof value === "number" ? String(value) : null);
   if (!s) return null;
-  return s;
+  return s.replace(/^gid:\/\/shopify\/Order\//i, "");
 }
 
 function isUniqueConstraintError(err: any) {
@@ -834,6 +840,9 @@ export async function action({ request }: ActionFunctionArgs) {
       fbc = buildFbcFromFbclid(fbclid);
     }
 
+    // The same event can arrive twice (beacon retries, duplicate subscriptions).
+    // It's stored once and must only be forwarded to ad platforms once.
+    let duplicateEvent = false;
     try {
       await db.trackedEvent.create({
         data: {
@@ -865,6 +874,7 @@ export async function action({ request }: ActionFunctionArgs) {
     } catch (trackedEventError: any) {
       if (eventId && isUniqueConstraintError(trackedEventError)) {
         console.log("[/api/track] duplicate eventId ignored", { eventId });
+        duplicateEvent = true;
       } else {
         throw trackedEventError;
       }
@@ -967,13 +977,13 @@ export async function action({ request }: ActionFunctionArgs) {
       );
 
     // ── Funnel events → Meta CAPI ───────────────────────────────────────
-    // Previously InitiateCheckout was only sent when the checkout already had an
-    // email (rare at checkout start), so Meta received a tiny fraction of real
-    // checkouts. Every funnel event is now forwarded; email/phone are included
-    // when present to lift EMQ.
+    // Opt-in per shop (TrackingSettings.metaFunnelEvents). Shopify's Facebook &
+    // Instagram channel already sends these events server-side with its own
+    // event ids, so a second copy from us is counted twice by Meta. Only shops
+    // without Shopify's Conversions API should turn this on.
     const capiEventName = META_FUNNEL_EVENTS[(type || "").toLowerCase()] ?? null;
 
-    if (capiEventName && resolvedShop) {
+    if (capiEventName && resolvedShop && matchedSettings?.metaFunnelEvents && !duplicateEvent) {
       const funnel = extractFunnelData(event);
       // Dedup key: Shopify's own customer-event id (e.g. "sh-…"), which browser
       // Meta pixels on Shopify pass as eventID. Our random per-post eventId never
@@ -1010,7 +1020,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    if (possibleOrderId && isPurchaseLike) {
+    if (possibleOrderId && isPurchaseLike && !duplicateEvent) {
       const fallbackContext = await findLatestBrowserContext({
         shop: resolvedShop,
         visitorId,
@@ -1214,44 +1224,55 @@ export async function action({ request }: ActionFunctionArgs) {
         },
       });
 
-      try {
-        // Normalize GID (gid://shopify/Order/12345 → 12345) so event_id matches
-        // the webhook's shopify_order_${numericId} format, enabling Meta dedup.
-        const numericOrderId = possibleOrderId?.replace(/^gid:\/\/shopify\/Order\//i, "") ?? possibleOrderId;
-        const purchaseEventId = numericOrderId ? `shopify_order_${numericOrderId}` : (eventId ?? undefined);
+      // One Purchase per order across this path, the orders webhook and retries.
+      // This path has the browser context (fbp/fbc, IP, user agent), so it
+      // claims first; the webhook waits a little and only sends if nobody did.
+      const claimed = await claimPurchaseConversion(possibleOrderId).catch(() => false);
+      if (claimed) {
+        try {
+          // Shopify's browser Meta pixel uses the checkout_completed customer-event
+          // id ("sh-…") as its Purchase eventID, so reuse it for dedup. The webhook
+          // fallback only fires when this page never reported, so it can't collide.
+          const purchaseEventId = pickFirstString(event?.id) ?? `shopify_order_${possibleOrderId}`;
+          const purchaseItems = extractFunnelData(event);
 
-        const conversionResult = await sendServerConversions({
-          eventName: "Purchase",
-          eventTime: Math.floor(Date.now() / 1000),
-          eventId: purchaseEventId,
-          orderId: possibleOrderId,
-          value: possibleTotal ?? 0,
-          currency: possibleCurrency ?? "USD",
-          url: safeLandingPage,
-          sourceUrl: safeLandingPage,
-          actionSource: "website",
-          shop: resolvedShop,
-          ip,
-          userAgent: ua,
-          email: possibleEmail,
-          phone: possiblePhone,
-          ...matchKeys,
-          fbclid,
-          fbp,
-          fbc,
-          gclid,
-          ttclid,
-          externalId: visitorId,
-          shopPixelId: matchedSettings?.fbPixelId,
-          shopToken: matchedSettings?.fbToken,
-        });
+          const conversionResult = await sendServerConversions({
+            eventName: "Purchase",
+            eventTime: Math.floor(Date.now() / 1000),
+            eventId: purchaseEventId,
+            orderId: possibleOrderId,
+            value: possibleTotal ?? 0,
+            currency: possibleCurrency ?? "USD",
+            contentIds: purchaseItems.contentIds,
+            numItems: purchaseItems.numItems,
+            url: safeLandingPage,
+            // The page the purchase happened on (thank-you page), not the landing page.
+            sourceUrl: url ?? safeLandingPage,
+            actionSource: "website",
+            shop: resolvedShop,
+            ip,
+            userAgent: ua,
+            email: possibleEmail,
+            phone: possiblePhone,
+            ...matchKeys,
+            fbclid,
+            fbp,
+            fbc,
+            gclid,
+            ttclid,
+            externalId: visitorId,
+            shopPixelId: matchedSettings?.fbPixelId,
+            shopToken: matchedSettings?.fbToken,
+          });
 
-        console.log("[/api/track] server conversions", conversionResult);
-      } catch (conversionError: any) {
-        console.error(
-          "[/api/track] server conversion error:",
-          conversionError?.message || conversionError,
-        );
+          console.log("[/api/track] purchase sent", { orderId: possibleOrderId, eventId: purchaseEventId, hasFbp: Boolean(fbp), hasFbc: Boolean(fbc), contentIds: purchaseItems.contentIds, meta: conversionResult.meta });
+        } catch (conversionError: any) {
+          await releasePurchaseConversion(possibleOrderId);
+          console.error(
+            "[/api/track] server conversion error:",
+            conversionError?.message || conversionError,
+          );
+        }
       }
     }
 

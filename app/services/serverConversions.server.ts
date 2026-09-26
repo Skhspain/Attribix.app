@@ -370,3 +370,23 @@ export async function sendServerConversions(input: SendServerConversionInput) {
 
   return results;
 }
+/**
+ * Claims the right to send the Purchase conversion for an order. The thank-you
+ * page, the orders/create webhook and Shopify's webhook retries all see the same
+ * order; only the first claim wins, so each platform gets one Purchase per order.
+ * The Purchase row must already exist (both paths upsert it first).
+ */
+export async function claimPurchaseConversion(orderId: string): Promise<boolean> {
+  const { db } = await import("~/db.server");
+  const res = await db.purchase.updateMany({
+    where: { orderId, capiSentAt: null },
+    data: { capiSentAt: new Date() },
+  });
+  return res.count > 0;
+}
+
+/** Undo a claim when sending failed outright, so the other path can retry. */
+export async function releasePurchaseConversion(orderId: string) {
+  const { db } = await import("~/db.server");
+  await db.purchase.updateMany({ where: { orderId }, data: { capiSentAt: null } }).catch(() => null);
+}
