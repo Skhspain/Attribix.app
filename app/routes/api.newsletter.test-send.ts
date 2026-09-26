@@ -57,43 +57,36 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, error: "No email content yet — design your email first, then send a test." });
   }
 
-  const anyDb2 = db as any;
-  const nlSettings = await anyDb2.newsletterSettings?.findUnique?.({
+  const nlSettings = await anyDb.newsletterSettings?.findUnique?.({
     where: { shop },
-    select: { resendDomainStatus: true },
+    select: { resendDomainStatus: true, footerText: true },
   }).catch(() => null);
-  const domainVerified = nlSettings?.resendDomainStatus === "verified";
 
-  const fromName = bodyFromName || campaign.fromName || "Newsletter";
-  // Use merchant's domain if verified; otherwise fall back to shared sending domain
-  const campaignFromEmail = bodyFromName ? (campaign.fromEmail || "") : campaign.fromEmail;
-  const fromEmail = domainVerified && campaignFromEmail
-    ? campaignFromEmail
-    : process.env.SMTP_FROM_EMAIL || "";
-  if (!fromEmail) {
-    return json({
-      ok: false,
-      error: "Sender email not configured. Contact support to enable sending.",
-    });
-  }
-  const replyTo = campaign.replyTo || (domainVerified ? undefined : campaign.fromEmail) || undefined;
+  const { senderFor, personalize, ensureUnsubscribeFooter } = await import("~/services/newsletter.server");
+  const sender = senderFor({
+    fromName: bodyFromName || campaign.fromName,
+    merchantEmail: campaign.fromEmail,
+    replyTo: campaign.replyTo,
+    domainVerified: nlSettings?.resendDomainStatus === "verified",
+    shop,
+  });
 
-  const shopDomain = shop.replace(".myshopify.com", "");
-  const html = campaign.htmlContent
-    .replace(/\{\{first_name\}\}/gi, "Test Subscriber")
-    .replace(/\{\{name\}\}/gi, "Test Subscriber")
-    .replace(/\{\{email\}\}/gi, testEmail)
-    .replace(/\{\{shop_url\}\}/gi, `https://${shop}`)
-    .replace(/\{\{shop\}\}/gi, shopDomain)
-    .replace(/\{\{unsubscribe_url\}\}/gi, "#");
+  // Same preparation as a real send, but the unsubscribe link goes nowhere so a
+  // test can't unsubscribe the tester.
+  const html = personalize(ensureUnsubscribeFooter(campaign.htmlContent, nlSettings?.footerText ?? ""), {
+    shop,
+    email: testEmail,
+    firstName: "Alex",
+    unsubscribeUrl: "#",
+  });
 
   const { sendEmail } = await import("~/services/resend.server");
   const result = await sendEmail({
-    from: `${fromName} <${fromEmail}>`,
+    from: sender.from,
     to: testEmail,
     subject: `[TEST] ${bodySubject || campaign.subject || "(no subject)"}`,
     html,
-    replyTo,
+    replyTo: sender.replyTo,
   });
 
   return json(

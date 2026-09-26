@@ -1,87 +1,72 @@
 // app/routes/app.newsletter.tsx
-// Newsletter hub — layout + nav tabs for Subscribers / Campaigns.
-// NEW FILE.
+// Newsletter section layout: section tabs above the list pages. Editor pages
+// (a newsletter, a template picker, a flow email) get the whole screen.
 
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { Outlet, useLoaderData, useLocation, NavLink } from "@remix-run/react";
+import { Outlet, useLoaderData, useLocation, useNavigate } from "@remix-run/react";
+import { Banner, BlockStack, Box, Page, Tabs, Text } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import { Page, Tabs, Card, Layout, Text, BlockStack, InlineStack, Badge } from "@shopify/polaris";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const anyDb = db as any;
 
   // Mark newsletter as seen so the dashboard notification badge clears
-  anyDb.trackingSettings?.upsert?.({
+  (db as any).trackingSettings?.upsert?.({
     where: { shop },
     create: { shop, newsletterSeenAt: new Date() },
     update: { newsletterSeenAt: new Date() },
   }).catch(() => null);
 
-  const [subscriberCount, campaignCount, sentCount] = await Promise.all([
-    db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } }),
-    anyDb.newsletterCampaign?.count?.({ where: { shop } }).catch(() => 0) ?? 0,
-    anyDb.newsletterCampaign?.count?.({ where: { shop, status: "sent" } }).catch(() => 0) ?? 0,
-  ]);
-
-  const smtpConfigured = !!process.env.SMTP_HOST;
-
-  return json({ shop, subscriberCount, campaignCount, sentCount, resendConfigured: smtpConfigured });
+  const subscriberCount = await db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } });
+  return json({ subscriberCount, sendingAvailable: !!process.env.SMTP_HOST });
 }
 
-export default function NewsletterLayout() {
-  const { subscriberCount, campaignCount, sentCount, resendConfigured } =
-    useLoaderData<typeof loader>();
-  const location = useLocation();
+const SECTIONS = [
+  { id: "overview", label: "Overview", url: "/app/newsletter" },
+  { id: "campaigns", label: "Newsletters", url: "/app/newsletter/campaigns" },
+  { id: "flows", label: "Flows", url: "/app/newsletter/flows" },
+  { id: "subscribers", label: "Subscribers", url: "/app/newsletter/subscribers" },
+  { id: "widget", label: "Signup form", url: "/app/newsletter/widget" },
+  { id: "settings", label: "Settings", url: "/app/newsletter/settings" },
+];
 
-  const tabs = [
-    { id: "overview", content: "Overview", url: "/app/newsletter" },
-    { id: "subscribers", content: `Subscribers (${subscriberCount})`, url: "/app/newsletter/subscribers" },
-    { id: "campaigns", content: "Newsletters", url: "/app/newsletter/campaigns" },
-    { id: "flows", content: "Flows", url: "/app/newsletter/flows" },
-    { id: "analytics", content: "Analytics", url: "/app/newsletter/analytics" },
-    { id: "widget", content: "Signup form", url: "/app/newsletter/widget" },
-    { id: "review-requests", content: "Review requests", url: "/app/newsletter/review-requests" },
-    { id: "settings", content: "Settings", url: "/app/newsletter/settings" },
-  ];
+// Full-screen editors: no section tabs above them.
+const EDITOR_PATHS = [/^\/app\/newsletter\/campaigns\/(?!$)[^/]+$/, /^\/app\/newsletter\/flows\/[^/]+\/steps\//];
+
+export default function NewsletterLayout() {
+  const { subscriberCount, sendingAvailable } = useLoaderData<typeof loader>();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const path = pathname.replace(/\/$/, "");
+
+  if (EDITOR_PATHS.some((re) => re.test(path))) return <Outlet />;
+
+  // Sub-pages (e.g. /analytics, /review-requests) fall back to Overview.
+  const selected = Math.max(
+    0,
+    SECTIONS.findIndex((s, i) => i > 0 && (path === s.url || path.startsWith(`${s.url}/`))),
+  );
+  const tabs = SECTIONS.map((s) => ({
+    id: s.id,
+    content: s.id === "subscribers" ? `Subscribers (${subscriberCount.toLocaleString()})` : s.label,
+    panelID: `${s.id}-panel`,
+  }));
 
   return (
     <Page title="Newsletter" primaryAction={{ content: "New newsletter", url: "/app/newsletter/campaigns/new" }}>
-      {!resendConfigured && (
-        <div style={{ marginBottom: 16, padding: "12px 16px", background: "#fff3cd", borderRadius: 8, border: "1px solid #ffc107" }}>
-          <Text as="p" variant="bodyMd">
-            ⚠️ <strong>Email sending not configured.</strong> Add <code>SMTP_HOST</code> and <code>SMTP_USER</code> to your Fly.io secrets to enable sending.
-          </Text>
-        </div>
-      )}
-
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", gap: 12, borderBottom: "1px solid #e1e3e5", paddingBottom: 0 }}>
-          {tabs.map((tab, i) => (
-            <NavLink
-              key={tab.id}
-              to={tab.url}
-              end={i === 0}
-              style={({ isActive }) => ({
-                padding: "12px 16px",
-                textDecoration: "none",
-                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-                fontSize: 14,
-                fontWeight: isActive ? 600 : 400,
-                color: isActive ? "#008060" : "#6d7175",
-                borderBottom: isActive ? "2px solid #008060" : "2px solid transparent",
-                marginBottom: -1,
-              })}
-            >
-              {tab.content}
-            </NavLink>
-          ))}
-        </div>
-      </div>
-
-      <Outlet />
+      <BlockStack gap="400">
+        {!sendingAvailable && (
+          <Banner tone="warning" title="Sending isn't available yet">
+            <Text as="p">Email sending hasn't been switched on for your store yet. Contact Attribix support.</Text>
+          </Banner>
+        )}
+        <Tabs tabs={tabs} selected={selected} onSelect={(i) => navigate(SECTIONS[i].url)} />
+        <Box>
+          <Outlet />
+        </Box>
+      </BlockStack>
     </Page>
   );
 }

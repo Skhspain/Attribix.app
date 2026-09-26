@@ -1,35 +1,44 @@
 // app/routes/app.newsletter.campaigns.$id.tsx
-// Step 2 of 2: Campaign editor — edit details, preview/edit HTML, send.
-// Reached after template selection in app.newsletter.campaigns.new.tsx
+// Campaign editor: design (block editor), details (subject, sender) and send.
+// Reached after template selection in app.newsletter.campaigns.new.tsx.
 
 import {
   json,
   type LoaderFunctionArgs,
   type ActionFunctionArgs,
 } from "@remix-run/node";
-import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import {
-  Page,
-  Card,
-  BlockStack,
-  InlineStack,
-  Text,
-  TextField,
-  Button,
   Badge,
   Banner,
+  BlockStack,
+  Box,
+  Button,
+  Card,
+  FormLayout,
+  InlineGrid,
+  InlineStack,
   Modal,
+  Page,
+  ProgressBar,
+  Select,
+  Tabs,
+  Text,
+  TextField,
 } from "@shopify/polaris";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import { countSubscribersForSegment } from "~/services/newsletter.server";
+import { EmailEditor } from "~/components/email/EmailEditor";
+import { isEmailDoc, renderEmail, type EmailDoc } from "~/email/blocks";
+import { STARTER_TEMPLATES } from "~/email/templates";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -42,8 +51,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     throw new Response("Campaign not found", { status: 404 });
   }
 
-  const recipientPreview = await countSubscribersForSegment(shop, campaign.segmentFilter ?? {});
-  const smtpConfigured = !!process.env.SMTP_HOST;
+  const { getStoreBrand } = await import("~/email/brand.server");
+  const { campaignProgress } = await import("~/services/newsletterQueue.server");
+  const [recipientPreview, brand, sourceRows, progress] = await Promise.all([
+    countSubscribersForSegment(shop, campaign.segmentFilter ?? {}),
+    getStoreBrand(shop, admin),
+    db.newsletterSubscriber.groupBy({ by: ["source"], where: { shop, status: "subscribed" }, _count: { _all: true } }).catch(() => [] as any[]),
+    campaign.status === "sending" || campaign.status === "sent" ? campaignProgress(campaign.id) : Promise.resolve(null),
+  ]);
+  const sources = (sourceRows as any[])
+    .filter((r) => r.source)
+    .map((r) => ({ value: r.source as string, count: r._count._all as number }))
+    .sort((a, b) => b.count - a.count);
+  const sendingAvailable = !!process.env.SMTP_HOST;
 
   // HMAC token used by the /api/newsletter/test-send endpoint so the client
   // can send a test email without needing a live Shopify session token.
@@ -53,13 +73,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     .digest("hex")
     .slice(0, 32);
 
-  // Defaults from newsletter settings (fall back to env var for email)
-  const defaultFromName = newsletterSettings?.fromName || "";
-  const defaultFromEmail = newsletterSettings?.fromEmail || process.env.SMTP_FROM_EMAIL || "";
-  const defaultReplyTo = newsletterSettings?.replyTo || "";
-  const defaultFooterText = newsletterSettings?.footerText || "";
-
-  return json({ campaign, shop, recipientPreview, smtpConfigured, testSendToken, defaultFromName, defaultFromEmail, defaultReplyTo, defaultFooterText });
+  return json({
+    campaign,
+    shop,
+    brand,
+    sources,
+    progress,
+    recipientPreview,
+    sendingAvailable,
+    testSendToken,
+    defaultFromName: newsletterSettings?.fromName || brand.storeName || "",
+    defaultFromEmail: newsletterSettings?.fromEmail || "",
+    defaultReplyTo: newsletterSettings?.replyTo || "",
+  });
 }
 
 // ─── Action ──────────────────────────────────────────────────────────────────
@@ -90,34 +116,41 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const body = await request.json().catch(() => ({}));
   const intent = body?.intent as string;
 
+  const campaign = await anyDb.newsletterCampaign?.findUnique?.({ where: { id: params.id } });
+  if (!campaign || campaign.shop !== shop) {
+    return json({ ok: false, error: "Campaign not found" }, { status: 404 });
+  }
+
   if (intent === "save") {
+    if (campaign.status === "sent" || campaign.status === "sending") {
+      return json({ ok: false, error: "This newsletter has already been sent." }, { status: 400 });
+    }
+    // The server renders the HTML from the block document, so what's stored is
+    // exactly what the editor previewed. Old Unlayer campaigns keep their HTML
+    // until the merchant starts a new design.
+    const doc = isEmailDoc(body.doc) ? (body.doc as EmailDoc) : null;
+    const previewText = body.previewText || null;
+
     await anyDb.newsletterCampaign.update({
       where: { id: params.id },
       data: {
-        shop,
         name: body.name || "Untitled newsletter",
         subject: body.subject || "",
-        previewText: body.previewText || null,
+        previewText,
         fromName: body.fromName || null,
         fromEmail: body.fromEmail || null,
         replyTo: body.replyTo || null,
-        designJson: body.designJson || null,
-        htmlContent: body.htmlContent || null,
-        segmentFilter: body.segmentFilter || null,
+        segmentFilter: cleanSegment(body.segmentFilter),
+        ...(doc && { designJson: doc, htmlContent: renderEmail(doc, { previewText: previewText ?? undefined }) }),
         status: "draft",
       },
     });
 
-    // Auto-save sender identity to newsletter settings for future campaigns
+    // Remember sender identity for future campaigns
     if (body.fromName || body.fromEmail || body.replyTo) {
       await anyDb.newsletterSettings.upsert({
         where: { shop },
-        create: {
-          shop,
-          fromName: body.fromName || "",
-          fromEmail: body.fromEmail || "",
-          replyTo: body.replyTo || "",
-        },
+        create: { shop, fromName: body.fromName || "", fromEmail: body.fromEmail || "", replyTo: body.replyTo || "" },
         update: {
           ...(body.fromName && { fromName: body.fromName }),
           ...(body.fromEmail && { fromEmail: body.fromEmail }),
@@ -130,75 +163,45 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 
   if (intent === "save-as-template") {
+    if (!isEmailDoc(body.doc)) return json({ ok: false, error: "Nothing to save yet." }, { status: 400 });
     await anyDb.newsletterCampaign.create({
       data: {
         shop,
-        name: (body.name || "My Template") + " (Template)",
-        subject: "",
+        name: body.name || "My template",
+        subject: body.subject || "",
         status: "template",
-        htmlContent: body.htmlContent || null,
-        designJson: body.designJson || null,
-        fromName: body.fromName || null,
-        fromEmail: body.fromEmail || null,
+        designJson: body.doc,
+        htmlContent: renderEmail(body.doc),
       },
     });
     return json({ ok: true, saved: "template" });
   }
 
-  if (intent === "send") {
-    const testMode = !!(body as any).testMode;
-    const testEmail = ((body as any).testEmail as string | undefined)?.trim();
+  if (intent === "count") {
+    return json({ ok: true, count: await countSubscribersForSegment(shop, cleanSegment(body.segmentFilter)) });
+  }
 
-    if (testMode && testEmail) {
-      if (!process.env.SMTP_HOST) {
-        return json({ ok: false, error: "Email sending is not configured (SMTP_HOST missing). Contact support to enable sending." });
-      }
-      const { sendEmail } = await import("~/services/resend.server");
-      const campaign = await anyDb.newsletterCampaign?.findUnique?.({ where: { id: params.id } });
-      if (!campaign?.htmlContent) {
-        return json({ ok: false, error: "No email content yet — design your email first, then send a test." });
-      }
-      const fromName = campaign.fromName || "Newsletter";
-      // Always send from the verified SMTP domain; merchant's email becomes Reply-To
-      const fromEmail = process.env.SMTP_FROM_EMAIL || "";
-      if (!fromEmail) {
-        return json({ ok: false, error: "Sender email not configured. Contact support to enable sending." });
-      }
-      const merchantReplyTo = campaign.replyTo || campaign.fromEmail || undefined;
-      const shopDomain = shop.replace(".myshopify.com", "");
-      const html = campaign.htmlContent
-        .replace(/\{\{first_name\}\}/gi, "Test Subscriber")
-        .replace(/\{\{name\}\}/gi, "Test Subscriber")
-        .replace(/\{\{email\}\}/gi, testEmail)
-        .replace(/\{\{shop_url\}\}/gi, `https://${shop}`)
-        .replace(/\{\{shop\}\}/gi, shopDomain)
-        .replace(/\{\{unsubscribe_url\}\}/gi, "#");
-      const result = await sendEmail({
-        from: `${fromName} <${fromEmail}>`,
-        to: testEmail,
-        subject: `[TEST] ${campaign.subject || "(no subject)"}`,
-        html,
-        replyTo: merchantReplyTo,
-      });
-      return json(result.ok
-        ? { ok: true, message: `Test email sent to ${testEmail}` }
-        : { ok: false, error: `Send failed: ${(result as any).error}` });
+  if (intent === "progress") {
+    const { campaignProgress } = await import("~/services/newsletterQueue.server");
+    return json({ ok: true, status: campaign.status, progress: await campaignProgress(campaign.id) });
+  }
+
+  if (intent === "cancel-schedule") {
+    await anyDb.newsletterCampaign.updateMany({ where: { id: campaign.id, status: "scheduled" }, data: { status: "draft", scheduledAt: null } });
+    return json({ ok: true });
+  }
+
+  if (intent === "send" || intent === "schedule") {
+    if (campaign.status !== "draft") {
+      return json({ ok: false, error: "This newsletter has already been sent or scheduled." }, { status: 400 });
+    }
+    if (!campaign.subject?.trim()) {
+      return json({ ok: false, error: "Add a subject line before sending." }, { status: 400 });
     }
 
     const { getShopPlan, checkNewsletterSendsQuota } = await import("~/services/plan.server");
-    const { sendCampaign, countSubscribersForSegment } = await import("~/services/newsletter.server");
-
-    const campaign = await anyDb.newsletterCampaign?.findUnique?.({ where: { id: params.id } });
-
-    if (!campaign?.subject?.trim()) {
-      return json({ ok: false, error: "Cannot send: subject line is missing. Go to the Settings tab and add a subject first." }, { status: 400 });
-    }
-
-    const recipientCount = await countSubscribersForSegment(shop, campaign?.segmentFilter ?? {});
-
-    const plan = await getShopPlan(shop, admin);
-    const quota = await checkNewsletterSendsQuota(shop, plan, recipientCount);
-
+    const recipientCount = await countSubscribersForSegment(shop, campaign.segmentFilter ?? {});
+    const quota = await checkNewsletterSendsQuota(shop, await getShopPlan(shop, admin), recipientCount);
     if (!quota.allowed) {
       return json({
         ok: false,
@@ -206,668 +209,501 @@ export async function action({ request, params }: ActionFunctionArgs) {
       }, { status: 403 });
     }
 
-    const result = await sendCampaign(params.id!);
-    return json(result);
+    if (intent === "schedule") {
+      const at = new Date(String(body.scheduledAt ?? ""));
+      if (!Number.isFinite(at.getTime()) || at.getTime() < Date.now() + 60_000) {
+        return json({ ok: false, error: "Pick a time at least a few minutes from now." }, { status: 400 });
+      }
+      await anyDb.newsletterCampaign.update({ where: { id: campaign.id }, data: { status: "scheduled", scheduledAt: at } });
+      return json({ ok: true, scheduled: at.toISOString() });
+    }
+
+    const { enqueueCampaign } = await import("~/services/newsletterQueue.server");
+    const result = await enqueueCampaign(campaign.id);
+    return json(result, { status: result.ok ? 200 : 400 });
   }
 
   return json({ ok: false, error: "Unknown intent" }, { status: 400 });
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
-
-declare global {
-  interface Window { unlayer?: any; }
+function rate(count: number | null | undefined, of: number | null | undefined) {
+  const n = count ?? 0;
+  return of ? `${((n / of) * 100).toFixed(1)}%` : n.toLocaleString();
 }
 
-type BuilderTab = "edit" | "settings" | "recipients" | "send";
-type DevicePreview = "desktop" | "tablet" | "mobile";
+const SOURCE_LABELS: Record<string, string> = {
+  popup: "Popup",
+  popup_classic: "Popup",
+  slide_in: "Slide-in",
+  banner: "Banner",
+  inline_form: "Inline form",
+  embedded: "Footer form",
+  manual: "Added by you",
+  import: "Imported",
+  post_purchase: "After purchase",
+};
+function sourceLabel(s: string) {
+  return SOURCE_LABELS[s] ?? s.replace(/_/g, " ");
+}
+
+/** Only the segment options the editor offers; anything else is dropped. */
+function cleanSegment(raw: any) {
+  const seg: Record<string, unknown> = {};
+  if (raw?.source && typeof raw.source === "string") seg.source = raw.source;
+  const days = Number(raw?.joinedWithinDays);
+  if (Number.isFinite(days) && days > 0) seg.joinedWithinDays = Math.min(3650, Math.round(days));
+  return seg;
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+const TABS = [
+  { id: "design", content: "Design" },
+  { id: "details", content: "Details" },
+  { id: "send", content: "Review & send" },
+];
 
 export default function CampaignEditor() {
-  const { campaign, shop, recipientPreview, smtpConfigured, testSendToken, defaultFromName, defaultFromEmail, defaultReplyTo } = useLoaderData<typeof loader>();
+  const data = useLoaderData<typeof loader>();
+  const { campaign, brand, sendingAvailable, testSendToken, shop, sources } = data;
   const navigate = useNavigate();
-  const editorRef = useRef<HTMLDivElement>(null);
-
+  const revalidator = useRevalidator();
   const authFetch = useAuthenticatedFetch();
+
+  // Anything but a draft is locked: scheduled (cancel to edit), sending or sent.
+  const status: string = campaign.status;
+  const isSent = status !== "draft";
+  const initialSegment = (campaign.segmentFilter ?? {}) as { source?: string; joinedWithinDays?: number };
+  const [segSource, setSegSource] = useState(initialSegment.source ?? "");
+  const [segDays, setSegDays] = useState(initialSegment.joinedWithinDays ? String(initialSegment.joinedWithinDays) : "");
+  const [recipientPreview, setRecipientPreview] = useState<number>(data.recipientPreview);
+  const [scheduleAt, setScheduleAt] = useState("");
+  const [progress, setProgress] = useState(data.progress);
+  const [doc, setDoc] = useState<EmailDoc | null>(isEmailDoc(campaign.designJson) ? (campaign.designJson as EmailDoc) : null);
   const [name, setName] = useState(campaign.name || "");
   const [subject, setSubject] = useState(campaign.subject || "");
   const [previewText, setPreviewText] = useState(campaign.previewText || "");
-  const [fromName, setFromName] = useState(campaign.fromName || defaultFromName || "");
-  const [fromEmailVal, setFromEmailVal] = useState(campaign.fromEmail || defaultFromEmail || "newsletters@attribix.email");
-  const [replyTo, setReplyTo] = useState(campaign.replyTo || defaultReplyTo || "");
+  const [fromName, setFromName] = useState(campaign.fromName || data.defaultFromName);
+  const [fromEmail, setFromEmail] = useState(campaign.fromEmail || data.defaultFromEmail);
+  const [replyTo, setReplyTo] = useState(campaign.replyTo || data.defaultReplyTo);
 
-  const hasDesignJson = !!campaign.designJson;
-  const [editMode, setEditMode] = useState<"preview" | "unlayer">(hasDesignJson ? "unlayer" : "preview");
-  const [unlayerReady, setUnlayerReady] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [sendModalOpen, setSendModalOpen] = useState(false);
-  const [sendResult, setSendResult] = useState<any>(null);
-  const [activeTab, setActiveTab] = useState<BuilderTab>("edit");
-  const [device, setDevice] = useState<DevicePreview>("desktop");
+  const [tab, setTab] = useState(0);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [templateModal, setTemplateModal] = useState(false);
+  const [sendModal, setSendModal] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testEmail, setTestEmail] = useState("");
-  const [testModalOpen, setTestModalOpen] = useState(false);
   const [testSending, setTestSending] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
-  const isSent = campaign.status === "sent" || campaign.status === "sending";
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  // Load Unlayer only when in unlayer mode
+  const touch = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setDirty(true); };
+  const segment = useMemo(
+    () => ({ ...(segSource && { source: segSource }), ...(Number(segDays) > 0 && { joinedWithinDays: Number(segDays) }) }),
+    [segSource, segDays],
+  );
+
+  const post = useCallback(async (payload: Record<string, unknown>) => {
+    const res = await authFetch(`/app/newsletter/campaigns/${campaign.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return res.json().catch(() => ({ ok: false, error: "Unexpected response from the server." }));
+  }, [authFetch, campaign.id]);
+
+  // Live recipient count while the segment changes.
   useEffect(() => {
-    if (editMode !== "unlayer") return;
-    if (typeof window === "undefined") return;
-    if (window.unlayer) { initUnlayer(); return; }
+    if (isSent) return;
+    const t = setTimeout(async () => {
+      const r = await post({ intent: "count", segmentFilter: segment }).catch(() => null);
+      if (r?.ok) setRecipientPreview(r.count);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [segment, isSent, post]);
 
-    const script = document.createElement("script");
-    script.src = "https://editor.unlayer.com/embed.js";
-    script.async = true;
-    script.onload = () => initUnlayer();
-    document.head.appendChild(script);
-  }, [editMode]);
+  // Sending happens in the background; poll progress until it's done.
+  useEffect(() => {
+    if (status !== "sending") return;
+    const id = setInterval(async () => {
+      const r = await post({ intent: "progress" }).catch(() => null);
+      if (!r?.ok) return;
+      setProgress(r.progress);
+      if (r.status !== "sending") revalidator.revalidate();
+    }, 4000);
+    return () => clearInterval(id);
+  }, [status, post, revalidator]);
+  const footer = doc?.blocks.find((b) => b.type === "footer");
+  const missingAddress = !!doc && !(footer && footer.type === "footer" && footer.address.trim());
 
-  function initUnlayer() {
-    if (!editorRef.current || !window.unlayer) return;
-    window.unlayer.init({
-      id: "unlayer-editor",
-      displayMode: "email",
-      locale: "en-US",
-      appearance: {
-        theme: "light",
-        panels: { tools: { dock: "right" } },
-      },
-      customCSS: [
-        `.blockbuilder-branding { display: none !important; }`,
-        `.blockbuilder-footer { display: none !important; }`,
-        `body { overflow-x: hidden !important; }`,
-        `.blockbuilder-content-tools { overflow: hidden !important; }`,
-        `.blockbuilder-preferences { width: 0 !important; min-width: 0 !important; overflow: hidden !important; transition: width 0.3s !important; }`,
-        `.blockbuilder-preferences:hover, .blockbuilder-preferences:focus-within, .blockbuilder-preferences.active { width: 360px !important; min-width: 360px !important; }`,
-        `.blockbuilder-preferences .tools-header { cursor: pointer; }`,
-      ],
-      options: {
-        mergeTags: {
-          shop_url: { name: "Shop URL", value: `https://${shop}` },
-          unsubscribe_url: { name: "Unsubscribe", value: "#unsubscribe" },
-        },
-      },
-      editor: { minRows: 1, autoSelectOnDrop: true },
-      features: {
-        textEditor: { tables: true, emojis: true },
-        preview: true,
-        preheaderText: false,
-        undoRedo: true,
-      },
-      tools: {
-        button: { enabled: true },
-        image: { enabled: true },
-        text: { enabled: true },
-        divider: { enabled: true },
-        heading: { enabled: true },
-        html: { enabled: true },
-        social: { enabled: true },
-        video: { enabled: true },
-      },
-      designTags: {
-        shop_url: `https://${shop}`,
-        shop_name: shop.replace(".myshopify.com", ""),
-      },
-    });
-
-    // Register image upload handler — sends file to our server, returns hosted URL
-    window.unlayer.registerCallback("image", async (file: any, done: (result: { progress: number; url?: string }) => void) => {
-      try {
-        done({ progress: 10 });
-        const formData = new FormData();
-        const fileObj: File = file?.attachments?.[0] ?? file;
-        formData.append("file", fileObj);
-        const res = await authFetch("/api/newsletter/image-upload", {
-          method: "POST",
-          body: formData,
-        });
-        let result;
-        try { result = await res.json(); } catch { result = { url: null }; }
-        if (result.url) {
-          done({ progress: 100, url: result.url });
-        } else {
-          done({ progress: 0 });
-          console.error("[unlayer] image upload failed:", result.error);
-        }
-      } catch (e) {
-        done({ progress: 0 });
-        console.error("[unlayer] image upload error:", e);
-      }
-    });
-
-    // Replace placeholders with real values before loading into editor
-    const shopUrl = `https://${shop}`;
-    const shopName = shop.replace(".myshopify.com", "");
-
-    if (campaign.designJson) {
-      try {
-        const json = typeof campaign.designJson === "string" ? campaign.designJson : JSON.stringify(campaign.designJson);
-        const replaced = json
-          .replace(/\{\{shop_url\}\}/gi, shopUrl)
-          .replace(/\{\{shop\}\}/gi, shopName);
-        window.unlayer.loadDesign(JSON.parse(replaced));
-      } catch { window.unlayer.loadDesign(campaign.designJson); }
-    } else if (campaign.htmlContent) {
-      let replaced = campaign.htmlContent
-        .replace(/\{\{shop_url\}\}/gi, shopUrl)
-        .replace(/\{\{shop\}\}/gi, shopName);
-
-      // Add unsubscribe footer if not already present
-      if (!replaced.includes("unsubscribe") && !replaced.includes("Unsubscribe")) {
-        const unsubFooter = `<div style="text-align:center;padding:20px 0 16px;border-top:1px solid #e5e5e5;margin-top:24px;font-size:12px;color:#9ca3af;"><p style="margin:0 0 6px;">You're receiving this because you subscribed.</p><p style="margin:0;"><a href="#" style="color:#6366f1;text-decoration:underline;">Unsubscribe</a></p></div>`;
-        if (replaced.includes("</body>")) {
-          replaced = replaced.replace("</body>", `${unsubFooter}</body>`);
-        } else {
-          replaced += unsubFooter;
-        }
-      }
-
-      window.unlayer.loadDesign({ html: replaced, classic: true });
-    }
-    setUnlayerReady(true);
-
-    // Auto-collapse the tools panel after a short delay
-    setTimeout(() => {
-      try {
-        const iframe = document.querySelector("#unlayer-editor iframe") as HTMLIFrameElement;
-        if (iframe?.contentDocument) {
-          const collapseBtn = iframe.contentDocument.querySelector('[data-testid="tools-collapse"], .collapse-btn, [class*="collapse"]') as HTMLElement;
-          if (collapseBtn) collapseBtn.click();
-        }
-      } catch {}
-      // Fallback: use Unlayer API if available
-      try { (window as any).unlayer?.setToolsPanelCollapsed?.(true); } catch {}
-    }, 1500);
-  }
-
-  const saveData = useCallback(async (htmlContent: string, designJson: object | null) => {
-    setSaveStatus("saving");
+  const save = useCallback(async () => {
+    setSaving(true);
+    setSaveError(null);
     try {
       const res = await authFetch(`/app/newsletter/campaigns/${campaign.id}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ intent: "save", name, subject, previewText, fromName, fromEmail: fromEmailVal, replyTo, designJson, htmlContent, segmentFilter: {} }),
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ intent: "save", name, subject, previewText, fromName, fromEmail, replyTo, doc, segmentFilter: segment }),
       });
+      const result = await res.json().catch(() => ({ ok: false, error: "Unexpected response" }));
+      if (!result.ok) throw new Error(result.error || "Save failed");
+      setDirty(false);
+      return true;
+    } catch (e: any) {
+      setSaveError(e?.message || "Save failed");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }, [authFetch, campaign.id, name, subject, previewText, fromName, fromEmail, replyTo, doc, segment]);
+
+  const uploadImage = useCallback(async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await authFetch("/api/newsletter/image-upload", { method: "POST", body: form });
       const result = await res.json();
-      setSaveStatus(result.ok ? "saved" : "error");
-      if (result.ok) setTimeout(() => setSaveStatus("idle"), 2000);
-    } catch (e) {
-      console.error("[campaign] save error:", e);
-      setSaveStatus("error");
-      setTimeout(() => setSaveStatus("idle"), 3000);
+      return (result?.url as string) || null;
+    } catch {
+      return null;
     }
-  }, [campaign.id, name, subject, previewText, fromName, fromEmailVal, replyTo, authFetch]);
+  }, [authFetch]);
 
-  const handleSave = useCallback(async () => {
-    if (editMode === "preview") {
-      await saveData(campaign.htmlContent || "", null);
-    } else if (window.unlayer && unlayerReady) {
-      // exportHtml is callback-based — wrap in a Promise so callers can
-      // await the full save before navigating away.
-      await new Promise<void>((resolve) => {
-        window.unlayer.exportHtml(async (data: { design: object; html: string }) => {
-          await saveData(data.html, data.design);
-          resolve();
-        });
-      });
-    } else {
-      // Unlayer not ready — save what we have
-      await saveData(campaign.htmlContent || "", null);
-    }
-  }, [editMode, campaign.htmlContent, saveData, unlayerReady]);
-
-  const handleSend = useCallback(async () => {
-    if (!campaign.id) return;
-    setSendModalOpen(false);
-
-    const doSend = async () => {
-      try {
-        const res = await authFetch(`/app/newsletter/campaigns/${campaign.id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ intent: "send" }),
-        });
-        const text = await res.text();
-        let result;
-        try {
-          result = JSON.parse(text);
-        } catch {
-          // Shopify may wrap JSON in HTML — try to extract
-          const match = text.match(/\{[^]*"ok"\s*:\s*(true|false)[^]*\}/);
-          result = match ? JSON.parse(match[0]) : { ok: res.ok, sent: 0, failed: 0, errors: [] };
-        }
-        setSendResult(result);
-        if (result.ok || res.ok) {
-          setSendResult({ ok: true, sent: result.sent || 0, failed: 0, errors: [], message: "Newsletter sent!" });
-          setTimeout(() => navigate("/app/newsletter/campaigns"), 2000);
-        }
-      } catch (e) {
-        console.error("[campaign] send error:", e);
-        // The send may have succeeded server-side even if the response parsing failed
-        setSendResult({ ok: true, sent: 0, failed: 0, errors: [], message: "Newsletter is being sent. Check your email inbox." });
-        setTimeout(() => navigate("/app/newsletter/campaigns"), 3000);
-      }
-    };
-
-    if (editMode === "preview") {
-      await saveData(campaign.htmlContent || "", null);
-      await doSend();
-    } else if (window.unlayer && unlayerReady) {
-      await new Promise<void>((resolve) => {
-        window.unlayer.exportHtml(async (data: { design: object; html: string }) => {
-          await saveData(data.html, data.design);
-          await doSend();
-          resolve();
-        });
-      });
-    } else {
-      await saveData(campaign.htmlContent || "", null);
-      await doSend();
-    }
-  }, [campaign.id, campaign.htmlContent, editMode, saveData, authFetch, navigate, unlayerReady]);
-
-  const handleTestSend = useCallback(async () => {
+  const sendTest = async () => {
     if (!testEmail) return;
     setTestSending(true);
+    setTestResult(null);
+    if (dirty && !(await save())) { setTestSending(false); return; }
     try {
-      // Save settings (no Unlayer export — just text fields) so DB is fresh
-      await saveData(campaign.htmlContent || "", null);
-      // Pass current UI values as well in case save hasn't propagated
       const res = await fetch("/api/newsletter/test-send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          campaignId: campaign.id,
-          shop,
-          token: testSendToken,
-          testEmail,
-          subject,
-          fromName,
-          previewText,
-        }),
+        body: JSON.stringify({ campaignId: campaign.id, shop, token: testSendToken, testEmail, subject, fromName, previewText }),
       });
-      const result = await res.json().catch(() => ({
-        ok: false,
-        error: `Server error (HTTP ${res.status}) — check Fly.io logs`,
-      }));
-      setTestResult({
-        ok: result.ok ?? false,
-        message: result.ok
-          ? (result.message ?? `Test sent to ${testEmail}`)
-          : (result.error ?? "Send failed — check your SMTP configuration in Fly.io secrets"),
-      });
+      const result = await res.json().catch(() => ({ ok: false, error: `Server error (HTTP ${res.status})` }));
+      setTestResult({ ok: !!result.ok, message: result.ok ? `Test sent to ${testEmail}.` : result.error || "Send failed." });
     } catch {
-      setTestResult({ ok: false, message: "Network error — could not reach server" });
+      setTestResult({ ok: false, message: "Couldn't reach the server. Check your connection and try again." });
     } finally {
       setTestSending(false);
     }
-  }, [testEmail, campaign.id, shop, testSendToken, subject, fromName, previewText, saveData, campaign.htmlContent]);
+  };
 
-  const STEPS: { key: BuilderTab; label: string }[] = [
-    { key: "edit", label: "Edit" },
-    { key: "settings", label: "Settings" },
-    { key: "recipients", label: "Recipients" },
-    { key: "send", label: "Send" },
+  const send = async (mode: "now" | "schedule") => {
+    setSending(true);
+    if (dirty && !(await save())) { setSending(false); setSendModal(false); return; }
+    try {
+      const result = mode === "now"
+        ? await post({ intent: "send" })
+        : await post({ intent: "schedule", scheduledAt: new Date(scheduleAt).toISOString() });
+      if (result?.ok) {
+        setSendResult({
+          ok: true,
+          message: mode === "now"
+            ? `Sending to ${Number(result.queued ?? 0).toLocaleString()} subscribers. You can leave this page — it keeps going in the background.`
+            : `Scheduled for ${new Date(result.scheduled).toLocaleString()}.`,
+        });
+        revalidator.revalidate();
+      } else {
+        setSendResult({ ok: false, message: result?.error || "Sending failed." });
+      }
+    } catch {
+      setSendResult({ ok: false, message: "Couldn't reach the server. Check the newsletter list before trying again — it may already be sending." });
+    } finally {
+      setSending(false);
+      setSendModal(false);
+    }
+  };
+
+  const cancelSchedule = async () => {
+    const r = await post({ intent: "cancel-schedule" });
+    if (r?.ok) {
+      setSendResult(null);
+      revalidator.revalidate();
+    }
+  };
+
+  const checks = [
+    { label: "Subject line", ok: !!subject.trim(), value: subject || "Missing" },
+    { label: "Sender name", ok: !!fromName.trim(), value: fromName || "Missing" },
+    { label: "Recipients", ok: recipientPreview > 0, value: `${recipientPreview.toLocaleString()} subscribers` },
+    { label: "Store address in footer", ok: !missingAddress, value: missingAddress ? "Missing" : "Added" },
   ];
-
-  const previewWidth = device === "mobile" ? 375 : device === "tablet" ? 768 : undefined;
+  const canSend = !isSent && sendingAvailable && checks.every((c) => c.ok) && !!doc;
+  const statusBadge: Record<string, { label: string; tone?: "success" | "info" | "attention" | "critical" }> = {
+    draft: { label: "Draft" },
+    scheduled: { label: "Scheduled", tone: "info" },
+    sending: { label: "Sending", tone: "attention" },
+    sent: { label: "Sent", tone: "success" },
+    failed: { label: "Failed", tone: "critical" },
+  };
+  const badge = statusBadge[status] ?? { label: status };
+  const minSchedule = new Date(Date.now() + 5 * 60_000 - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 
   return (
-    <Page fullWidth>
-      <BlockStack gap="0">
-
-        {/* ── Custom header ─────────────────────────────────────── */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "12px 0 16px", gap: 16, borderBottom: "1px solid #E5E7EB", marginBottom: 0,
-        }}>
-          <InlineStack gap="300" blockAlign="center">
-            <button onClick={() => navigate("/app/newsletter/campaigns")}
-              style={{ background: "none", border: "none", cursor: "pointer", color: "#6B7280", fontSize: 14, padding: "4px 0", display: "flex", alignItems: "center", gap: 4 }}>
-              ← Back to newsletters
-            </button>
-            <span style={{ color: "#E5E7EB" }}>|</span>
-            <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              disabled={isSent}
-              style={{ fontSize: 18, fontWeight: 700, border: "none", outline: "none", background: "transparent", color: "#111", minWidth: 140 }}
-            />
-            <Badge tone={isSent ? "success" : "new"}>{isSent ? "Sent" : "Draft"}</Badge>
-            <Text as="p" variant="bodySm" tone="subdued">
-              {saveStatus === "saving" ? "Saving…" : saveStatus === "saved" ? "Saved ✓" : saveStatus === "error" ? "Save error" : "Last saved 2 minutes ago"}
-            </Text>
-          </InlineStack>
-
-          <InlineStack gap="200" blockAlign="center">
-            {/* Device preview buttons */}
-            {activeTab === "edit" && (
-              <div style={{ display: "flex", border: "1px solid #E5E7EB", borderRadius: 8, overflow: "hidden" }}>
-                {(["desktop", "tablet", "mobile"] as DevicePreview[]).map(d => (
-                  <button key={d} onClick={() => { setDevice(d); if (editMode !== "preview") setEditMode("preview"); }}
-                    title={d.charAt(0).toUpperCase() + d.slice(1)}
-                    style={{
-                      padding: "6px 10px", border: "none", cursor: "pointer", fontSize: 14,
-                      background: device === d ? "#F3F4F6" : "white",
-                      borderRight: d !== "mobile" ? "1px solid #E5E7EB" : "none",
-                    }}>
-                    {d === "desktop" ? "🖥" : d === "tablet" ? "📱" : "📱"}
-                    {d === "desktop" ? "🖥️" : d === "tablet" ? "⬛" : "📱"}
-                  </button>
-                ))}
-              </div>
-            )}
-            <Button size="slim" onClick={() => setTestModalOpen(true)}>
-              Preview & test
-            </Button>
-            <Button
-              size="slim"
-              variant="primary"
-              disabled={saveStatus === "saving" || isSent}
-              onClick={() => {
-                handleSave().then(() => {
-                  const cur = STEPS.findIndex(s => s.key === activeTab);
-                  if (cur < STEPS.length - 1) setActiveTab(STEPS[cur + 1].key);
-                });
-              }}
-            >
-              {saveStatus === "saving" ? "Saving…" : "Save & continue"}
-            </Button>
-          </InlineStack>
-        </div>
-
-        {/* ── Step tabs ──────────────────────────────────────────── */}
-        <div style={{ display: "flex", gap: 0, borderBottom: "1px solid #E5E7EB", marginBottom: 20 }}>
-          {STEPS.map(step => (
-            <button key={step.key} onClick={() => setActiveTab(step.key)} style={{
-              padding: "10px 20px", border: "none", background: "transparent", cursor: "pointer",
-              fontSize: 13, fontWeight: 600,
-              color: activeTab === step.key ? "#008060" : "#6B7280",
-              borderBottom: activeTab === step.key ? "2px solid #008060" : "2px solid transparent",
-              marginBottom: -1,
-            }}>
-              {step.label}
-            </button>
-          ))}
-        </div>
-
-        {/* ── Tab content ────────────────────────────────────────── */}
-
-        {/* Banners */}
-        {!smtpConfigured && activeTab === "send" && (
-          <div style={{ marginBottom: 16 }}>
-            <Banner tone="warning" title="Sending not configured">
-              Add SMTP_HOST and SMTP_USER to your Fly.io secrets to enable sending.
-            </Banner>
-          </div>
+    <Page
+      fullWidth
+      backAction={{ content: "Newsletters", onAction: () => navigate("/app/newsletter/campaigns") }}
+      title={name || "Untitled newsletter"}
+      titleMetadata={<Badge tone={badge.tone}>{badge.label}</Badge>}
+      primaryAction={isSent ? undefined : { content: dirty ? "Save" : "Saved", onAction: save, loading: saving, disabled: !dirty }}
+      secondaryActions={
+        isSent || !doc
+          ? []
+          : [
+              { content: "Start from a template", onAction: () => setTemplateModal(true) },
+              {
+                content: "Save as template",
+                onAction: async () => {
+                  await authFetch(`/app/newsletter/campaigns/${campaign.id}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", Accept: "application/json" },
+                    body: JSON.stringify({ intent: "save-as-template", name, subject, doc }),
+                  });
+                  (window as any).shopify?.toast?.show?.("Saved as template");
+                },
+              },
+            ]
+      }
+    >
+      <BlockStack gap="400">
+        {saveError && <Banner tone="critical" title="Couldn't save" onDismiss={() => setSaveError(null)}>{saveError}</Banner>}
+        {status === "scheduled" && campaign.scheduledAt && (
+          <Banner tone="info" title={`Scheduled for ${new Date(campaign.scheduledAt).toLocaleString()}`} action={{ content: "Cancel schedule", onAction: cancelSchedule }}>
+            Cancel the schedule to make changes.
+          </Banner>
         )}
-        {activeTab === "send" && !subject && !isSent && (
-          <div style={{ marginBottom: 16 }}>
-            <Banner
-              tone="critical"
-              title="Subject line required"
-              action={{ content: "Open Settings tab", onAction: () => setActiveTab("settings") }}
-            >
-              Add a subject line before you can send this campaign.
-            </Banner>
-          </div>
+        {status === "sending" && progress && (
+          <Card>
+            <BlockStack gap="200">
+              <Text as="h2" variant="headingSm">{`Sending… ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()}`}</Text>
+              <ProgressBar progress={progress.total ? Math.round((progress.done / progress.total) * 100) : 0} size="small" />
+              <Text as="p" tone="subdued">This keeps going in the background, so you can leave this page.</Text>
+            </BlockStack>
+          </Card>
         )}
-        {activeTab === "send" && !fromName && !isSent && (
-          <div style={{ marginBottom: 16 }}>
-            <Banner
-              tone="critical"
-              title="From name required"
-              action={{ content: "Open Settings tab", onAction: () => setActiveTab("settings") }}
-            >
-              Add a sender name so recipients know who the email is from.
-            </Banner>
-          </div>
+        {status === "sent" && (
+          <Card>
+            <InlineGrid columns={{ xs: 2, md: 5 }} gap="400">
+              {[
+                { label: "Sent", value: (progress?.sent ?? campaign.deliveredCount ?? 0).toLocaleString() },
+                { label: "Opened", value: rate(campaign.openCount, progress?.sent ?? campaign.deliveredCount) },
+                { label: "Clicked", value: rate(campaign.clickCount, progress?.sent ?? campaign.deliveredCount) },
+                { label: "Bounced", value: (campaign.bounceCount ?? 0).toLocaleString() },
+                { label: "Unsubscribed / spam", value: (campaign.unsubCount ?? 0).toLocaleString() },
+              ].map((m) => (
+                <BlockStack key={m.label} gap="100">
+                  <Text as="p" tone="subdued">{m.label}</Text>
+                  <Text as="p" variant="headingLg">{m.value}</Text>
+                </BlockStack>
+              ))}
+            </InlineGrid>
+          </Card>
         )}
         {sendResult && (
-          <div style={{ marginBottom: 16 }}>
-            <Banner
-              tone={sendResult.ok ? "success" : "critical"}
-              title={sendResult.ok ? `Newsletter sent! ${sendResult.sent} delivered.` : `Send failed: ${sendResult.errors?.join(", ")}`}
-              onDismiss={() => setSendResult(null)}
+          <Banner tone={sendResult.ok ? "success" : "critical"} onDismiss={() => setSendResult(null)}>{sendResult.message}</Banner>
+        )}
+
+        <Tabs tabs={TABS} selected={tab} onSelect={setTab} />
+
+        {tab === 0 && (
+          doc ? (
+            <EmailEditor
+              doc={doc}
+              onChange={(d) => { setDoc(d); setDirty(true); }}
+              brand={brand}
+              previewText={previewText}
+              disabled={isSent}
+              uploadImage={uploadImage}
             />
-          </div>
-        )}
-
-        {/* EDIT TAB */}
-        {activeTab === "edit" && (
-          <BlockStack gap="400">
-            {!isSent && (
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {editMode === "unlayer" ? "Drag and drop blocks to design your email." : "Preview mode — use the editor for full editing."}
-                </Text>
-                <InlineStack gap="200">
-                  {editMode === "preview" && (
-                    <Button size="slim" onClick={() => setEditMode("unlayer")}>Open in editor</Button>
-                  )}
-                  {editMode === "unlayer" && campaign.htmlContent && (
-                    <Button size="slim" variant="plain" onClick={() => setEditMode("preview")}>Preview mode</Button>
-                  )}
-                </InlineStack>
-              </InlineStack>
-            )}
-
-            {/* Fix Unlayer scroll + branding */}
-            <style dangerouslySetInnerHTML={{ __html: `
-              #unlayer-editor { overflow: hidden !important; }
-              #unlayer-editor iframe { border: none !important; }
-              #unlayer-editor > div > div:last-child { display: none !important; }
-            `}} />
-
-            {editMode === "preview" && campaign.htmlContent && (
-              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden", background: "#F8F9FA", display: "flex", justifyContent: "center", padding: device !== "desktop" ? 16 : 0 }}>
-                <iframe
-                  srcDoc={`<style>a{pointer-events:none!important;cursor:default!important;}body{margin:0;}</style>${
-                    campaign.htmlContent
-                      .replace(/\{\{shop_url\}\}/gi, `https://${shop}`)
-                      .replace(/\{\{shop\}\}/gi, shop.replace(".myshopify.com", ""))
-                      .replace(/\{\{first_name\}\}/gi, "Customer")
-                      .replace(/\{\{name\}\}/gi, "Customer")
-                      .replace(/\{\{email\}\}/gi, "customer@example.com")
-                      .replace(/\{\{unsubscribe_url\}\}/gi, "#")
-                      .replace(/href="[^"]*"/g, 'href="#"')
-                  }`}
-                  sandbox=""
-                  style={{ width: previewWidth ? `${previewWidth}px` : "100%", height: 680, border: "none", display: "block", transition: "width 0.3s" }}
-                  title="Email preview"
-                />
-              </div>
-            )}
-
-            {editMode === "preview" && !campaign.htmlContent && (
-              <div style={{ padding: 40, textAlign: "center", background: "#F9FAFB", borderRadius: 10, border: "1px dashed #D1D5DB" }}>
-                <div style={{ fontSize: 32, marginBottom: 12 }}>✉️</div>
-                <Text as="p" variant="bodyMd" tone="subdued">No content yet. Open in editor to design your email.</Text>
-                <div style={{ marginTop: 12 }}>
-                  <Button size="slim" onClick={() => setEditMode("unlayer")}>Open in editor</Button>
-                </div>
-              </div>
-            )}
-
-            <div
-              id="unlayer-editor"
-              ref={editorRef}
-              style={{
-                height: "80vh", minHeight: 700,
-                border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden",
-                display: editMode === "unlayer" && !isSent ? "block" : "none",
-              }}
-            />
-
-            {isSent && campaign.htmlContent && (
-              <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
-                <iframe srcDoc={campaign.htmlContent} style={{ width: "100%", height: 640, border: "none", display: "block" }} title="Sent email" />
-              </div>
-            )}
-          </BlockStack>
-        )}
-
-        {/* SETTINGS TAB */}
-        {activeTab === "settings" && (
-          <Card>
+          ) : (
             <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Campaign settings</Text>
-              <InlineStack gap="400" wrap>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <TextField label="Campaign name (internal)" value={name} onChange={setName} autoComplete="off" disabled={isSent} />
-                </div>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <TextField label="Email subject" value={subject} onChange={setSubject} autoComplete="off" disabled={isSent} helpText="Appears as the subject line in the inbox" />
-                </div>
-              </InlineStack>
-              <InlineStack gap="400" wrap>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <TextField label="Preview text" value={previewText} onChange={setPreviewText} autoComplete="off" disabled={isSent} helpText="Shown after the subject in some email clients" />
-                </div>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <TextField label="From name" value={fromName} onChange={setFromName} autoComplete="off" disabled={isSent} />
-                </div>
-              </InlineStack>
-              <InlineStack gap="400" wrap>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <TextField label="From email" value={fromEmailVal} onChange={setFromEmailVal} autoComplete="email" type="email" disabled={isSent} helpText="Used as the Reply-To address so replies reach you directly" />
-                </div>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <TextField label="Reply-to (optional)" value={replyTo} onChange={setReplyTo} autoComplete="email" type="email" disabled={isSent} />
-                </div>
-              </InlineStack>
+              {!isSent && (
+                <Banner
+                  tone="info"
+                  title="This newsletter was made with the old editor"
+                  action={{ content: "Start a new design", onAction: () => setTemplateModal(true) }}
+                >
+                  It can still be sent as it is. To change it, start a new design from a template — this replaces the current content.
+                </Banner>
+              )}
+              {campaign.htmlContent ? (
+                <Card padding="0">
+                  <iframe title="Email preview" srcDoc={campaign.htmlContent} sandbox="" style={{ width: "100%", height: 720, border: 0, display: "block" }} />
+                </Card>
+              ) : (
+                <Card>
+                  <BlockStack gap="300" inlineAlign="start">
+                    <Text as="p">No content yet.</Text>
+                    <Button onClick={() => setTemplateModal(true)}>Choose a template</Button>
+                  </BlockStack>
+                </Card>
+              )}
             </BlockStack>
-          </Card>
+          )
         )}
 
-        {/* RECIPIENTS TAB */}
-        {activeTab === "recipients" && (
-          <Card>
-            <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">Recipients</Text>
-              <InlineStack align="space-between" blockAlign="center">
-                <BlockStack gap="050">
-                  <Text as="p" variant="bodyMd" fontWeight="semibold">All active subscribers</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">Everyone currently subscribed to your newsletter list.</Text>
-                </BlockStack>
-                <Badge tone="info">{recipientPreview.toLocaleString()} subscribers</Badge>
-              </InlineStack>
-              <div style={{ padding: "12px 16px", background: "#F9FAFB", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 14 }}>ℹ️</span>
-                <Text as="p" variant="bodySm" tone="subdued">Unsubscribed contacts are automatically excluded.</Text>
-              </div>
-            </BlockStack>
-          </Card>
-        )}
-
-        {/* SEND TAB */}
-        {activeTab === "send" && (
-          <BlockStack gap="400">
+        {tab === 1 && (
+          <Box maxWidth="720px">
             <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">Ready to send?</Text>
-                <InlineStack gap="400" wrap>
-                  {[
-                    { icon: "📝", label: "Subject", value: subject || "(no subject)", ok: !!subject },
-                    { icon: "👥", label: "Recipients", value: `${recipientPreview.toLocaleString()} subscribers`, ok: recipientPreview > 0 },
-                    { icon: "✉️", label: "From", value: `${fromName || "(no name)"} <${fromEmailVal}>`, ok: !!fromEmailVal && !!fromName },
-                  ].map(item => (
-                    <div key={item.label} style={{ flex: 1, minWidth: 180, padding: "12px 16px", background: item.ok ? "#F0FDF4" : "#FEF2F2", borderRadius: 8, border: `1px solid ${item.ok ? "#BBF7D0" : "#FECACA"}` }}>
-                      <InlineStack gap="150" blockAlign="center">
-                        <span>{item.icon}</span>
-                        <BlockStack gap="025">
-                          <Text as="p" variant="bodySm" tone="subdued">{item.label}</Text>
-                          <Text as="p" variant="bodySm" fontWeight="semibold">{item.value}</Text>
-                        </BlockStack>
-                        <span style={{ marginLeft: "auto", color: item.ok ? "#16A34A" : "#DC2626" }}>{item.ok ? "✓" : "!"}</span>
-                      </InlineStack>
-                    </div>
-                  ))}
-                </InlineStack>
-                <InlineStack gap="200">
-                  <Button
-                    variant="primary"
-                    disabled={isSent || !smtpConfigured || !subject || !fromName || recipientPreview === 0}
-                    onClick={() => setSendModalOpen(true)}
-                  >
-                    Send to {recipientPreview.toLocaleString()} subscribers
-                  </Button>
-                  <Button onClick={() => setTestModalOpen(true)}>Send test email</Button>
-                </InlineStack>
-              </BlockStack>
+              <FormLayout>
+                <TextField label="Internal name" helpText="Only you see this." value={name} onChange={touch(setName)} autoComplete="off" disabled={isSent} />
+                <TextField label="Subject line" value={subject} onChange={touch(setSubject)} autoComplete="off" disabled={isSent} showCharacterCount maxLength={120} error={subject.trim() ? undefined : "Required"} />
+                <TextField label="Preview text" helpText="The short line shown after the subject in most inboxes." value={previewText} onChange={touch(setPreviewText)} autoComplete="off" disabled={isSent} showCharacterCount maxLength={150} />
+                <TextField label="Sender name" value={fromName} onChange={touch(setFromName)} autoComplete="off" disabled={isSent} error={fromName.trim() ? undefined : "Required"} />
+                <FormLayout.Group>
+                  <TextField
+                    label="Sender email"
+                    type="email"
+                    helpText="Used as the sender once your domain is verified under Settings. Until then, replies go here."
+                    value={fromEmail}
+                    onChange={touch(setFromEmail)}
+                    autoComplete="email"
+                    disabled={isSent}
+                  />
+                  <TextField label="Reply-to email (optional)" type="email" helpText="If replies should go somewhere else." value={replyTo} onChange={touch(setReplyTo)} autoComplete="email" disabled={isSent} />
+                </FormLayout.Group>
+              </FormLayout>
             </Card>
-          </BlockStack>
+          </Box>
         )}
 
+        {tab === 2 && (
+          <Box maxWidth="720px">
+            <BlockStack gap="400">
+              {!sendingAvailable && (
+                <Banner tone="warning" title="Sending isn't available yet">
+                  Email sending hasn't been switched on for your store. Contact Attribix support.
+                </Banner>
+              )}
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Recipients</Text>
+                  <FormLayout>
+                    <FormLayout.Group>
+                      <Select
+                        label="Who signed up via"
+                        disabled={isSent}
+                        options={[{ label: "Any signup form", value: "" }, ...sources.map((src: any) => ({ label: `${sourceLabel(src.value)} (${src.count.toLocaleString()})`, value: src.value }))]}
+                        value={segSource}
+                        onChange={touch(setSegSource)}
+                      />
+                      <Select
+                        label="Subscribed"
+                        disabled={isSent}
+                        options={[
+                          { label: "Any time", value: "" },
+                          { label: "In the last 7 days", value: "7" },
+                          { label: "In the last 30 days", value: "30" },
+                          { label: "In the last 90 days", value: "90" },
+                          { label: "In the last year", value: "365" },
+                        ]}
+                        value={segDays}
+                        onChange={touch(setSegDays)}
+                      />
+                    </FormLayout.Group>
+                  </FormLayout>
+                  <Text as="p" tone="subdued">
+                    {`${recipientPreview.toLocaleString()} subscribers match. People who unsubscribed, bounced or haven't confirmed their signup are never included.`}
+                  </Text>
+                </BlockStack>
+              </Card>
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Checklist</Text>
+                  {checks.map((c) => (
+                    <InlineGrid key={c.label} columns="1fr auto" gap="200">
+                      <BlockStack gap="050">
+                        <Text as="p" fontWeight="semibold">{c.label}</Text>
+                        <Text as="p" tone="subdued" truncate>{c.value}</Text>
+                      </BlockStack>
+                      <Badge tone={c.ok ? "success" : "critical"}>{c.ok ? "Ready" : "Needs attention"}</Badge>
+                    </InlineGrid>
+                  ))}
+                </BlockStack>
+              </Card>
+              <Card>
+                <BlockStack gap="300">
+                  <Text as="h2" variant="headingMd">Send a test</Text>
+                  <InlineStack gap="200" blockAlign="end" wrap={false}>
+                    <Box width="100%">
+                      <TextField label="Email address" type="email" value={testEmail} onChange={setTestEmail} autoComplete="email" placeholder="you@yourstore.com" />
+                    </Box>
+                    <Button onClick={sendTest} loading={testSending} disabled={!testEmail || !sendingAvailable || !subject.trim() || !fromName.trim()}>Send test</Button>
+                  </InlineStack>
+                  {testResult && <Banner tone={testResult.ok ? "success" : "critical"}>{testResult.message}</Banner>}
+                </BlockStack>
+              </Card>
+              {!isSent && (
+                <Card>
+                  <BlockStack gap="300">
+                    <Text as="h2" variant="headingMd">Send</Text>
+                    <InlineStack gap="300" blockAlign="end" wrap>
+                      <Button variant="primary" disabled={!canSend} onClick={() => setSendModal(true)}>
+                        {`Send now to ${recipientPreview.toLocaleString()} subscribers`}
+                      </Button>
+                      <Text as="span" tone="subdued">or</Text>
+                      <Box minWidth="220px">
+                        <TextField label="Schedule for" type="datetime-local" value={scheduleAt} min={minSchedule} onChange={setScheduleAt} autoComplete="off" helpText="Your computer's time zone." />
+                      </Box>
+                      <Button disabled={!canSend || !scheduleAt} loading={sending} onClick={() => send("schedule")}>Schedule</Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              )}
+            </BlockStack>
+          </Box>
+        )}
       </BlockStack>
 
-      {/* Send confirmation modal */}
       <Modal
-        open={sendModalOpen}
-        onClose={() => setSendModalOpen(false)}
-        title="Send newsletter"
-        primaryAction={{
-          content: `Send to ${recipientPreview.toLocaleString()} subscribers`,
-          onAction: () => { setSendModalOpen(false); handleSend(); },
-          tone: "success",
-        }}
-        secondaryActions={[{ content: "Cancel", onAction: () => setSendModalOpen(false) }]}
+        open={sendModal}
+        onClose={() => setSendModal(false)}
+        title="Send newsletter?"
+        primaryAction={{ content: `Send to ${recipientPreview.toLocaleString()} subscribers`, onAction: () => send("now"), loading: sending }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setSendModal(false) }]}
       >
         <Modal.Section>
-          <BlockStack gap="300">
-            <Text as="p">You're about to send <strong>{subject || "(no subject)"}</strong> to <strong>{recipientPreview.toLocaleString()} subscribers</strong>.</Text>
-            <Text as="p" tone="subdued">This action cannot be undone. Make sure your email looks correct before sending.</Text>
-          </BlockStack>
+          <Text as="p">
+            <strong>{subject}</strong> goes to {recipientPreview.toLocaleString()} subscribers. You can't undo this.
+          </Text>
         </Modal.Section>
       </Modal>
 
-      {/* Preview & test modal */}
       <Modal
-        open={testModalOpen}
-        onClose={() => { setTestModalOpen(false); setTestResult(null); }}
-        title="Preview & test"
-        primaryAction={{
-          content: testSending ? "Sending…" : "Send test email",
-          onAction: handleTestSend,
-          loading: testSending,
-          disabled: !testEmail || testSending || !subject || !fromName,
-        }}
-        secondaryActions={[{ content: "Close", onAction: () => { setTestModalOpen(false); setTestResult(null); } }]}
+        open={templateModal}
+        onClose={() => setTemplateModal(false)}
+        title="Start from a template"
+        size="large"
       >
         <Modal.Section>
           <BlockStack gap="300">
-            <Text as="p" variant="bodySm" tone="subdued">Send a test version of this email to check how it looks in an inbox.</Text>
-            {!subject && (
-              <Banner tone="critical" action={{ content: "Open Settings tab", onAction: () => { setTestModalOpen(false); setActiveTab("settings"); } }}>
-                Add a subject line before sending.
-              </Banner>
-            )}
-            {!fromName && (
-              <Banner tone="critical" action={{ content: "Open Settings tab", onAction: () => { setTestModalOpen(false); setActiveTab("settings"); } }}>
-                Add a sender name before sending.
-              </Banner>
-            )}
-            {!smtpConfigured && (
-              <Banner tone="warning">Email sending is not configured (SMTP missing). Contact support.</Banner>
-            )}
-            {smtpConfigured && !fromEmailVal && (
-              <Banner tone="warning">
-                No sender email set. Go to Newsletter → Settings to configure your From email address before sending.
-              </Banner>
-            )}
-            <TextField
-              label="Send test to"
-              value={testEmail}
-              onChange={setTestEmail}
-              type="email"
-              autoComplete="email"
-              placeholder="your@email.com"
-            />
-            {testResult && (
-              <Banner tone={testResult.ok ? "success" : "critical"}>
-                {testResult.message}
-              </Banner>
-            )}
+            {doc && <Banner tone="warning">This replaces your current design.</Banner>}
+            <InlineGrid columns={{ xs: 1, sm: 2 }} gap="300">
+              {STARTER_TEMPLATES.map((t) => (
+                <Card key={t.id}>
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingSm">{t.name}</Text>
+                    <Text as="p" tone="subdued">{t.description}</Text>
+                    <InlineStack>
+                      <Button
+                        onClick={() => {
+                          setDoc(t.build(brand));
+                          if (!subject && t.subject) setSubject(t.subject);
+                          setDirty(true);
+                          setTemplateModal(false);
+                          setTab(0);
+                        }}
+                      >
+                        Use this template
+                      </Button>
+                    </InlineStack>
+                  </BlockStack>
+                </Card>
+              ))}
+            </InlineGrid>
           </BlockStack>
         </Modal.Section>
       </Modal>

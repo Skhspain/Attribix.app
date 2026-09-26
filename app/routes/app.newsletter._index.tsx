@@ -100,12 +100,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const startLabel = days30Ago.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
   const endLabel = now.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-  // Top campaigns: approximate revenue = (openRate * emailRev30 / opens30) if opens > 0
+  // Per-campaign revenue: orders whose visit came from a link in that campaign
+  // (every link carries utm_campaign=<campaign id>, see trackLinks()).
+  const campaignRevenue = new Map<string, number>();
+  if (topCampaigns5.length) {
+    const rows = await db.purchase.groupBy({
+      by: ["utmCampaign"],
+      where: { shop, utmMedium: "email", utmCampaign: { in: topCampaigns5.map((c: any) => c.id) } },
+      _sum: { totalValue: true },
+    }).catch(() => [] as any[]);
+    for (const r of rows as any[]) campaignRevenue.set(r.utmCampaign, Number(r._sum?.totalValue ?? 0));
+  }
+
   const topCampaigns = topCampaigns5.map((c: any) => {
     const delivered = c.deliveredCount || c.recipientCount || 0;
     const openRate = delivered > 0 ? (c.openCount || 0) / delivered * 100 : 0;
     const clickRate = delivered > 0 ? (c.clickCount || 0) / delivered * 100 : 0;
-    const revFraction = opens30 > 0 ? (c.openCount || 0) / opens30 : 0;
     return {
       id: c.id,
       name: c.name || "Campaign",
@@ -113,7 +123,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       sent: (c.recipientCount || 0).toLocaleString(),
       openRate: `${openRate.toFixed(1)}%`,
       clickRate: `${clickRate.toFixed(1)}%`,
-      revenue: emailRev30 * revFraction,
+      revenue: campaignRevenue.get(c.id) ?? 0,
     };
   });
 
@@ -504,11 +514,7 @@ export default function NewsletterOverview() {
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0" }}>
           <span style={{ fontSize: 13, color: "#9CA3AF" }}>ℹ</span>
           <Text as="p" variant="bodySm" tone="subdued">
-            Revenue attribution is based on orders placed within 7 days of email interaction.{" "}
-            <span style={{ color: "#008060", cursor: "pointer", textDecoration: "underline" }}
-              onClick={() => navigate("/app/newsletter/settings")}>
-              Manage attribution settings
-            </span>
+            Email revenue counts orders from visits that started with a click on a link in one of your emails.
           </Text>
         </div>
 

@@ -9,11 +9,13 @@ import * as shopifyServer from "./shopify.server";
 import { startMetaSyncCron } from "./services/metaSync.server";
 import { startGoogleSyncCron } from "./services/googleSync.server";
 import { startAutomationProcessor } from "./services/automationEngine.server";
+import { startNewsletterWorker } from "./services/newsletterQueue.server";
 
 // Start background sync crons once on server boot
 startMetaSyncCron();
 startGoogleSyncCron();
 startAutomationProcessor();
+startNewsletterWorker();
 
 const ABORT_DELAY = 5000;
 

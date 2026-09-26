@@ -3,7 +3,37 @@
 // NEW FILE.
 
 import { json, type ActionFunctionArgs } from "@remix-run/node";
+import db from "~/db.server";
 import { subscribeEmail } from "~/services/newsletter.server";
+
+// Public endpoint, so keep bots from filling lists: only shops that have the
+// app installed, and a per-IP rate limit (per server machine, which is enough
+// to stop scripted floods).
+const WINDOW_MS = 10 * 60 * 1000;
+const MAX_PER_WINDOW = 8;
+const hits = new Map<string, { count: number; start: number }>();
+
+function rateLimited(key: string) {
+  const now = Date.now();
+  const h = hits.get(key);
+  if (!h || now - h.start > WINDOW_MS) {
+    hits.set(key, { count: 1, start: now });
+    if (hits.size > 50_000) hits.clear();
+    return false;
+  }
+  h.count++;
+  return h.count > MAX_PER_WINDOW;
+}
+
+const installedCache = new Map<string, { ok: boolean; at: number }>();
+async function isInstalledShop(shop: string) {
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shop)) return false;
+  const c = installedCache.get(shop);
+  if (c && Date.now() - c.at < 10 * 60 * 1000) return c.ok;
+  const session = await db.session.findFirst({ where: { shop }, select: { id: true } }).catch(() => null);
+  installedCache.set(shop, { ok: !!session, at: Date.now() });
+  return !!session;
+}
 
 function corsHeaders(origin: string | null) {
   const allowed =
@@ -49,6 +79,26 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
+    // Honeypot: the widget renders a hidden "website" field people never fill in.
+    if (body?.website) {
+      return json({ ok: true, created: false }, { headers: corsHeaders(origin) });
+    }
+
+    const ip =
+      request.headers.get("fly-client-ip") ||
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      "unknown";
+    if (rateLimited(ip)) {
+      return json(
+        { ok: false, error: "Too many attempts. Please try again in a few minutes." },
+        { status: 429, headers: corsHeaders(origin) }
+      );
+    }
+
+    if (!(await isInstalledShop(shop))) {
+      return json({ ok: false, error: "Unknown store" }, { status: 404, headers: corsHeaders(origin) });
+    }
+
     const result = await subscribeEmail({
       shop,
       email,
@@ -60,6 +110,7 @@ export async function action({ request }: ActionFunctionArgs) {
       utmCampaign: body?.utm_campaign,
       gclid: body?.gclid,
       fbclid: body?.fbclid,
+      ip: ip === "unknown" ? null : ip,
     });
 
     return json(result, { headers: corsHeaders(origin) });

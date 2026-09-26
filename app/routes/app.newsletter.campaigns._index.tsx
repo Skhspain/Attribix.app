@@ -22,12 +22,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const anyDb = db as any;
 
   const campaigns = await anyDb.newsletterCampaign?.findMany?.({
-    where: { shop },
+    where: { shop, status: { not: "template" } },
     orderBy: { createdAt: "desc" },
     take: 100,
   }).catch(() => []) ?? [];
 
-  return json({ campaigns });
+  // Revenue per campaign: orders from visits that started at a link in it
+  // (links carry utm_campaign=<campaign id>).
+  const revenueRows = campaigns.length
+    ? await db.purchase.groupBy({
+        by: ["utmCampaign", "currency"],
+        where: { shop, utmMedium: "email", utmCampaign: { in: campaigns.map((c: any) => c.id) } },
+        _sum: { totalValue: true },
+      }).catch(() => [] as any[])
+    : [];
+  const revenue: Record<string, { amount: number; currency: string }> = {};
+  for (const r of revenueRows as any[]) {
+    const prev = revenue[r.utmCampaign];
+    revenue[r.utmCampaign] = { amount: (prev?.amount ?? 0) + Number(r._sum?.totalValue ?? 0), currency: prev?.currency ?? r.currency ?? "USD" };
+  }
+
+  return json({ campaigns, revenue });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -40,7 +55,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (intent === "delete" && id) {
     const campaign = await anyDb.newsletterCampaign.findUnique({ where: { id } });
-    if (campaign && campaign.shop === shop) {
+    if (campaign && campaign.shop === shop && campaign.status !== "sending") {
+      await anyDb.newsletterSend.deleteMany({ where: { campaignId: id } });
       await anyDb.newsletterCampaign.delete({ where: { id } });
     }
   }
@@ -49,7 +65,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function CampaignList() {
-  const { campaigns } = useLoaderData<typeof loader>();
+  const { campaigns, revenue } = useLoaderData<typeof loader>();
   const submit = useSubmit();
 
   function deleteCampaign(id: string, name: string) {
@@ -75,22 +91,39 @@ export default function CampaignList() {
   }
 
   const statusBadge = (status: string) => {
-    const toneMap: Record<string, "success" | "info" | "warning" | "critical" | "new"> = {
-      sent: "success", sending: "info", scheduled: "warning", draft: "new", failed: "critical",
+    const map: Record<string, { label: string; tone?: "success" | "info" | "attention" | "critical" }> = {
+      sent: { label: "Sent", tone: "success" },
+      sending: { label: "Sending", tone: "attention" },
+      scheduled: { label: "Scheduled", tone: "info" },
+      draft: { label: "Draft" },
+      failed: { label: "Failed", tone: "critical" },
     };
-    return <Badge tone={toneMap[status] ?? "new"}>{status}</Badge>;
+    const b = map[status] ?? { label: status };
+    return <Badge tone={b.tone}>{b.label}</Badge>;
+  };
+  const money = (r?: { amount: number; currency: string }) => {
+    if (!r || !r.amount) return "—";
+    try {
+      return new Intl.NumberFormat(undefined, { style: "currency", currency: r.currency, maximumFractionDigits: 0 }).format(r.amount);
+    } catch {
+      return r.amount.toFixed(0);
+    }
   };
 
   const rows = campaigns.map((c: any) => [
     <Button variant="plain" url={`/app/newsletter/campaigns/${c.id}`}>{c.name}</Button>,
     c.subject || "—",
     statusBadge(c.status),
-    c.sentAt ? new Date(c.sentAt).toLocaleDateString() : "—",
+    c.sentAt
+      ? new Date(c.sentAt).toLocaleDateString()
+      : c.status === "scheduled" && c.scheduledAt
+        ? `Scheduled ${new Date(c.scheduledAt).toLocaleString()}`
+        : "—",
     c.recipientCount != null ? c.recipientCount.toLocaleString() : "—",
     c.openCount ? `${Math.round((c.openCount / Math.max(c.recipientCount, 1)) * 100)}%` : "—",
     c.clickCount ? `${Math.round((c.clickCount / Math.max(c.recipientCount, 1)) * 100)}%` : "—",
-    c.revenueAttributed ? `$${c.revenueAttributed.toFixed(0)}` : "—",
-    <Button variant="plain" tone="critical" onClick={() => deleteCampaign(c.id, c.name)}>Delete</Button>,
+    money(revenue[c.id]),
+    c.status === "sending" ? "" : <Button variant="plain" tone="critical" onClick={() => deleteCampaign(c.id, c.name)}>Delete</Button>,
   ]);
 
   return (

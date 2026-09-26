@@ -112,12 +112,23 @@ export async function loader(_: LoaderFunctionArgs) {
     try { localStorage.setItem(LS_KEY, JSON.stringify(d)); } catch {}
   }
 
+  // cb(message, ok): shows what actually happened (double opt-in, errors).
   function sub(email, source, cb) {
+    var fail = 'Something went wrong. Please try again.';
     fetch(API + '/api/newsletter/subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: SHOP, email: email, source: source }),
-    }).then(cb).catch(cb);
+    }).then(function(r){ return r.json().catch(function(){ return {}; }); })
+      .then(function(d){
+        if (d && d.ok) cb(d.pending ? 'Almost done! Check your inbox to confirm.' : '\u2713 You are subscribed. Thank you!', true);
+        else cb((d && (d.error || d.message)) || fail, false);
+      })
+      .catch(function(){ cb(fail, false); });
+  }
+
+  function esc(t) {
+    return String(t).replace(/[&<>"]/g, function(c){ return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
   }
 
   function style(css) {
@@ -140,9 +151,10 @@ export async function loader(_: LoaderFunctionArgs) {
     document.getElementById('atbx-btn').onclick = function() {
       var email = document.getElementById('atbx-email').value;
       if (!email) return;
-      sub(email, 'popup', function() {
-        document.getElementById('atbx-popup').innerHTML = '<p style="font-size:16px;font-weight:700;color:#008060;">\u2713 You\\'re subscribed!</p>';
-        setTimeout(function(){ el.classList.remove('open'); }, 2000);
+      sub(email, 'popup', function(msg, ok) {
+        if (!ok) { alert(msg); return; }
+        document.getElementById('atbx-popup').innerHTML = '<p style="font-size:16px;font-weight:700;color:#008060;">' + esc(msg) + '</p>';
+        setTimeout(function(){ el.classList.remove('open'); }, 3500);
       });
     };
     // Show (session guard so it doesn't re-appear on every page)
@@ -165,9 +177,10 @@ export async function loader(_: LoaderFunctionArgs) {
     document.getElementById('atbx-si-btn').onclick = function() {
       var email = document.getElementById('atbx-si-email').value;
       if (!email) return;
-      sub(email, 'slide_in', function() {
-        el.innerHTML = '<div style="padding:24px;text-align:center;"><p style="font-size:16px;font-weight:700;color:#008060;">\u2713 Subscribed!</p></div>';
-        setTimeout(function(){ el.classList.remove('open'); }, 2000);
+      sub(email, 'slide_in', function(msg, ok) {
+        if (!ok) { alert(msg); return; }
+        el.innerHTML = '<div style="padding:24px;text-align:center;"><p style="font-size:16px;font-weight:700;color:#008060;">' + esc(msg) + '</p></div>';
+        setTimeout(function(){ el.classList.remove('open'); }, 3500);
       });
     };
     if (!sessionStorage.getItem('atbx_si_shown')) {
@@ -190,8 +203,9 @@ export async function loader(_: LoaderFunctionArgs) {
     document.getElementById('atbx-bn-btn').onclick = function() {
       var email = document.getElementById('atbx-bn-email').value;
       if (!email) return;
-      sub(email, 'banner', function() {
-        el.innerHTML = '<p style="margin:0 auto;font-size:14px;font-weight:700;color:' + btnT + ';">\u2713 You\\'re subscribed! Thank you.</p>';
+      sub(email, 'banner', function(msg, ok) {
+        if (!ok) { alert(msg); return; }
+        el.innerHTML = '<p style="margin:0 auto;font-size:14px;font-weight:700;color:' + btnT + ';">' + esc(msg) + '</p>';
         setTimeout(function(){ el.style.display='none'; }, 3000);
       });
     };
@@ -217,10 +231,10 @@ export async function loader(_: LoaderFunctionArgs) {
     document.getElementById('atbx-il-btn').onclick = function() {
       var email = document.getElementById('atbx-il-email').value;
       if (!email) return;
-      sub(email, 'inline_form', function() {
-        document.getElementById('atbx-il-msg').textContent = '\u2713 Subscribed! Thank you.';
-        document.getElementById('atbx-il-msg').style.color = '#008060';
-        document.getElementById('atbx-il-email').value = '';
+      sub(email, 'inline_form', function(msg, ok) {
+        document.getElementById('atbx-il-msg').textContent = msg;
+        document.getElementById('atbx-il-msg').style.color = ok ? '#008060' : '#b91c1c';
+        if (ok) document.getElementById('atbx-il-email').value = '';
       });
     };
   }
