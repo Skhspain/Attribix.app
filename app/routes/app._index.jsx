@@ -4,7 +4,7 @@ import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useMemo, useEffect } from "react";
 import {
   Badge, BlockStack, Button, Card, DataTable,
-  Grid, InlineStack, Layout, Page, Text,
+  Grid, InlineStack, Layout, Page, Text, Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
@@ -83,7 +83,7 @@ export async function loader({ request }) {
       where: { shop },
       orderBy: { createdAt: "desc" },
       take: 6,
-      select: { orderId: true, totalValue: true, currency: true, utmSource: true, utmCampaign: true, createdAt: true },
+      select: { orderId: true, totalValue: true, currency: true, utmSource: true, utmCampaign: true, createdAt: true, visitorId: true, sessionId: true, landingPage: true, referrer: true, fbclid: true, gclid: true },
     }).catch(() => []),
 
     // Previous 30d aggregate for delta comparison
@@ -105,6 +105,9 @@ export async function loader({ request }) {
       },
     }).catch(() => []) ?? [],
   ]);
+
+  const { labelOrders } = await import("~/services/campaignNames.server");
+  const recentPurchasesLabelled = await labelOrders(shop, recentPurchases);
 
   const rev30 = purchases30.reduce((s, p) => s + Number(p.totalValue || 0), 0);
   const orders30 = purchases30.length;
@@ -346,7 +349,7 @@ export async function loader({ request }) {
     metaConnected, metaPartialConnect,
     googleConnected, googlePartialConnect,
     isNewInstall,
-    recentPurchases,
+    recentPurchases: recentPurchasesLabelled,
     attributionModel: settings?.attributionModel ?? "last_touch",
     attributionWindowDays: settings?.attributionWindowDays ?? 7,
     journeyPreview,
@@ -841,8 +844,8 @@ export default function AppIndex() {
     <Text as="span" variant="bodySm">{fmt(p.totalValue, p.currency)}</Text>,
     p.utmSource
       ? <Badge tone={sourceTone(p.utmSource)}>{p.utmSource}</Badge>
-      : <Text as="span" variant="bodySm" tone="subdued">direct</Text>,
-    <Text as="span" variant="bodySm" tone="subdued">{p.utmCampaign || "—"}</Text>,
+      : <NotTrackedOrDirect tracked={p.tracked} />,
+    <Text as="span" variant="bodySm" tone="subdued">{p.campaignLabel || "—"}</Text>,
     <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,
   ]);
 
@@ -1142,4 +1145,12 @@ export default function AppIndex() {
       </BlockStack>
     </Page>
   );
+}
+
+// No source + no visit seen at all usually means the buyer declined cookies,
+// so nothing could be tracked in the browser. That isn't "direct" traffic.
+function NotTrackedOrDirect({ tracked }) {
+  return tracked
+    ? <Text as="span" variant="bodySm" tone="subdued">direct</Text>
+    : <Tooltip content="We didn't see this buyer's visit, usually because they declined cookies. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>;
 }

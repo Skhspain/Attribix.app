@@ -179,7 +179,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   return json({
     shop,
-    purchases30d: purchases30d ?? [],
+    purchases30d: await (await import("~/services/campaignNames.server")).labelOrders(shop, purchases30d ?? []),
     allPurchases: allPurchases ?? [],
     adSpend30d: convertedAdSpend30d,
     trackedEvents30d: trackedEvents30d ?? [],
@@ -553,7 +553,7 @@ export default function AppAnalytics() {
   const campaignRows = useMemo(() => {
     const map = new Map<string, { source: string; orders: number; revenue: number }>();
     for (const p of purchases) {
-      const campaign = String((p as any).utmCampaign || "").trim() || "(none)";
+      const campaign = String((p as any).campaignLabel || (p as any).utmCampaign || "").trim() || "(none)";
       const src = normalizeSource(p);
       const cur = map.get(campaign) || { source: src, orders: 0, revenue: 0 };
       cur.orders++;
@@ -653,7 +653,7 @@ export default function AppAnalytics() {
     const map = new Map<string, { name: string; orders: number; revenue: number }>();
     for (const p of purchases) {
       if (normalizeSource(p) !== "google") continue;
-      const campaign = String((p as any).utmCampaign || "").trim() || "(not set)";
+      const campaign = String((p as any).campaignLabel || (p as any).utmCampaign || "").trim() || "(not set)";
       const cur = map.get(campaign) || { name: campaign, orders: 0, revenue: 0 };
       cur.orders++;
       cur.revenue += safeNum((p as any).totalValue);

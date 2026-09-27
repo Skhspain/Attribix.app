@@ -17,6 +17,7 @@ import {
   Page,
   Select,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
@@ -48,6 +49,8 @@ export async function loader({ request }) {
         referrer: true,
         createdAt: true,
         customerName: true,
+        visitorId: true,
+        sessionId: true,
       },
     }).catch(() => []),
     db.purchase.aggregate({
@@ -63,8 +66,10 @@ export async function loader({ request }) {
 
   const storeCurrency = shopCurrencyRes?.data?.shop?.currencyCode || "USD";
 
+  const { labelOrders } = await import("~/services/campaignNames.server");
+
   return json({
-    purchases,
+    purchases: await labelOrders(shop, purchases),
     totalRevenue: totalRevenue._sum.totalValue ?? 0,
     attributedCount,
     totalCount,
@@ -173,7 +178,7 @@ export default function AppOrders() {
       if (search.trim()) {
         const q = search.trim().toLowerCase();
         const matchOrder = (p.orderId || "").toLowerCase().includes(q);
-        const matchCampaign = (p.utmCampaign || "").toLowerCase().includes(q);
+        const matchCampaign = `${p.utmCampaign || ""} ${p.campaignLabel || ""}`.toLowerCase().includes(q);
         const matchSource = (source || "").toLowerCase().includes(q);
         if (!matchOrder && !matchCampaign && !matchSource) return false;
       }
@@ -213,8 +218,10 @@ export default function AppOrders() {
       <Text as="span" variant="bodySm">{formatMoney(p.totalValue, p.currency)}</Text>,
       source
         ? <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
-        : <Text as="span" variant="bodySm" tone="subdued">direct</Text>,
-      <Text as="span" variant="bodySm" tone="subdued">{p.utmCampaign || "—"}</Text>,
+        : p.tracked
+          ? <Text as="span" variant="bodySm" tone="subdued">direct</Text>
+          : <Tooltip content="We didn't see this buyer's visit, usually because they declined cookies. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>,
+      <Text as="span" variant="bodySm" tone="subdued">{p.campaignLabel || "—"}</Text>,
       <Text as="span" variant="bodySm" tone="subdued" title={p.landingPage || ""}>{truncateUrl(p.landingPage)}</Text>,
       <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,
     ];
