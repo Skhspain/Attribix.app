@@ -314,6 +314,11 @@ model GoogleConnection {
   expiresAt     DateTime?
   adCustomerId  String?
   lastSyncedAt  DateTime?
+  // Sync diagnostics: last attempt and why it failed (null after a success),
+  // so the UI can tell "no spend" apart from "sync not working".
+  lastSyncAttemptAt DateTime?
+  lastSyncError     String?
+  currencyCode      String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

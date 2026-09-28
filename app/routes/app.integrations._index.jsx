@@ -27,7 +27,12 @@ export async function loader({ request }) {
   return json({
     metaConnected: !!(metaConn && metaConn.accessToken && metaConn.accessToken !== "__PENDING__"),
     googleConnected: !!(googleConn && googleConn.accessToken && googleConn.accessToken !== "__PENDING__"),
-    storeTrackingActive: !!(tracking?.trackingEnabled && tracking?.pixelLastSeenAt),
+    googleAccountChosen: !!googleConn?.adCustomerId,
+    googleLastSyncedAt: googleConn?.lastSyncedAt ?? null,
+    googleSyncError: googleConn?.lastSyncError ?? null,
+    metaLastSyncedAt: metaConn?.lastSyncedAt ?? null,
+    // "Ready" means events are arriving now, not that the pixel was seen once.
+    storeTrackingActive: !!(tracking?.trackingEnabled && tracking?.pixelLastSeenAt && Date.now() - new Date(tracking.pixelLastSeenAt).getTime() < 48 * 3600e3),
     conversionEventsVerified: !!(tracking?.lastEventAt),
   });
 }
@@ -70,7 +75,8 @@ function StatusDot({ connected }) {
 }
 
 export default function IntegrationsIndex() {
-  const { metaConnected, googleConnected, storeTrackingActive, conversionEventsVerified } = useLoaderData();
+  const data = useLoaderData();
+  const { metaConnected, googleConnected, storeTrackingActive, conversionEventsVerified } = data;
   const navigate = useNavigate();
 
   const checklist = [
@@ -112,9 +118,21 @@ export default function IntegrationsIndex() {
       {/* Status row */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
         {[
-          { label: "Meta", status: metaConnected, desc: metaConnected ? "Server-side tracking active" : "Connect to enable Meta CAPI" },
-          { label: "Google Ads", status: googleConnected, desc: googleConnected ? "Spend syncing active" : "Connect to sync spend and conversions" },
-          { label: "Attribution ready", status: storeTrackingActive, desc: "Orders can be matched to campaigns" },
+          { label: "Meta", status: metaConnected, desc: metaConnected ? (data.metaLastSyncedAt ? `Connected · spend synced ${new Date(data.metaLastSyncedAt).toLocaleString()}` : "Connected · not synced yet") : "Connect to enable Meta CAPI" },
+          {
+            label: "Google Ads",
+            status: googleConnected && !data.googleSyncError && !!data.googleLastSyncedAt,
+            desc: !googleConnected
+              ? "Connect to sync spend and conversions"
+              : !data.googleAccountChosen
+                ? "Connected · choose an ad account"
+                : data.googleSyncError
+                  ? "Connected · spend sync failing"
+                  : data.googleLastSyncedAt
+                    ? `Spend synced ${new Date(data.googleLastSyncedAt).toLocaleString()}`
+                    : "Connected · not synced yet",
+          },
+          { label: "Storefront tracking", status: storeTrackingActive, desc: storeTrackingActive ? "Events received in the last 48 hours" : "No storefront events in the last 48 hours" },
         ].map((item) => (
           <div key={item.label} style={{ background: "#fff", border: "1px solid #E4E5E7", borderRadius: 10, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
             <div style={{ width: 36, height: 36, borderRadius: "50%", background: item.status ? "#F1FBF8" : "#FFF4E5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>

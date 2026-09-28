@@ -6,6 +6,7 @@ import { useMemo, useState, useEffect } from "react";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import {
   Badge,
+  Banner,
   BlockStack,
   Box,
   Button,
@@ -13,6 +14,7 @@ import {
   DataTable,
   Divider,
   Grid,
+  InlineGrid,
   InlineStack,
   Page,
   Select,
@@ -64,24 +66,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }).catch(() => []),
     admin.graphql(`{ shop { currencyCode } }`).then((r: any) => r.json()).catch(() => null),
   ]);
-  const storeCurrency = storeCurrencyRes?.data?.shop?.currencyCode || "NOK";
-
-  // Detect ad account currency from Meta Graph API and convert if needed
-  let adAccountCurrency = storeCurrency; // assume same unless we learn otherwise
-  if (hasConnection && metaConn?.accessToken && metaConn?.adAccountId) {
-    try {
-      const res = await fetch(
-        `https://graph.facebook.com/v20.0/${metaConn.adAccountId}?fields=currency&access_token=${metaConn.accessToken}`
-      );
-      const acct = await res.json();
-      if (acct?.currency && !acct.error) adAccountCurrency = acct.currency;
-    } catch {}
-  }
-
-  const { convertCurrency } = await import("~/services/currency.server");
-  const exchangeRate = adAccountCurrency !== storeCurrency
-    ? await convertCurrency(1, adAccountCurrency, storeCurrency).catch(() => 1)
-    : 1;
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+  const { adAccountRates } = await import("~/services/adCurrency.server");
+  const storeCurrency = await getReportingCurrency(shop, admin);
+  const rates = await adAccountRates(shop, storeCurrency);
+  const adAccountCurrency = rates.meta.accountCurrency ?? storeCurrency;
+  const exchangeRate = rates.meta.rate;
+  void storeCurrencyRes;
 
   // Apply exchange rate to all DB values (stored in ad account currency)
   const convertedCampaigns = (campaigns ?? []).map((r: any) => ({
@@ -101,6 +92,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     campaigns: convertedCampaigns,
     ads: convertedAds,
     lastSyncedAt: metaConn?.lastSyncedAt ?? null,
+    totalOrdersSince: await db.purchase.findMany({ where: { shop, createdAt: { gte: historyCutoff } }, select: { createdAt: true } }).catch(() => []),
     hasConnection,
     adAccountId: metaConn?.adAccountId ?? null,
     attributedPurchases: attributedPurchases as Array<{ totalValue: number | null; createdAt: string }>,
@@ -120,7 +112,7 @@ function fmtRoas(roas: number | null) {
   return roas.toFixed(1) + "×";
 }
 
-function fmtDecimal(value: number, currency = "NOK") {
+function fmtDecimal(value: number, currency = "USD") {
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(value || 0);
   } catch {
@@ -249,9 +241,18 @@ export default function MetaAdsDetail() {
   }, [data.attributedPurchases, windowCutoff]);
 
   const attributedRoas = kpis.spend > 0 && attributedRevenue > 0 ? attributedRevenue / kpis.spend : null;
+  // How many of all orders in the window Attribix could attribute at all.
+  const totalOrdersInWindow = useMemo(
+    () => (data.totalOrdersSince as any[]).filter((p) => new Date(p.createdAt) >= windowCutoff).length,
+    [data.totalOrdersSince, windowCutoff],
+  );
+  // Below this many tracked orders a ROAS verdict is noise.
+  const MIN_TRACKED_ORDERS = 5;
+  const enoughTracked = attributedOrders >= MIN_TRACKED_ORDERS;
 
-  // Use store currency (values already converted in loader)
-  const currency = data.storeCurrency || "NOK";
+  // Values are converted to the store currency in the loader.
+  const currency = data.storeCurrency;
+  const adsManagerUrl = `https://adsmanager.facebook.com/adsmanager/manage/campaigns${data.adAccountId ? `?act=${String(data.adAccountId).replace(/^act_/, "")}` : ""}`;
 
   // Chart data — daily spend vs Attribix-attributed revenue
   const chartData = useMemo(() => {
@@ -413,9 +414,9 @@ export default function MetaAdsDetail() {
         // Performance label
         let perfLabel = "No sales tracked yet";
         let perfColor = "#9ca3af";
-        if (roas !== null && roas >= 3) { perfLabel = "🟢 Winning"; perfColor = "#16a34a"; }
-        else if (roas !== null && roas >= 1) { perfLabel = "🟡 Breaking even"; perfColor = "#d97706"; }
-        else if (roas !== null && roas < 1) { perfLabel = "🔴 Losing money"; perfColor = "#dc2626"; }
+        if (roas !== null && roas >= 3) { perfLabel = "3× ROAS or more"; perfColor = "#16a34a"; }
+        else if (roas !== null && roas >= 1) { perfLabel = "1–3× ROAS"; perfColor = "#d97706"; }
+        else if (roas !== null && roas < 1) { perfLabel = "Below 1× ROAS"; perfColor = "#dc2626"; }
         else if (isAwareness) { perfLabel = "👁️ Awareness — not measured by sales"; perfColor = "#6b7280"; }
         else if (isTrafficOrLead) { perfLabel = "🎯 Traffic/Lead — sales not tracked"; perfColor = "#6b7280"; }
         else if (isNegligible) { perfLabel = "—"; perfColor = "#d1d5db"; }
@@ -521,61 +522,59 @@ export default function MetaAdsDetail() {
           </div>
         )}
 
-        {/* Decision banner — uses Attribix-attributed revenue (fbclid/UTM tracked orders) */}
+        {/* Two measurements side by side — no verdict from a single source */}
         {campaigns.length > 0 && (
-          <div style={{
-            borderRadius: 12,
-            background: attributedRoas !== null && attributedRoas >= 1
-              ? "linear-gradient(135deg, #064e3b 0%, #065f46 100%)"
-              : attributedRoas !== null
-              ? "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)"
-              : "linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%)",
-            padding: "24px 28px",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            gap: 20, flexWrap: "wrap",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
-          }}>
-            <div>
-              <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>
-                {attributedRoas !== null && attributedRoas >= 2
-                  ? "Your ads are profitable"
-                  : attributedRoas !== null && attributedRoas >= 1
-                  ? "Your ads are breaking even"
-                  : attributedRoas !== null
-                  ? "Your ads are losing money"
-                  : "No attributed sales yet"}
-              </p>
-              <p style={{ margin: 0, marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-                Based on {attributedOrders} Attribix-tracked order{attributedOrders !== 1 ? "s" : ""} (fbclid / Meta UTM)
-              </p>
-              <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{attributedRoas !== null ? fmtRoas(attributedRoas) : "—"}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(kpis.spend, currency)}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Revenue</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(attributedRevenue, currency)}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Net</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: attributedRevenue - kpis.spend >= 0 ? "#86efac" : "#fca5a5" }}>
-                    {attributedRevenue - kpis.spend >= 0 ? "+" : ""}{fmtDecimal(attributedRevenue - kpis.spend, currency)}
-                  </p>
-                </div>
-              </div>
-            </div>
-            {attributedRoas !== null && attributedRoas < 1 && (
-              <div style={{ background: "rgba(255,255,255,0.12)", borderRadius: 10, padding: "16px 20px", minWidth: 200 }}>
-                <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>What's losing money?</p>
-                <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>Scroll down to see which campaigns and ads are burning budget.</p>
-              </div>
-            )}
-          </div>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">{`Results · last ${windowDays} days`}</Text>
+                <Text as="p" tone="subdued">
+                  Meta and Attribix measure sales differently. Meta counts purchases it can link to an ad click or view (including on other devices).
+                  Attribix only counts orders where it saw the ad click on your store. Neither includes product costs, so neither shows profit.
+                </Text>
+              </BlockStack>
+              <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingSm">Meta reports</Text>
+                    <InlineGrid columns={3} gap="200">
+                      <Metric label="ROAS" value={fmtRoas(kpis.roas)} />
+                      <Metric label="Purchases" value={kpis.purchases.toLocaleString()} />
+                      <Metric label="Purchase value" value={fmtDecimal(kpis.value, currency)} />
+                    </InlineGrid>
+                  </BlockStack>
+                </Box>
+                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingSm">Attribix tracked</Text>
+                    <InlineGrid columns={3} gap="200">
+                      <Metric label="ROAS" value={fmtRoas(attributedRoas)} />
+                      <Metric label="Orders" value={attributedOrders.toLocaleString()} />
+                      <Metric label="Revenue" value={fmtDecimal(attributedRevenue, currency)} />
+                    </InlineGrid>
+                  </BlockStack>
+                </Box>
+              </InlineGrid>
+              <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+                <Metric label="Meta spend" value={fmtDecimal(kpis.spend, currency)} />
+                <Metric
+                  label="Revenue minus ad spend (Meta-reported, before costs)"
+                  value={`${kpis.value - kpis.spend >= 0 ? "+" : ""}${fmtDecimal(kpis.value - kpis.spend, currency)}`}
+                />
+              </InlineGrid>
+              {!enoughTracked ? (
+                <Banner tone="info">
+                  {`Attribix tracked ${attributedOrders} Meta order${attributedOrders === 1 ? "" : "s"} in this period — too few to judge performance on. `}
+                  {totalOrdersInWindow > 0 && `Across all channels, ${totalOrdersInWindow} orders were placed; many buyers decline cookies, so their ad clicks can't be seen. `}
+                  Use Meta's figures as the main guide for now, and compare again over a longer period.
+                </Banner>
+              ) : (
+                <Text as="p" tone="subdued">
+                  {`Based on ${attributedOrders} Attribix-tracked orders out of ${totalOrdersInWindow} total orders in this period.`}
+                </Text>
+              )}
+            </BlockStack>
+          </Card>
         )}
 
         {/* KPIs */}
@@ -584,7 +583,7 @@ export default function MetaAdsDetail() {
             { label: "Total spend", value: fmtDecimal(kpis.spend, currency) },
             { label: "Impressions", value: kpis.impressions.toLocaleString() },
             { label: "Clicks", value: kpis.clicks.toLocaleString(), sub: kpis.ctr ? `CTR ${kpis.ctr.toFixed(2)}%` : undefined },
-            { label: "ROAS (Meta reported)", value: kpis.roas ? fmtRoas(kpis.roas) : "—", sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value` },
+            { label: "ROAS (Meta-reported)", value: fmtRoas(kpis.roas), sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value` },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
               <Card>
@@ -602,7 +601,7 @@ export default function MetaAdsDetail() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Daily spend vs attributed revenue</Text>
+              <Text as="h2" variant="headingMd">Daily spend vs Attribix-tracked revenue</Text>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />
@@ -632,10 +631,10 @@ export default function MetaAdsDetail() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="start">
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#166534", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Winning campaign</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Highest ROAS (Meta-reported)</p>
                         <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#14532d", marginTop: 4, lineHeight: 1.3 }}>{topCampaign.name}</p>
                       </div>
-                      <Badge tone="success">Best ROAS</Badge>
+                      {topCampaign.purchases < 3 && <Badge>Few purchases</Badge>}
                     </InlineStack>
                     <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                       <div>
@@ -649,13 +648,13 @@ export default function MetaAdsDetail() {
                         <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#14532d" }}>{fmtDecimal(topCampaign.spend, currency)}</p>
                       </div>
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>Revenue</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>Purchase value</p>
                         <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#14532d" }}>{fmtDecimal(topCampaign.value, currency)}</p>
                       </div>
                     </div>
                     <div>
                       <a
-                        href={`https://www.facebook.com/adsmanager/manage/campaigns?act=`}
+                        href={adsManagerUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{
@@ -667,7 +666,7 @@ export default function MetaAdsDetail() {
                           boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
                         }}
                       >
-                        Scale this campaign →
+                        Open in Ads Manager ↗
                       </a>
                     </div>
                   </BlockStack>
@@ -686,10 +685,10 @@ export default function MetaAdsDetail() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="start">
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Wasting budget</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Lowest ROAS (Meta-reported)</p>
                         <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#7f1d1d", marginTop: 4, lineHeight: 1.3 }}>{worstCampaign.name}</p>
                       </div>
-                      <Badge tone="critical">Lowest ROAS</Badge>
+                      <Badge tone="critical">Below 1×</Badge>
                     </InlineStack>
                     <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                       <div>
@@ -703,13 +702,13 @@ export default function MetaAdsDetail() {
                         <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#7f1d1d" }}>{fmtDecimal(worstCampaign.spend, currency)}</p>
                       </div>
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>Revenue</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>Purchase value</p>
                         <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#7f1d1d" }}>{fmtDecimal(worstCampaign.value, currency)}</p>
                       </div>
                     </div>
                     <div>
                       <a
-                        href={`https://www.facebook.com/adsmanager/manage/campaigns`}
+                        href={adsManagerUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{
@@ -721,7 +720,7 @@ export default function MetaAdsDetail() {
                           boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
                         }}
                       >
-                        Pause this campaign →
+                        Review in Ads Manager ↗
                       </a>
                     </div>
                   </BlockStack>
@@ -843,7 +842,7 @@ export default function MetaAdsDetail() {
             }}>
               <div>
                 <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: "0.06em" }}>⚠️ No ROAS target set</p>
-                <p style={{ margin: 0, fontSize: 14, color: "#78350f", marginTop: 3 }}>Set your target to see which ads are actually profitable.</p>
+                <p style={{ margin: 0, fontSize: 14, color: "#78350f", marginTop: 3 }}>Set the ROAS you need (from your margins) to see which ads meet it.</p>
               </div>
               <button onClick={() => setShowTargets(true)} style={{
                 background: "#f59e0b", color: "#fff", border: "none",
@@ -888,7 +887,7 @@ export default function MetaAdsDetail() {
                   </BlockStack>
                   <InlineStack gap="400" blockAlign="end">
                     <BlockStack gap="100">
-                      <Text as="p" variant="bodySm" fontWeight="semibold">Target ROAS — for every NOK spent, earn at least:</Text>
+                      <Text as="p" variant="bodySm" fontWeight="semibold">Target ROAS — for every {currency} spent, earn at least:</Text>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <input
                           type="number" min="0" step="0.1"
@@ -909,7 +908,7 @@ export default function MetaAdsDetail() {
                           placeholder="e.g. 150"
                           style={{ width: 100, padding: "6px 10px", borderRadius: 6, border: "1px solid #d1d5db", fontSize: 14 }}
                         />
-                        <Text as="p" variant="bodySm" tone="subdued">NOK per sale</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">{currency} per sale</Text>
                       </div>
                     </BlockStack>
                   </InlineStack>
@@ -935,13 +934,13 @@ export default function MetaAdsDetail() {
                   <span style={{ color: "#d1d5db", fontSize: 13 }}>·</span>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />
-                    <p style={{ margin: 0, fontSize: 13, color: "#111827" }}><strong>{profitPct}%</strong> of spend is profitable</p>
+                    <p style={{ margin: 0, fontSize: 13, color: "#111827" }}><strong>{profitPct}%</strong> of spend at or above target ROAS</p>
                   </div>
                   {losing > 0 && <>
                     <span style={{ color: "#d1d5db", fontSize: 13 }}>·</span>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#ef4444", display: "inline-block" }} />
-                      <p style={{ margin: 0, fontSize: 13, color: "#111827" }}><strong>{losing}</strong> ads losing money</p>
+                      <p style={{ margin: 0, fontSize: 13, color: "#111827" }}><strong>{losing}</strong> ads below 1× ROAS</p>
                     </div>
                   </>}
                   {noSales > 0 && <>
@@ -1025,7 +1024,7 @@ export default function MetaAdsDetail() {
                 <BlockStack gap="0">
                   {conversionAds.length > 0 && <>
                     {sectionHeader("💰 Purchase ads", conversionAds.length, "Measured by sales & ROAS", "#f9fafb", true)}
-                    {columnHeaders(["#", "Ad name", "You spent", "You made", "Profit/loss", "Sales", "Performance vs target"])}
+                    {columnHeaders(["#", "Ad name", "You spent", "Meta-reported value", "Value − spend", "Sales", "Performance vs target"])}
                     {conversionAds.map(renderAdRow)}
                   </>}
                   {awarenessAds.length > 0 && <>
@@ -1077,7 +1076,7 @@ export default function MetaAdsDetail() {
                 {campaignTableRows.length > 0 ? (
                   <BlockStack gap="0">
                     <div style={{ display: "grid", gridTemplateColumns: "28px 1fr 110px 110px 110px 70px 1fr", gap: "0 12px", padding: "6px 4px 10px", borderBottom: "1px solid #e1e3e5" }}>
-                      {["#", "Campaign name", "You spent", "You made", "Profit/loss", "Sales", "Performance vs target"].map((h) => (
+                      {["#", "Campaign name", "You spent", "Meta-reported value", "Value − spend", "Sales", "Performance vs target"].map((h) => (
                         <p key={h} style={{ margin: 0, fontSize: 12, fontWeight: 600, color: "#6b7280" }}>{h}</p>
                       ))}
                     </div>
@@ -1108,9 +1107,9 @@ export default function MetaAdsDetail() {
                           const hitCpa = cpaTarget && cpa !== null && cpa <= cpaTarget;
 
                           let perfLabel = "No sales yet"; let perfColor = "#9ca3af";
-                          if (roas !== null && roas >= 3) { perfLabel = "🟢 Winning"; perfColor = "#16a34a"; }
-                          else if (roas !== null && roas >= 1) { perfLabel = "🟡 Breaking even"; perfColor = "#d97706"; }
-                          else if (roas !== null && roas < 1 && c.spend > 0) { perfLabel = "🔴 Losing money"; perfColor = "#dc2626"; }
+                          if (roas !== null && roas >= 3) { perfLabel = "3× ROAS or more"; perfColor = "#16a34a"; }
+                          else if (roas !== null && roas >= 1) { perfLabel = "1–3× ROAS"; perfColor = "#d97706"; }
+                          else if (roas !== null && roas < 1 && c.spend > 0) { perfLabel = "Below 1× ROAS"; perfColor = "#dc2626"; }
 
                           let targetNote = "";
                           if (roasTarget && roas !== null) targetNote = hitRoas ? `✅ ROAS target hit! (${fmtRoas(roas)} / ${roasTarget}× target)` : `${fmtRoas(roas)} of ${roasTarget}× target`;
@@ -1218,7 +1217,7 @@ export default function MetaAdsDetail() {
           shopifyOrders={attributedOrders}
           platformName="Meta"
           platformRevenue={kpis.value || 0}
-          currency={data.storeCurrency || "NOK"}
+          currency={data.storeCurrency}
           period={`${window}d`}
         />
 
@@ -1242,3 +1241,12 @@ export default function MetaAdsDetail() {
   );
 }
 // cache-bust 1776033574
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <BlockStack gap="050">
+      <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+      <Text as="p" variant="headingLg">{value}</Text>
+    </BlockStack>
+  );
+}

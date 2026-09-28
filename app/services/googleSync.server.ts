@@ -4,30 +4,52 @@
 // whose lastSyncedAt is older than 23 hours (effectively once a day).
 
 import db from "~/db.server";
-import { syncGoogleCampaignInsights } from "~/services/googleAds.server";
+import { googleAdsSearchStream, syncGoogleCampaignInsights } from "~/services/googleAds.server";
 import { getValidGoogleToken } from "~/services/tokenRefresh.server";
 
-async function syncShop(shop: string, adCustomerId: string) {
-  // Get a valid (auto-refreshed) Google access token
-  const tokenResult = await getValidGoogleToken(shop);
-  if (!tokenResult.ok) {
-    console.warn(`[googleSync] Token unavailable for ${shop}: ${tokenResult.reason}`);
-    return;
+/** Short, merchant-readable reason for a failed sync. */
+function describeGoogleError(err: unknown): string {
+  const msg = String((err as any)?.message ?? err ?? "Unknown error");
+  if (/only approved for use with test accounts/i.test(msg)) {
+    return "Attribix's Google Ads API access is still limited to test accounts, so real ad accounts can't be read yet.";
   }
+  if (/PERMISSION_DENIED|USER_PERMISSION_DENIED|\(403\)/i.test(msg)) return "Google denied access to this ad account. Check that the connected Google user can view it.";
+  if (/invalid_grant|UNAUTHENTICATED|\(401\)/i.test(msg)) return "The Google connection has expired. Reconnect Google Ads.";
+  return msg.split("\n")[0].slice(0, 300);
+}
 
-  const result = await syncGoogleCampaignInsights({
-    shop,
-    accessToken: tokenResult.accessToken,
-    customerId: adCustomerId,
-  });
+async function syncShop(shop: string, adCustomerId: string) {
+  const anyDb = db as any;
+  await anyDb.googleConnection.update({ where: { shop }, data: { lastSyncAttemptAt: new Date() } }).catch(() => null);
 
-  // Update lastSyncedAt
-  await (db as any).googleConnection.update({
-    where: { shop },
-    data: { lastSyncedAt: new Date() },
-  });
+  try {
+    // Get a valid (auto-refreshed) Google access token
+    const tokenResult = await getValidGoogleToken(shop);
+    if (!tokenResult.ok) throw new Error(`Google token unavailable: ${tokenResult.reason}`);
 
-  console.log(`[googleSync] synced shop=${shop} upserted=${result.upserted} total=${result.total}`);
+    // Account currency, so spend can be converted into the store currency.
+    const currencyRows = await googleAdsSearchStream({
+      accessToken: tokenResult.accessToken,
+      customerId: adCustomerId,
+      query: "SELECT customer.currency_code FROM customer LIMIT 1",
+    }).catch(() => []);
+    const currencyCode = (currencyRows as any[]).flatMap((c) => c?.results ?? [])[0]?.customer?.currencyCode ?? null;
+
+    const result = await syncGoogleCampaignInsights({
+      shop,
+      accessToken: tokenResult.accessToken,
+      customerId: adCustomerId,
+    });
+
+    await anyDb.googleConnection.update({
+      where: { shop },
+      data: { lastSyncedAt: new Date(), lastSyncError: null, ...(currencyCode && { currencyCode }) },
+    });
+    console.log(`[googleSync] synced shop=${shop} upserted=${result.upserted} total=${result.total}`);
+  } catch (err) {
+    await anyDb.googleConnection.update({ where: { shop }, data: { lastSyncError: describeGoogleError(err) } }).catch(() => null);
+    throw err;
+  }
 }
 
 async function runSyncCycle() {
@@ -36,9 +58,11 @@ async function runSyncCycle() {
   const connections = await (db as any).googleConnection.findMany({
     where: {
       adCustomerId: { not: null },
+      // Throttle on the last attempt (not the last success) so a failing
+      // account isn't retried on every boot.
       OR: [
-        { lastSyncedAt: null },
-        { lastSyncedAt: { lt: staleThreshold } },
+        { lastSyncAttemptAt: null },
+        { lastSyncAttemptAt: { lt: staleThreshold } },
       ],
     },
   }).catch(() => []);

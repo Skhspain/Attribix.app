@@ -4,33 +4,28 @@ import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useMemo, useEffect } from "react";
 import {
   Badge, BlockStack, Button, Card, DataTable,
-  Grid, InlineStack, Layout, Page, Text, Tooltip,
+  Grid, InlineGrid, InlineStack, Layout, Page, Text, Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { periodStart, previousPeriod } from "~/utils/reportPeriod";
+import { getReportingCurrency } from "~/services/reportingCurrency.server";
+import { adAccountRates } from "~/services/adCurrency.server";
 
 // ─── LOADER ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db;
 
-  const since30 = new Date();
-  since30.setDate(since30.getDate() - 30);
-  since30.setHours(0, 0, 0, 0);
-
-  const since60 = new Date();
-  since60.setDate(since60.getDate() - 60);
-  since60.setHours(0, 0, 0, 0);
-
-  const since7 = new Date();
-  since7.setDate(since7.getDate() - 7);
-  since7.setHours(0, 0, 0, 0);
-
-  const since14 = new Date();
-  since14.setDate(since14.getDate() - 14);
-  since14.setHours(0, 0, 0, 0);
+  // Every KPI on this page covers the same period (see utils/reportPeriod).
+  // Before, "7d" spend actually covered 8 days and blended ROAS divided
+  // 30-day revenue by 7-day spend.
+  const PERIOD_DAYS = 30;
+  const since30 = periodStart(PERIOD_DAYS);
+  const { start: since60 } = previousPeriod(PERIOD_DAYS);
+  const since7 = periodStart(7);
 
   const [
     settings,
@@ -55,12 +50,12 @@ export async function loader({ request }) {
         id: true, orderId: true, totalValue: true, currency: true,
         utmSource: true, utmMedium: true, utmCampaign: true,
         fbclid: true, gclid: true, ttclid: true, msclkid: true,
-        createdAt: true,
+        createdAt: true, visitorId: true, sessionId: true, landingPage: true, referrer: true,
       },
     }).catch(() => []),
 
     db.adSpendDaily.findMany({
-      where: { shop, date: { gte: since14 } },
+      where: { shop, date: { gte: since60 } },
       select: { platform: true, spend: true, date: true },
     }).catch(() => []),
 
@@ -140,76 +135,48 @@ export async function loader({ request }) {
     return purchases30.filter(p => { const t = new Date(p.createdAt); return t >= d && t < next; }).length;
   });
 
-  let storeCurrency = "NOK";
-  try {
-    const { admin } = await authenticate.admin(request);
-    const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
-    const shopData = await shopRes.json();
-    storeCurrency = shopData?.data?.shop?.currencyCode || "NOK";
-  } catch {}
-
-  let googleCurrencyRate = 1;
-  try {
-    const { convertCurrency } = await import("~/services/currency.server");
-    googleCurrencyRate = await convertCurrency(1, "USD", storeCurrency);
-  } catch {}
+  const storeCurrency = await getReportingCurrency(shop, admin);
+  const rates = await adAccountRates(shop, storeCurrency);
 
   const isMeta = (r) => String(r.platform).toLowerCase().includes("meta") || String(r.platform).toLowerCase().includes("facebook");
   const isGoogle = (r) => String(r.platform).toLowerCase().includes("google");
-  const isCurrent7 = (r) => new Date(r.date) >= since7;
-  const isPrev7 = (r) => new Date(r.date) >= since14 && new Date(r.date) < since7;
-  const applyRate = (r) => isGoogle(r) ? Number(r.spend || 0) * googleCurrencyRate : Number(r.spend || 0);
+  const inPeriod = (r) => new Date(r.date) >= since30;
+  const inPrevPeriod = (r) => new Date(r.date) >= since60 && new Date(r.date) < since30;
+  // Spend is stored in each ad account's currency; convert to the store currency.
+  const converted = (r) => Number(r.spend || 0) * (isGoogle(r) ? rates.google.rate : isMeta(r) ? rates.meta.rate : 1);
+  const sum = (rows) => rows.reduce((s, r) => s + converted(r), 0);
 
-  const totalSpend = adSpend30.filter(isCurrent7).reduce((s, r) => s + applyRate(r), 0);
-  const metaSpend = adSpend30.filter(r => isMeta(r) && isCurrent7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
-  const metaSpendPrev = adSpend30.filter(r => isMeta(r) && isPrev7(r)).reduce((s, r) => s + Number(r.spend || 0), 0);
-  const googleSpend = adSpend30.filter(r => isGoogle(r) && isCurrent7(r)).reduce((s, r) => s + applyRate(r), 0);
-  const googleSpendPrev = adSpend30.filter(r => isGoogle(r) && isPrev7(r)).reduce((s, r) => s + applyRate(r), 0);
+  const metaSpend = sum(adSpend30.filter((r) => isMeta(r) && inPeriod(r)));
+  const metaSpendPrev = sum(adSpend30.filter((r) => isMeta(r) && inPrevPeriod(r)));
+  const googleSpend = sum(adSpend30.filter((r) => isGoogle(r) && inPeriod(r)));
+  const googleSpendPrev = sum(adSpend30.filter((r) => isGoogle(r) && inPrevPeriod(r)));
+  const totalSpend = sum(adSpend30.filter(inPeriod));
+  const totalSpendPrev = sum(adSpend30.filter(inPrevPeriod));
 
-  const pctDelta = (curr, prev) => prev === 0 ? (curr > 0 ? 100 : 0) : Math.round(((curr - prev) / prev) * 100);
+  const pctDelta = (curr, prev) => (prev > 0 ? Math.round(((curr - prev) / prev) * 100) : null);
   const metaSpendDelta = pctDelta(metaSpend, metaSpendPrev);
   const googleSpendDelta = pctDelta(googleSpend, googleSpendPrev);
+  const totalSpendDelta = pctDelta(totalSpend, totalSpendPrev);
 
-  const metaRev7 = metaCampaigns30
-    .filter(r => r.date && new Date(r.date) >= since7)
-    .reduce((s, r) => s + Number(r.purchaseValue || 0), 0);
+  // Attribix-tracked Google revenue (gclid / Google UTM), same period.
+  const isGooglePurchase = (p) => !!p.gclid || (p.utmSource && /google|adwords/i.test(String(p.utmSource)));
+  const googleRev30 = purchases30.filter(isGooglePurchase).reduce((s, p) => s + Number(p.totalValue || 0), 0);
 
-  const isGooglePurchase = (p) => !!p.gclid || (p.utmSource && String(p.utmSource).toLowerCase().includes("google"));
-  const googleRev7 = purchases30
-    .filter(p => isGooglePurchase(p) && new Date(p.createdAt) >= since7)
-    .reduce((s, p) => s + Number(p.totalValue || 0), 0);
-
-  let googleConvValue7 = 0;
-  if (googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && googleConn.adCustomerId) {
-    try {
-      const { getValidGoogleToken } = await import("~/services/tokenRefresh.server");
-      const tokenResult = await getValidGoogleToken(shop);
-      if (tokenResult.ok) {
-        const { googleAdsSearchStream } = await import("~/services/googleAds.server");
-        const fmtD = (d) => d.toISOString().slice(0, 10);
-        const q = `SELECT metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '${fmtD(since7)}' AND '${fmtD(new Date())}' AND campaign.status != 'REMOVED'`;
-        const res = await googleAdsSearchStream({ accessToken: tokenResult.accessToken, customerId: googleConn.adCustomerId, query: q });
-        const rows = res.flatMap((c) => c?.results ?? []);
-        googleConvValue7 = rows.reduce((s, r) => s + Number(r?.metrics?.conversionsValue || 0), 0) * googleCurrencyRate;
-      }
-    } catch {}
-  }
-  const googleSales7 = Math.max(googleRev7, googleConvValue7);
-
+  // Meta-reported results (Meta's own attribution), same period, store currency.
   const metaKpis = metaCampaigns30.reduce((acc, r) => ({
-    spend: acc.spend + Number(r.spend || 0),
+    spend: acc.spend + Number(r.spend || 0) * rates.meta.rate,
     impressions: acc.impressions + Number(r.impressions || 0),
     clicks: acc.clicks + Number(r.clicks || 0),
     purchases: acc.purchases + Number(r.purchases || 0),
-    value: acc.value + Number(r.purchaseValue || 0),
+    value: acc.value + Number(r.purchaseValue || 0) * rates.meta.rate,
   }), { spend: 0, impressions: 0, clicks: 0, purchases: 0, value: 0 });
 
   const adMap = new Map();
   for (const r of metaAds30) {
     const id = String(r.adId);
     const cur = adMap.get(id) || { name: r.adName || id, spend: 0, value: 0, clicks: 0, impressions: 0, purchases: 0 };
-    cur.spend += Number(r.spend || 0);
-    cur.value += Number(r.purchaseValue || 0);
+    cur.spend += Number(r.spend || 0) * rates.meta.rate;
+    cur.value += Number(r.purchaseValue || 0) * rates.meta.rate;
     cur.clicks += Number(r.clicks || 0);
     cur.impressions += Number(r.impressions || 0);
     cur.purchases += Number(r.purchases || 0);
@@ -285,6 +252,18 @@ export async function loader({ request }) {
     }));
 
   const attributedOrders = purchases30.filter(p => p.utmSource || p.fbclid || p.gclid || p.ttclid || p.msclkid).length;
+  // Orders where we never saw the buyer's visit at all (typically declined
+  // cookies) vs. visits we saw that simply had no source (real direct traffic).
+  const notTrackedOrders = purchases30.filter(p => !(p.visitorId || p.sessionId || p.landingPage || p.referrer || p.utmSource || p.fbclid || p.gclid || p.ttclid || p.msclkid)).length;
+  const directOrders = orders30 - attributedOrders - notTrackedOrders;
+
+  // Storefront widgets (reviews/newsletter) need the theme app embed. Cached
+  // check of the live storefront; don't hold the page up if it's slow.
+  const { isWidgetsEmbedLive } = await import("~/services/themeEditor.server");
+  const widgetsEmbedLive = await Promise.race([
+    isWidgetsEmbedLive(shop),
+    new Promise((r) => setTimeout(() => r(null), 2500)),
+  ]).catch(() => null);
   const attributionRate = orders30 > 0 ? Math.round((attributedOrders / orders30) * 100) : 0;
   const uniqueVisitors = new Set(trackedEvents30.filter(e => e.visitorId).map(e => String(e.visitorId))).size;
   const metaReportedPurchases = metaKpis.purchases;
@@ -337,12 +316,19 @@ export async function loader({ request }) {
     rev30, rev7, orders30, orders7, aov,
     rev30Delta, orders30Delta,
     dailyRevArr, dailyOrdersArr,
-    totalSpend, metaSpend, googleSpend,
+    periodDays: PERIOD_DAYS,
+    periodStart: since30.toISOString(),
+    totalSpend, totalSpendDelta, metaSpend, googleSpend,
     metaSpendPrev, googleSpendPrev,
     metaSpendDelta, googleSpendDelta,
-    metaRev7, googleRev7: googleSales7,
+    googleRev30,
     storeCurrency,
-    tracking: { attributedOrders, attributionRate, uniqueVisitors, pixelStatus, metaReportedPurchases, platformTotal, attribixTrackedMore },
+    freshness: {
+      metaSyncedAt: metaConn?.lastSyncedAt ?? null,
+      googleSyncedAt: googleConn?.lastSyncedAt ?? null,
+      googleSyncError: googleConn?.lastSyncError ?? null,
+    },
+    tracking: { attributedOrders, notTrackedOrders, directOrders, attributionRate, uniqueVisitors, pixelStatus, metaReportedPurchases, platformTotal, attribixTrackedMore, widgetsEmbedLive },
     metaKpis, bestAd, sourceSummary,
     pixelStatus,
     pixelLastSeen: pixelLastSeen?.toISOString() ?? null,
@@ -413,15 +399,17 @@ function Sparkline({ values = [], color = "#008060", width = 72, height = 28 }) 
   );
 }
 
-function DeltaBadge({ delta }) {
+// `invert`: for costs, where "up" isn't good news — shown neutral instead of green/red.
+function DeltaBadge({ delta, invert = false }) {
   if (delta === null || delta === undefined) return null;
   const up = delta >= 0;
+  const neutral = invert;
   return (
     <span style={{
       fontSize: 12, fontWeight: 600, lineHeight: 1,
-      color: up ? "#16a34a" : "#dc2626",
-      background: up ? "#f0fdf4" : "#fef2f2",
-      border: `1px solid ${up ? "#bbf7d0" : "#fecaca"}`,
+      color: neutral ? "#4a4a4a" : up ? "#16a34a" : "#dc2626",
+      background: neutral ? "#f3f3f3" : up ? "#f0fdf4" : "#fef2f2",
+      border: `1px solid ${neutral ? "#e3e3e3" : up ? "#bbf7d0" : "#fecaca"}`,
       borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap",
     }}>
       {up ? "▲" : "▼"} {Math.abs(delta)}%
@@ -783,188 +771,191 @@ export default function AppIndex() {
   }
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
-  const roas = data.totalSpend > 0 ? data.rev30 / data.totalSpend : null;
+  const days = data.periodDays ?? 30;
+  const periodText = `Last ${days} days`;
+  // Tracked revenue ÷ all ad spend, same period (a blended figure: it includes
+  // revenue from every channel, not only ads).
+  const blendedRoas = data.totalSpend > 0 ? data.rev30 / data.totalSpend : null;
   const metaRoas = data.metaKpis.spend > 0 ? data.metaKpis.value / data.metaKpis.spend : null;
-  const metaRoas7 = data.metaSpend > 0 ? data.metaRev7 / data.metaSpend : null;
-  const googleRoas7 = data.googleSpend > 0 ? data.googleRev7 / data.googleSpend : null;
   const aov = data.aov || 0;
+  const t = data.tracking;
 
   const trackingOk = data.pixelStatus === "healthy";
-  const allSetUp = trackingOk && data.metaConnected && data.googleConnected;
+  const googleFailing = data.googleConnected && !!data.freshness?.googleSyncError;
+  const googleStale = data.googleConnected && !data.freshness?.googleSyncedAt;
+  const metaStale = data.metaConnected && (!data.freshness?.metaSyncedAt || Date.now() - new Date(data.freshness.metaSyncedAt).getTime() > 48 * 3600e3);
 
   // Contextual "recommended next step" banner
   const nextStep = !trackingOk
-    ? { icon: "🔌", title: "Set up your tracking pixel", desc: "Capture UTM parameters and click IDs so every order gets attributed.", url: "/app/settings", cta: "View settings" }
+    ? { title: "Check your tracking pixel", desc: "Attribix hasn't received storefront events in the last 24 hours.", url: "/app/settings/tracking", cta: "Open tracking settings" }
     : !data.metaConnected
-      ? { icon: "📘", title: "Connect Meta Ads to see ROAS", desc: "Sync ad spend, enable server-side Conversions API, and see true ROAS in one place.", url: "/app/integrations/meta", cta: "Connect Meta" }
+      ? { title: "Connect Meta Ads", desc: "Bring in Meta spend so you can compare it with tracked revenue.", url: "/app/integrations/meta", cta: "Connect Meta" }
       : !data.googleConnected
-        ? { icon: "📈", title: "Connect Google Ads to unlock full ROAS", desc: "See ad spend, campaign performance, and true ROAS across all channels.", url: "/app/integrations/google", cta: "Connect Google Ads" }
-        : null;
+        ? { title: "Connect Google Ads", desc: "Bring in Google spend so ad costs are complete.", url: "/app/integrations/google", cta: "Connect Google Ads" }
+        : googleFailing
+          ? { title: "Google Ads data isn't syncing", desc: data.freshness.googleSyncError, url: "/app/integrations/google", cta: "View Google connection" }
+          : null;
 
   const insights = useMemo(() => {
     const list = [];
-    const { rev30, orders30, metaKpis, bestAd, sourceSummary } = data;
+    const { orders30, metaKpis, bestAd } = data;
 
-    const attributed = sourceSummary.filter(s => s.source !== "direct").reduce((n, s) => n + s.orders, 0);
-    const attrRate = orders30 > 0 ? Math.round((attributed / orders30) * 100) : 0;
-    if (attrRate < 50 && orders30 > 0) {
-      list.push({ tone: "warning", icon: "⚠️", title: `${100 - attrRate}% of orders have no tracked source`, body: `${orders30 - attributed} of ${orders30} orders show as direct/unknown. Add UTM parameters to your ad URLs to get full attribution.` });
-    } else if (attrRate >= 80 && orders30 > 0) {
-      list.push({ tone: "success", icon: "✅", title: `${attrRate}% attribution rate — excellent`, body: `Attribix is tracking ${attributed} of ${orders30} orders to a paid source. Your UTM setup is solid.` });
-    }
-
-    if (metaKpis.spend > 0) {
-      if (metaRoas !== null && metaRoas < 1) {
-        list.push({ tone: "critical", icon: "🔴", title: `Meta ROAS ${(metaRoas).toFixed(1)}× — spending more than you earn`, body: `${fmtDec(metaKpis.spend, currency)} spent, ${fmtDec(metaKpis.value, currency)} in reported Meta purchase value. Review your targeting.` });
-      } else if (metaRoas !== null && metaRoas >= 3) {
-        list.push({ tone: "success", icon: "🚀", title: `Meta ROAS ${(metaRoas).toFixed(1)}× — strong performance`, body: `Solid returns. Consider scaling budget on your best campaigns to maximise this window.` });
+    // Coverage: say what's actually missing, without inventing a cause.
+    if (orders30 >= 5) {
+      const noSource = orders30 - t.attributedOrders;
+      const pct = Math.round((noSource / orders30) * 100);
+      if (pct >= 30) {
+        list.push({
+          tone: "warning",
+          title: `${pct}% of orders have no tracked source (${periodText.toLowerCase()})`,
+          body: t.notTrackedOrders > 0
+            ? `${t.notTrackedOrders} of ${orders30} orders came from visits Attribix couldn't see, usually because the buyer declined cookies. ${t.directOrders > 0 ? `${t.directOrders} more were visits with no campaign or referrer. ` : ""}Channel and ROAS figures based on tracked orders will understate these sales.`
+            : `${noSource} of ${orders30} orders came from visits with no campaign or referrer. Check that your ad links carry UTM parameters.`,
+        });
       }
     }
 
-    if (metaKpis.impressions > 0 && metaKpis.clicks > 0 && metaKpis.purchases > 0) {
-      const ctr = (metaKpis.clicks / metaKpis.impressions) * 100;
-      const cvr = (metaKpis.purchases / metaKpis.clicks) * 100;
-      const cpl = metaKpis.clicks > 0 ? metaKpis.spend / metaKpis.clicks : 0;
-      const rpc = metaKpis.clicks > 0 ? metaKpis.value / metaKpis.clicks : 0;
-      if (cvr < 1 && ctr > 1) {
-        list.push({ tone: "warning", icon: "📉", title: `Good CTR (${ctr.toFixed(2)}%) but low conversion rate (${cvr.toFixed(2)}%)`, body: `Ads are getting clicks but visitors aren't buying. Landing page or offer may need work. CPC: ${fmtDec(cpl, currency)} · Revenue/click: ${fmtDec(rpc, currency)}.` });
-      }
+    // Meta: report the number with its source; no profit claims or "scale" advice.
+    if (metaKpis.spend > 0 && metaRoas !== null) {
+      list.push({
+        tone: "info",
+        title: `Meta reports ${fmtRoas(metaRoas)} ROAS (${periodText.toLowerCase()})`,
+        body: `${metaKpis.purchases} purchases worth ${fmtDec(metaKpis.value, currency)} on ${fmtDec(metaKpis.spend, currency)} spend, using Meta's own attribution. This is revenue, not profit — product costs, shipping and fees aren't included.`,
+      });
     }
 
-    if (bestAd && bestAd.spend > 0) {
-      const adRoas = (bestAd.value / bestAd.spend).toFixed(1);
-      list.push({ tone: "success", icon: "🏆", title: `Best ad: "${bestAd.name}" at ${adRoas}× ROAS`, body: `Spend: ${fmtDec(bestAd.spend, currency)} · Value: ${fmtDec(bestAd.value, currency)} · ${bestAd.purchases} purchases. Consider duplicating this creative.` });
+    // Only point to a "best ad" when it has enough purchases to mean something.
+    if (bestAd && bestAd.spend > 0 && bestAd.purchases >= 3) {
+      list.push({
+        tone: "info",
+        title: `Highest Meta-reported ROAS: "${bestAd.name}" (${fmtRoas(bestAd.value / bestAd.spend)})`,
+        body: `${bestAd.purchases} Meta-reported purchases · ${fmtDec(bestAd.value, currency)} on ${fmtDec(bestAd.spend, currency)} spend.`,
+      });
     }
-
     return list;
-  }, [data, metaRoas, currency]);
+  }, [data, metaRoas, currency, t, periodText]);
 
   const purchaseRows = (data.recentPurchases || []).map((p) => [
-    <Text key={p.orderId} as="span" variant="bodySm">{p.orderId || "—"}</Text>,
+    <Button key={p.orderId} variant="plain" url={`shopify://admin/orders/${p.orderId}`} target="_top" accessibilityLabel={`Open order ${p.orderId} in Shopify`}>{p.orderId || "—"}</Button>,
     <Text as="span" variant="bodySm">{fmt(p.totalValue, p.currency)}</Text>,
     p.utmSource
-      ? <Badge tone={sourceTone(p.utmSource)}>{p.utmSource}</Badge>
+      ? <Badge tone={sourceTone(p.utmSource)}>{sourceName(p.utmSource)}</Badge>
       : <NotTrackedOrDirect tracked={p.tracked} />,
     <Text as="span" variant="bodySm" tone="subdued">{p.campaignLabel || "—"}</Text>,
     <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,
   ]);
 
+  // Each item is checked against real data, not just "a connection exists".
   const setupSteps = [
-    { label: "Install Attribix", done: true },
-    { label: "Connect Meta", done: data.metaConnected, url: "/app/integrations/meta" },
-    { label: "Connect Google Ads", done: data.googleConnected, url: "/app/integrations/google" },
-    { label: "Pixel active", done: trackingOk, url: "/app/settings" },
-    { label: "Enhanced tracking active", done: trackingOk, url: "/app/settings" },
+    { label: "Storefront events received (last 24 h)", done: trackingOk, url: "/app/settings/tracking" },
+    { label: data.metaConnected ? "Meta Ads syncing" : "Connect Meta Ads", done: data.metaConnected && !metaStale, url: "/app/integrations/meta" },
+    { label: data.googleConnected ? "Google Ads syncing" : "Connect Google Ads", done: data.googleConnected && !googleFailing && !googleStale, url: "/app/integrations/google" },
+    ...(t.widgetsEmbedLive === null ? [] : [{ label: "Storefront widgets embed on", done: !!t.widgetsEmbedLive, url: "/app/setup" }]),
   ];
   const setupDone = setupSteps.filter(s => s.done).length;
 
   return (
-    <Page title="Overview" subtitle={data.shop}>
+    <Page title="Overview" subtitle={`${periodText} (${formatPeriod(data.periodStart)}) · amounts in ${currency}`}>
       <BlockStack gap="400">
 
-        {/* ── Tracking status banner ─────────────────────────────── */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          flexWrap: "wrap", gap: 12, padding: "12px 16px", borderRadius: 12,
-          background: trackingOk ? "#f0fdf4" : "#fef2f2",
-          border: `1px solid ${trackingOk ? "#bbf7d0" : "#fecaca"}`,
-        }}>
-          <InlineStack gap="300" blockAlign="center" wrap={false}>
-            <div style={{
-              width: 36, height: 36, borderRadius: "50%",
-              background: trackingOk ? "#16a34a" : "#dc2626",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "white", fontSize: 18, fontWeight: 800, flexShrink: 0,
-            }}>
-              {trackingOk ? "✓" : "!"}
-            </div>
-            <BlockStack gap="025">
-              <Text as="p" variant="headingSm" fontWeight="semibold">
-                {trackingOk ? "Tracking is active" : "Tracking needs attention"}
-              </Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                {trackingOk ? "Attribix is tracking your store and attributing revenue." : "Set up tracking to start attributing revenue."}
-              </Text>
-            </BlockStack>
-            <InlineStack gap="150" wrap={false}>
-              <Badge tone={trackingOk ? "success" : "critical"}>{trackingOk ? "Tracking active" : "Pixel not seen"}</Badge>
-              <Badge tone={data.metaConnected ? "success" : data.metaPartialConnect ? "warning" : "new"}>Meta {data.metaConnected ? "connected" : data.metaPartialConnect ? "setup incomplete" : "not connected"}</Badge>
-              <Badge tone={data.googleConnected ? "success" : data.googlePartialConnect ? "warning" : "new"}>Google {data.googleConnected ? "connected" : data.googlePartialConnect ? "setup incomplete" : "not connected"}</Badge>
+        {/* ── Tracking health: each part checked separately ───────── */}
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingSm">Tracking health</Text>
+              {setupDone < setupSteps.length && <Button size="slim" url="/app/setup">Review setup</Button>}
             </InlineStack>
-          </InlineStack>
-          {!allSetUp && (
-            <Button variant="primary" size="slim" url="/app/ads">Finish setup</Button>
-          )}
-        </div>
+            <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
+              <HealthItem
+                label="Storefront events"
+                tone={trackingOk ? "success" : data.pixelStatus === "never" ? "critical" : "warning"}
+                value={data.pixelLastSeen ? `Last event ${timeAgo(data.pixelLastSeen)}` : "No events received yet"}
+              />
+              <HealthItem
+                label="Orders with a tracked source"
+                tone={data.orders30 === 0 ? "info" : t.attributionRate >= 60 ? "success" : "warning"}
+                value={data.orders30 === 0 ? "No orders yet" : `${t.attributedOrders} of ${data.orders30} (${t.attributionRate}%)`}
+                detail={t.notTrackedOrders > 0 ? `${t.notTrackedOrders} not tracked (visit not seen)` : undefined}
+              />
+              <HealthItem
+                label="Meta Ads"
+                tone={!data.metaConnected ? "info" : metaStale ? "warning" : "success"}
+                value={!data.metaConnected ? (data.metaPartialConnect ? "Choose an ad account" : "Not connected") : data.freshness?.metaSyncedAt ? `Synced ${timeAgo(data.freshness.metaSyncedAt)}` : "Not synced yet"}
+              />
+              <HealthItem
+                label="Google Ads"
+                tone={!data.googleConnected ? "info" : googleFailing || googleStale ? "critical" : "success"}
+                value={!data.googleConnected ? (data.googlePartialConnect ? "Choose an ad account" : "Not connected") : googleFailing ? "Sync failing" : data.freshness?.googleSyncedAt ? `Synced ${timeAgo(data.freshness.googleSyncedAt)}` : "Never synced"}
+                detail={googleFailing ? data.freshness.googleSyncError : undefined}
+              />
+            </InlineGrid>
+          </BlockStack>
+        </Card>
 
-        {/* ── KPI cards ─────────────────────────────────────────── */}
+        {/* ── KPI cards (all the same period) ─────────────────────── */}
         <Grid>
-          {/* Revenue */}
           <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Revenue tracked</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Revenue tracked · {days} days</Text>
                 <InlineStack align="space-between" blockAlign="end" wrap={false}>
                   <Text as="p" variant="heading2xl">{fmt(data.rev30, currency)}</Text>
-                  {data.dailyRevArr?.some(v => v > 0) && (
-                    <Sparkline values={data.dailyRevArr} color="#008060" />
-                  )}
+                  {data.dailyRevArr?.some(v => v > 0) && <Sparkline values={data.dailyRevArr} color="#008060" />}
                 </InlineStack>
                 <InlineStack gap="150" blockAlign="center" wrap={false}>
                   <DeltaBadge delta={data.rev30Delta} />
-                  <Text as="p" variant="bodySm" tone="subdued">vs prev 30d</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">vs previous {days} days</Text>
                 </InlineStack>
               </BlockStack>
             </Card>
           </Grid.Cell>
 
-          {/* Orders */}
           <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Orders tracked</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Orders tracked · {days} days</Text>
                 <InlineStack align="space-between" blockAlign="end" wrap={false}>
                   <Text as="p" variant="heading2xl">{data.orders30}</Text>
-                  {data.dailyOrdersArr?.some(v => v > 0) && (
-                    <Sparkline values={data.dailyOrdersArr} color="#3B82F6" />
-                  )}
+                  {data.dailyOrdersArr?.some(v => v > 0) && <Sparkline values={data.dailyOrdersArr} color="#3B82F6" />}
                 </InlineStack>
                 <InlineStack gap="150" blockAlign="center" wrap={false}>
                   <DeltaBadge delta={data.orders30Delta} />
-                  <Text as="p" variant="bodySm" tone="subdued">vs prev 30d</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">vs previous {days} days</Text>
                 </InlineStack>
               </BlockStack>
             </Card>
           </Grid.Cell>
 
-          {/* ROAS */}
           <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Blended ROAS</Text>
-                <Text as="p" variant="heading2xl" tone={roas !== null && roas >= 2 ? "success" : undefined}>
-                  {roas !== null ? roas.toFixed(1) + "×" : "—"}
-                </Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {roas !== null ? `${fmt(data.totalSpend, currency)} total spend (7d)` : "Connect an ad account"}
-                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">Ad spend · {days} days</Text>
+                <Text as="p" variant="heading2xl">{data.totalSpend > 0 ? fmt(data.totalSpend, currency) : "—"}</Text>
+                {data.totalSpend > 0 ? (
+                  <InlineStack gap="150" blockAlign="center" wrap={false}>
+                    <DeltaBadge delta={data.totalSpendDelta} invert />
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {[data.metaConnected && "Meta", data.googleConnected && !googleFailing && "Google"].filter(Boolean).join(" + ") || "—"}
+                      {googleFailing ? " · Google missing" : ""}
+                    </Text>
+                  </InlineStack>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {data.metaConnected || data.googleConnected ? "No spend recorded in this period" : "No ad account connected"}
+                  </Text>
+                )}
               </BlockStack>
             </Card>
           </Grid.Cell>
 
-          {/* Ad Spend */}
           <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Ad Spend (7d)</Text>
-                <Text as="p" variant="heading2xl">
-                  {data.totalSpend > 0 ? fmt(data.totalSpend, currency) : "—"}
+                <Text as="p" variant="bodySm" tone="subdued">Blended ROAS · {days} days</Text>
+                <Text as="p" variant="heading2xl">{blendedRoas !== null ? fmtRoas(blendedRoas) : "—"}</Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {blendedRoas !== null ? "All tracked revenue ÷ ad spend" : "Needs ad spend to calculate"}
                 </Text>
-                {data.totalSpend > 0 ? (
-                  <Text as="p" variant="bodySm" tone="subdued">Meta + Google</Text>
-                ) : (
-                  <Button size="slim" onClick={() => navigate("/app/integrations/meta")}>Connect Google Ads</Button>
-                )}
               </BlockStack>
             </Card>
           </Grid.Cell>
@@ -978,7 +969,6 @@ export default function AppIndex() {
             background: "#f8f9ff", border: "1px solid #e1e3e5",
           }}>
             <InlineStack gap="300" blockAlign="center">
-              <div style={{ fontSize: 28, lineHeight: 1 }}>{nextStep.icon}</div>
               <BlockStack gap="025">
                 <Text as="p" variant="headingSm" fontWeight="semibold">{nextStep.title}</Text>
                 <Text as="p" variant="bodySm" tone="subdued">{nextStep.desc}</Text>
@@ -1002,7 +992,7 @@ export default function AppIndex() {
                     <InlineStack align="space-between" blockAlign="center">
                       <BlockStack gap="025">
                         <Text as="h2" variant="headingMd">Revenue by source</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">Share of attributed revenue · last 30 days</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">Attribix-tracked orders · {periodText.toLowerCase()} · ROAS uses spend from the same days</Text>
                       </BlockStack>
                     </InlineStack>
                     <SourceBreakdown
@@ -1030,7 +1020,7 @@ export default function AppIndex() {
               <Card>
                 <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
-                    <Text as="h2" variant="headingMd">Recent attributed orders</Text>
+                    <Text as="h2" variant="headingMd">Recent orders</Text>
                     <Button size="slim" onClick={() => navigate("/app/orders")}>View all</Button>
                   </InlineStack>
                   {purchaseRows.length > 0 ? (
@@ -1052,7 +1042,7 @@ export default function AppIndex() {
               {insights.length > 0 && (
                 <Card>
                   <BlockStack gap="300">
-                    <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">NEEDS ATTENTION</Text>
+                    <Text as="h2" variant="headingMd">Insights</Text>
                     <BlockStack gap="200">
                       {insights.map((ins, i) => <InsightRow key={i} {...ins} />)}
                     </BlockStack>
@@ -1070,12 +1060,15 @@ export default function AppIndex() {
               {/* Store summary */}
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h3" variant="headingSm">Store summary</Text>
+                  <BlockStack gap="050">
+                    <Text as="h3" variant="headingSm">Store summary</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">{periodText}</Text>
+                  </BlockStack>
                   {[
                     { label: "Tracked orders", value: String(data.orders30) },
                     { label: "Tracked revenue", value: fmt(data.rev30, currency) },
-                    { label: "AOV", value: fmt(aov, currency) },
-                    { label: "Meta ROAS (7d)", value: metaRoas7 !== null ? metaRoas7.toFixed(1) + "×" : "—" },
+                    { label: "Average order value", value: fmt(aov, currency) },
+                    { label: "Meta-reported ROAS", value: metaRoas !== null ? fmtRoas(metaRoas) : "—" },
                   ].map(row => (
                     <InlineStack key={row.label} align="space-between" blockAlign="center">
                       <Text as="p" variant="bodySm" tone="subdued">{row.label}</Text>
@@ -1104,6 +1097,9 @@ export default function AppIndex() {
                       <div
                         key={item.label}
                         style={{ display: "flex", alignItems: "center", gap: 10, cursor: item.done ? "default" : "pointer" }}
+                        role={item.done || !item.url ? undefined : "link"}
+                        tabIndex={item.done || !item.url ? undefined : 0}
+                        onKeyDown={item.done || !item.url ? undefined : (e) => { if (e.key === "Enter") navigate(item.url); }}
                         onClick={item.done || !item.url ? undefined : () => navigate(item.url)}
                       >
                         <div style={{
@@ -1122,7 +1118,7 @@ export default function AppIndex() {
                     ))}
                   </BlockStack>
                   {setupDone < setupSteps.length && (
-                    <Button size="slim" onClick={() => navigate("/app/ads")}>Go to setup →</Button>
+                    <Button size="slim" onClick={() => navigate("/app/setup")}>Open setup guide</Button>
                   )}
                 </BlockStack>
               </Card>
@@ -1153,4 +1149,42 @@ function NotTrackedOrDirect({ tracked }) {
   return tracked
     ? <Text as="span" variant="bodySm" tone="subdued">direct</Text>
     : <Tooltip content="We didn't see this buyer's visit, usually because they declined cookies. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>;
+}
+
+function HealthItem({ label, value, detail, tone }) {
+  const toneLabel = { success: "OK", warning: "Check", critical: "Problem", info: "Info" }[tone] ?? "Info";
+  return (
+    <BlockStack gap="100">
+      <InlineStack gap="150" blockAlign="center" wrap={false}>
+        <Badge tone={tone === "info" ? undefined : tone}>{toneLabel}</Badge>
+        <Text as="p" variant="bodySm" fontWeight="semibold">{label}</Text>
+      </InlineStack>
+      <Text as="p" variant="bodySm">{value}</Text>
+      {detail && <Text as="p" variant="bodySm" tone="subdued">{detail}</Text>}
+    </BlockStack>
+  );
+}
+
+function fmtRoas(v) {
+  return v == null || !Number.isFinite(v) ? "—" : `${v.toFixed(1)}×`;
+}
+
+function timeAgo(iso) {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const h = Math.round(mins / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+
+function formatPeriod(startIso) {
+  const f = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  return `${f(startIso)} – ${f(Date.now())}`;
+}
+
+const SOURCE_NAMES = { adwords: "Google Ads", google: "Google", facebook: "Facebook", fb: "Facebook", ig: "Instagram", instagram: "Instagram", meta: "Meta", tiktok: "TikTok", bing: "Microsoft Ads", email: "Email", attribix: "Attribix email" };
+function sourceName(src) {
+  const s = String(src || "").toLowerCase();
+  return SOURCE_NAMES[s] ?? src;
 }

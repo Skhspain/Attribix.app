@@ -13,6 +13,7 @@ import {
   Card,
   DataTable,
   Grid,
+  InlineGrid,
   InlineStack,
   Page,
   Select,
@@ -45,23 +46,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }).catch(() => []),
     anyDb.googleConnection?.findUnique?.({
       where: { shop },
-      select: { lastSyncedAt: true, adCustomerId: true },
+      select: { lastSyncedAt: true, adCustomerId: true, lastSyncAttemptAt: true, lastSyncError: true, currencyCode: true },
     }).catch(() => null),
   ]);
 
   const hasConnection = !!googleConn?.adCustomerId;
 
-  // Detect store currency from Shopify
-  let storeCurrency = "NOK";
-  try {
-    const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
-    const shopData = await shopRes.json();
-    storeCurrency = shopData?.data?.shop?.currencyCode || "NOK";
-  } catch {}
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+  const storeCurrency = await getReportingCurrency(shop, admin);
 
   // Also pull live metrics from Google Ads API if connected
   let liveMetrics: any[] = [];
-  let adAccountCurrency = "USD"; // Default; we'll detect from the API response
+  let liveError: string | null = null;
+  // Unknown account currency → assume the store currency rather than guessing USD.
+  let adAccountCurrency: string = googleConn?.currencyCode || storeCurrency;
   if (hasConnection && googleConn) {
     try {
       const { getValidGoogleToken } = await import("~/services/tokenRefresh.server");
@@ -93,9 +91,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
           query,
         });
         liveMetrics = streamResults.flatMap((chunk: any) => chunk?.results ?? []);
+      } else {
+        liveError = "The Google connection needs to be renewed. Reconnect Google Ads.";
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("[google-ads] live metrics fetch failed:", e);
+      const msg = String(e?.message ?? e);
+      liveError = /only approved for use with test accounts/i.test(msg)
+        ? "Attribix's Google Ads API access is still limited to test accounts, so this ad account can't be read yet."
+        : msg.split("\n")[0].slice(0, 300);
     }
   }
 
@@ -136,6 +140,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     nowMs: Date.now(),
     campaigns: transformedCampaigns,
     lastSyncedAt: googleConn?.lastSyncedAt ?? null,
+    lastSyncAttemptAt: googleConn?.lastSyncAttemptAt ?? null,
+    lastSyncError: googleConn?.lastSyncError ?? null,
+    liveError,
+    adCustomerId: googleConn?.adCustomerId ?? null,
     hasConnection,
     storeCurrency,
     adAccountCurrency,
@@ -154,7 +162,7 @@ function fmtRoas(roas: number | null) {
   return roas.toFixed(1) + "×";
 }
 
-function fmtDecimal(value: number, currency = "NOK") {
+function fmtDecimal(value: number, currency = "USD") {
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 2 }).format(value || 0);
   } catch {
@@ -242,7 +250,10 @@ export default function GoogleAdsDetail() {
     };
   }, [campaigns]);
 
-  const currency = data.storeCurrency || "NOK";
+  const currency = data.storeCurrency;
+  // Data can't be trusted as "zero" if we couldn't read the account.
+  const dataUnavailable = data.hasConnection && !!(data.liveError || data.lastSyncError);
+  const MIN_TRACKED_ORDERS = 5;
 
   // Attribix-attributed revenue: orders tracked via gclid/google UTM within the window
   const { attributedRevenue, attributedOrders } = useMemo(() => {
@@ -391,71 +402,69 @@ export default function GoogleAdsDetail() {
         {/* No connection banner */}
         {!data.hasConnection && (
           <Banner tone="info">
-            <p>Connect Google Ads in <strong>Settings → Integrations</strong> to see your data.</p>
+            <p>Connect Google Ads under <strong>Integrations</strong> to see your data.</p>
           </Banner>
         )}
 
-        {/* Decision banner — uses Attribix-attributed revenue (gclid/Google UTM tracked orders) */}
+        {/* Connection status: account, last successful sync, and why data is missing */}
+        {data.hasConnection && (
+          <Card>
+            <BlockStack gap="200">
+              <InlineStack align="space-between" blockAlign="center" wrap>
+                <Text as="h2" variant="headingSm">Google Ads connection</Text>
+                <Badge tone={dataUnavailable ? "critical" : data.lastSyncedAt ? "success" : "attention"}>
+                  {dataUnavailable ? "Data unavailable" : data.lastSyncedAt ? "Syncing" : "Not synced yet"}
+                </Badge>
+              </InlineStack>
+              <Text as="p" tone="subdued">
+                {`Ad account ${formatCustomerId(data.adCustomerId)} · last successful sync: ${data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "never"}`}
+                {data.lastSyncAttemptAt ? ` · last attempt: ${new Date(data.lastSyncAttemptAt).toLocaleString()}` : ""}
+              </Text>
+              {dataUnavailable && (
+                <Banner tone="critical" title="Google Ads data couldn't be loaded, so the figures below are not real zeros">
+                  <p>{data.liveError || data.lastSyncError}</p>
+                </Banner>
+              )}
+            </BlockStack>
+          </Card>
+        )}
+
         {campaigns.length > 0 && (
-          <div style={{
-            borderRadius: 12,
-            background: attributedRoas !== null && attributedRoas >= 1
-              ? "linear-gradient(135deg, #064e3b 0%, #065f46 100%)"
-              : attributedRoas !== null
-              ? "linear-gradient(135deg, #7f1d1d 0%, #991b1b 100%)"
-              : "linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%)",
-            padding: "24px 28px",
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            gap: 20, flexWrap: "wrap",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
-          }}>
-            <div>
-              <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>
-                {attributedRoas !== null && attributedRoas >= 2
-                  ? "Your Google Ads are profitable"
-                  : attributedRoas !== null && attributedRoas >= 1
-                  ? "Your Google Ads are breaking even"
-                  : attributedRoas !== null
-                  ? "Your Google Ads are losing money"
-                  : "No attributed sales yet"}
-              </p>
-              <p style={{ margin: 0, marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-                Based on {attributedOrders} Attribix-tracked order{attributedOrders !== 1 ? "s" : ""} (gclid / Google UTM)
-              </p>
-              <div style={{ display: "flex", gap: 28, marginTop: 10, flexWrap: "wrap" }}>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>ROAS</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{attributedRoas !== null ? fmtRoas(attributedRoas) : "—"}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Spend</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(kpis.spend, currency)}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Revenue</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{fmtDecimal(attributedRevenue, currency)}</p>
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontSize: 11, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.06em" }}>Net</p>
-                  <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: attributedRevenue - kpis.spend >= 0 ? "#86efac" : "#fca5a5" }}>
-                    {attributedRevenue - kpis.spend >= 0 ? "+" : ""}{fmtDecimal(attributedRevenue - kpis.spend, currency)}
-                  </p>
-                </div>
-              </div>
-            </div>
-            {attributedRoas !== null && attributedRoas < 1 && (
-              <div style={{ background: "rgba(255,255,255,0.12)", borderRadius: 10, padding: "16px 20px", minWidth: 200 }}>
-                <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>What's losing money?</p>
-                <p style={{ margin: 0, fontSize: 12, color: "rgba(255,255,255,0.55)", marginTop: 4 }}>Scroll down to see which campaigns are burning budget.</p>
-              </div>
-            )}
-          </div>
+          <Card>
+            <BlockStack gap="300">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">{`Results · last ${windowDays} days`}</Text>
+                <Text as="p" tone="subdued">
+                  Google counts conversions with its own attribution; Attribix counts orders where it saw the Google click on your store. Neither includes product costs.
+                </Text>
+              </BlockStack>
+              <InlineGrid columns={{ xs: 1, md: 2 }} gap="400">
+                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                  <BlockStack gap="100">
+                    <Text as="h3" variant="headingSm">Google reports</Text>
+                    <Text as="p">{`${fmtRoas(kpis.roas)} ROAS · ${Math.round(kpis.conversions).toLocaleString()} conversions · ${fmtDecimal(kpis.value, currency)} value`}</Text>
+                  </BlockStack>
+                </Box>
+                <Box padding="400" background="bg-surface-secondary" borderRadius="200">
+                  <BlockStack gap="100">
+                    <Text as="h3" variant="headingSm">Attribix tracked</Text>
+                    <Text as="p">{`${fmtRoas(attributedRoas)} ROAS · ${attributedOrders} orders · ${fmtDecimal(attributedRevenue, currency)} revenue`}</Text>
+                  </BlockStack>
+                </Box>
+              </InlineGrid>
+              {attributedOrders < MIN_TRACKED_ORDERS && (
+                <Text as="p" tone="subdued">
+                  {`Only ${attributedOrders} Attribix-tracked Google order${attributedOrders === 1 ? "" : "s"} in this period — too few to judge performance on.`}
+                </Text>
+              )}
+            </BlockStack>
+          </Card>
         )}
 
         {/* KPIs */}
         <Grid>
           {[
-            { label: "Total Spend", value: fmtDecimal(kpis.spend, currency) },
+            { label: "Total spend", value: dataUnavailable && !campaigns.length ? "Unavailable" : fmtDecimal(kpis.spend, currency) },
             { label: "Impressions", value: kpis.impressions.toLocaleString() },
             {
               label: "Clicks",
@@ -463,7 +472,7 @@ export default function GoogleAdsDetail() {
               sub: kpis.ctr ? `CTR ${kpis.ctr.toFixed(2)}%` : undefined,
             },
             {
-              label: "ROAS",
+              label: "ROAS (Google-reported)",
               value: kpis.roas !== null ? fmtRoas(kpis.roas) : "—",
               sub: `${Math.round(kpis.conversions).toLocaleString()} conversions · ${fmtDecimal(kpis.value, currency)} value`,
             },
@@ -485,7 +494,7 @@ export default function GoogleAdsDetail() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Daily spend vs attributed revenue</Text>
+              <Text as="h2" variant="headingMd">Daily spend vs Attribix-tracked revenue</Text>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />
@@ -519,10 +528,10 @@ export default function GoogleAdsDetail() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="start">
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#166534", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Winning campaign</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Highest ROAS (Google-reported)</p>
                         <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#14532d", marginTop: 4, lineHeight: 1.3 }}>{topCampaign.name}</p>
                       </div>
-                      <Badge tone="success">Best ROAS</Badge>
+                      {topCampaign.conversions < 3 && <Badge>Few conversions</Badge>}
                     </InlineStack>
                     <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                       <div>
@@ -554,7 +563,7 @@ export default function GoogleAdsDetail() {
                           boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
                         }}
                       >
-                        Scale this campaign →
+                        Open in Google Ads ↗
                       </a>
                     </div>
                   </BlockStack>
@@ -572,10 +581,10 @@ export default function GoogleAdsDetail() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="start">
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Wasting budget</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Lowest ROAS (Google-reported)</p>
                         <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#7f1d1d", marginTop: 4, lineHeight: 1.3 }}>{worstCampaign.name}</p>
                       </div>
-                      <Badge tone="critical">Lowest ROAS</Badge>
+                      <Badge tone="critical">Below 1×</Badge>
                     </InlineStack>
                     <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
                       <div>
@@ -607,7 +616,7 @@ export default function GoogleAdsDetail() {
                           boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
                         }}
                       >
-                        Pause this campaign →
+                        Review in Google Ads ↗
                       </a>
                     </div>
                   </BlockStack>
@@ -628,7 +637,7 @@ export default function GoogleAdsDetail() {
                 rel="noopener noreferrer"
                 style={{ fontSize: 13, color: "#2563eb", textDecoration: "none", fontWeight: 600 }}
               >
-                Open Google Ads Manager →
+                Open Google Ads ↗
               </a>
             </InlineStack>
             {data.lastSyncedAt && (
@@ -659,7 +668,7 @@ export default function GoogleAdsDetail() {
           shopifyOrders={attributedOrders}
           platformName="Google"
           platformRevenue={kpis.value}
-          currency={data.storeCurrency || "NOK"}
+          currency={data.storeCurrency}
           period={`${window}d`}
         />
 
@@ -682,4 +691,9 @@ export default function GoogleAdsDetail() {
       </BlockStack>
     </Page>
   );
+}
+
+function formatCustomerId(id: string | null) {
+  const d = String(id ?? "").replace(/\D/g, "");
+  return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : id ?? "—";
 }

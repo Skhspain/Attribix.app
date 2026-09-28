@@ -100,6 +100,9 @@ export async function loader({ request }) {
     connected,
     expiresAt,
     adCustomerId,
+    lastSyncedAt: conn?.lastSyncedAt ?? null,
+    lastSyncAttemptAt: conn?.lastSyncAttemptAt ?? null,
+    lastSyncError: conn?.lastSyncError ?? null,
     developerTokenConfigured,
     fromOnboarding,
   });
@@ -264,13 +267,18 @@ function GoogleIntegrationsInner({ data }) {
     }
   }
 
+  // Until the account list is loaded, still show the saved account as the
+  // selected value (before, a saved ID sat next to a blank "Select…" field).
   const customerOptions = useMemo(() => {
     const opts = customers.map((c) => ({
       label: c.name ? `${c.name} (${c.id})` : c.id,
       value: c.id,
     }));
+    if (data.adCustomerId && !opts.some((o) => o.value === data.adCustomerId)) {
+      opts.unshift({ label: `${formatCustomerId(data.adCustomerId)} (saved)`, value: data.adCustomerId });
+    }
     return [{ label: "Select an ad account…", value: "" }, ...opts];
-  }, [customers]);
+  }, [customers, data.adCustomerId]);
 
   return (
     <Page
@@ -354,12 +362,21 @@ function GoogleIntegrationsInner({ data }) {
                 </Text>
 
                 {data.adCustomerId && (
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    Current selection:{" "}
-                    <Text as="span" fontWeight="semibold">
-                      {data.adCustomerId}
+                  <BlockStack gap="100">
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      Selected account:{" "}
+                      <Text as="span" fontWeight="semibold">{formatCustomerId(data.adCustomerId)}</Text>
                     </Text>
-                  </Text>
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      {`Last successful sync: ${data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "never"}`}
+                      {data.lastSyncAttemptAt ? ` · last attempt: ${new Date(data.lastSyncAttemptAt).toLocaleString()}` : ""}
+                    </Text>
+                  </BlockStack>
+                )}
+                {data.adCustomerId && data.lastSyncError && (
+                  <Banner tone="critical" title="Spend isn't syncing">
+                    <Text as="p">{data.lastSyncError}</Text>
+                  </Banner>
                 )}
 
                 <Divider />
@@ -379,7 +396,8 @@ function GoogleIntegrationsInner({ data }) {
                       options={customerOptions}
                       value={selectedCustomerId}
                       onChange={setSelectedCustomerId}
-                      disabled={customers.length === 0}
+                      disabled={customerOptions.length <= 1}
+                      helpText={customers.length === 0 ? "Click “Refresh ad accounts” to choose a different account." : undefined}
                     />
                   </div>
 
@@ -396,7 +414,7 @@ function GoogleIntegrationsInner({ data }) {
 
                 <Banner tone="info">
                   <Text as="p">
-                    ✓ Ad data syncs automatically every 24 hours. To sync manually or view campaign performance, go to{" "}
+                    Spend syncs automatically about once an hour. To view campaign performance or sync now, go to{" "}
                     <a href="/app/google-ads">Google Ads →</a>
                   </Text>
                 </Banner>
@@ -477,4 +495,9 @@ export default function GoogleIntegrationsPage() {
   }
 
   return <GoogleIntegrationsInner data={data} />;
+}
+
+function formatCustomerId(id) {
+  const d = String(id ?? "").replace(/\D/g, "");
+  return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : id;
 }
