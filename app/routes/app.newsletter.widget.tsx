@@ -166,7 +166,7 @@ function CreateFormModal({
             <Text as="p" variant="bodySm" tone="subdued">
               A popup will appear on your storefront after 5 seconds and ask visitors
               to subscribe. You can customise the colours, timing and copy from the
-              Signup forms page once installed.
+              Sign-up form page once installed.
             </Text>
             <Banner tone="info">
               <Text as="p">
@@ -337,7 +337,7 @@ export default function SignupFormsPage() {
 
   return (
     <Page
-      title="Sign up forms"
+      title="Sign-up form"
       subtitle="Build and customize forms to grow your subscriber list."
       primaryAction={{ content: "Create form", onAction: () => setCreateModalOpen(true) }}
     >

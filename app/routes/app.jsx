@@ -1,6 +1,6 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
-import { Outlet, useFetcher, useLoaderData, useNavigation } from "@remix-run/react";
+import { Outlet, useFetcher, useLoaderData, useLocation, useNavigation } from "@remix-run/react";
 import { Banner, Button, InlineStack, Text } from "@shopify/polaris";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import shopify, { authenticate } from "~/shopify.server";
@@ -117,7 +117,11 @@ export function shouldRevalidate({
 export default function AppRoute() {
   const { apiKey, legacyScriptTags, embedUrl } = useLoaderData();
   const navigation = useNavigation();
+  const location = useLocation();
   const isNavigating = navigation.state !== "idle";
+  // Going to another page (not just submitting a form on this one): fade the
+  // current page so it isn't mistaken for the destination while it loads.
+  const changingPage = navigation.state === "loading" && !!navigation.location && navigation.location.pathname !== location.pathname;
 
   return (
     <AppProvider apiKey={apiKey} isEmbeddedApp>
@@ -133,7 +137,9 @@ export default function AppRoute() {
       )}
       {/* ui-nav-menu is an App Bridge web component — renders the embedded app sidebar nav */}
       <ui-nav-menu>
+        {/* Shopify doesn't render the rel="home" link in the sidebar, so Overview gets a visible entry too. */}
         <a href="/app" rel="home">Overview</a>
+        <a href="/app/overview">Overview</a>
         {/* Ads & Attribution */}
         <a href="/app/analytics">Analytics</a>
         <a href="/app/meta-ads">Meta Ads</a>
@@ -153,7 +159,17 @@ export default function AppRoute() {
         <a href="/app/settings">Settings</a>
       </ui-nav-menu>
       {legacyScriptTags && <LegacyScriptTagBanner embedUrl={embedUrl} />}
-      <Outlet />
+      <div
+        aria-busy={changingPage}
+        style={{ opacity: changingPage ? 0.45 : 1, transition: changingPage ? "opacity 150ms ease 120ms" : "none", pointerEvents: changingPage ? "none" : undefined }}
+      >
+        <Outlet />
+      </div>
+      {changingPage && (
+        <div role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>
+          Loading page…
+        </div>
+      )}
     </AppProvider>
   );
 }
@@ -185,37 +201,23 @@ function LegacyScriptTagBanner({ embedUrl }) {
   const checking = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "check";
   const notDetected = fetcher.state === "idle" && fetcher.data?.intent === "check" && !fetcher.data.ok;
 
+  // Compact on purpose: it shows on every page, so one line plus actions.
+  // Full instructions live in the Setup guide (step 5).
   return (
-    <div style={{ maxWidth: 998, margin: "16px auto 0", padding: "0 16px" }}>
-      <Banner tone="warning" title="Action needed: turn on Attribix Widgets in your theme">
-        <Text as="p">
-          Shopify is retiring script tags. Click <strong>Enable in theme</strong>, then click{" "}
-          <strong>Save</strong> in the theme editor. This message disappears once it's on.
-        </Text>
-        <Text as="p" tone="subdued">
-          Without it, your reviews and newsletter widgets stop showing on March 1, 2027.
-        </Text>
-        <div style={{ marginTop: 12 }}>
-          <InlineStack gap="200" blockAlign="center">
-            <Button variant="primary" url={embedUrl} target="_blank" onClick={() => setOpened(true)}>
-              Enable in theme
-            </Button>
-            {opened && (
-              <Button
-                variant="plain"
-                loading={fetcher.state !== "idle" && !checking}
-                onClick={() => fetcher.submit({}, { method: "post", action: "/app/legacy-script-tags" })}
-              >
-                I've enabled it and saved
-              </Button>
-            )}
-            {checking && <Text as="span" tone="subdued">Checking your storefront…</Text>}
-          </InlineStack>
-        </div>
+    <div style={{ maxWidth: 998, margin: "12px auto 0", padding: "0 16px" }}>
+      <Banner
+        tone="warning"
+        title="Turn on Attribix Widgets in your theme before 1 March 2027"
+        action={{ content: "Enable in theme", url: embedUrl, target: "_blank", onAction: () => setOpened(true) }}
+        secondaryAction={
+          opened
+            ? { content: "I've enabled it and saved", onAction: () => fetcher.submit({}, { method: "post", action: "/app/legacy-script-tags" }) }
+            : { content: "Why?", url: "/app/setup" }
+        }
+      >
+        {checking && <Text as="p" tone="subdued">Checking your storefront…</Text>}
         {notDetected && (
-          <Text as="p" tone="subdued">
-            We don't see it on your storefront yet. Make sure you clicked <strong>Save</strong> in the theme editor.
-          </Text>
+          <Text as="p" tone="subdued">Not on your storefront yet. Make sure you clicked Save in the theme editor.</Text>
         )}
         {fetcher.data?.ok === false && !fetcher.data?.intent && (
           <Text as="p" tone="critical">Couldn't finish the switch. Please try again.</Text>

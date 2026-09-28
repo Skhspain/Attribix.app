@@ -311,7 +311,7 @@ export default function NewsletterSettingsPage() {
                   <Divider />
                   {!fromEmail ? (
                     <Banner tone="warning">
-                      <Text as="p">Set your From email address in the Email tab first, then come back here to verify the domain.</Text>
+                      <Text as="p">Set your sender email on the Sender tab first, then come back here to verify its domain.</Text>
                     </Banner>
                   ) : (
                     <BlockStack gap="300">

@@ -46,7 +46,10 @@ export const action = async ({ request }) => {
     fbPixelId: (formData.get("fbPixelId") || "").toString().trim() || null,
     fbToken: (formData.get("fbToken") || "").toString().trim() || null,
     trackingEnabled: formData.get("trackingEnabled") === "true",
-    attributionModel: (formData.get("attributionModel") || "last_touch").toString().trim(),
+    // Only models the attribution code implements (services/touchpoints.server).
+    attributionModel: ["last_touch", "first_touch", "linear", "time_decay"].includes(String(formData.get("attributionModel")))
+      ? String(formData.get("attributionModel"))
+      : "last_touch",
     attributionWindowDays: Math.max(1, Math.min(90, Number(formData.get("attributionWindowDays") || "7") || 7)),
   };
   await settingsModule.upsertTrackingSettings(shop, input);
@@ -194,7 +197,7 @@ export default function TrackingAndAttributionPage() {
 
   return (
     <Page fullWidth>
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
+      <div className="ax-settings-layout">
         <SettingsNav />
         <div style={{ flex: 1, minWidth: 0 }}>
           <BlockStack gap="100">
@@ -264,7 +267,7 @@ export default function TrackingAndAttributionPage() {
             <BlockStack gap="300">
               <SectionLabel n="2" title="Attribution settings" desc="Control how purchases are matched to ad campaigns." />
               <Divider />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 16 }}>
                 <BlockStack gap="100">
                   <Text as="p" variant="bodySm" fontWeight="semibold">Attribution model</Text>
                   <select

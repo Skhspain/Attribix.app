@@ -3,21 +3,61 @@ import { useLoaderData, useNavigate } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 
+// Each step is "done" only when it's verifiably working, with a reason when
+// it isn't — connecting an account isn't the same as data arriving.
 export async function loader({ request }) {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
-  const [meta, google, tracking] = await Promise.all([
+  const DAY = 24 * 3600e3;
+  const [meta, google, tracking, lastTrackedOrder, lastSentOrder] = await Promise.all([
     db.metaConnection.findUnique({ where: { shop } }).catch(() => null),
     db.googleConnection.findUnique({ where: { shop } }).catch(() => null),
     db.trackingSettings.findUnique({ where: { shop } }).catch(() => null),
+    db.purchase.findFirst({ where: { shop, visitorId: { not: null } }, orderBy: { createdAt: "desc" }, select: { createdAt: true } }).catch(() => null),
+    db.purchase.findFirst({ where: { shop, capiSentAt: { not: null } }, orderBy: { createdAt: "desc" }, select: { createdAt: true } }).catch(() => null),
   ]);
-  return json({
-    shop,
-    metaConnected: !!(meta?.accessToken && meta.accessToken !== "__PENDING__"),
-    googleConnected: !!(google?.accessToken && google.accessToken !== "__PENDING__"),
-    storeTrackingActive: !!(tracking?.trackingEnabled && tracking?.pixelLastSeenAt),
-    conversionEventsVerified: !!(tracking?.lastEventAt),
-  });
+  const { isWidgetsEmbedLive, appEmbedUrl } = await import("~/services/themeEditor.server");
+  const widgetsLive = await Promise.race([isWidgetsEmbedLive(shop), new Promise((r) => setTimeout(() => r(null), 2500))]).catch(() => null);
+
+  const recent = (d, days) => !!d && Date.now() - new Date(d).getTime() < days * DAY;
+  const metaTokenOk = !!(meta?.accessToken && meta.accessToken !== "__PENDING__");
+  const googleTokenOk = !!(google?.accessToken && google.accessToken !== "__PENDING__");
+
+  const steps = {
+    meta: !metaTokenOk
+      ? { done: false, detail: "Not connected." }
+      : !meta.adAccountId
+        ? { done: false, detail: "Connected, but no ad account chosen yet." }
+        : recent(meta.lastSyncedAt, 2)
+          ? { done: true, detail: `Spend last synced ${new Date(meta.lastSyncedAt).toLocaleString()}.` }
+          : { done: false, detail: meta.lastSyncedAt ? `Last sync ${new Date(meta.lastSyncedAt).toLocaleString()} — more than 2 days ago.` : "Connected, but spend hasn't synced yet." },
+    google: !googleTokenOk
+      ? { done: false, detail: "Not connected." }
+      : !google.adCustomerId
+        ? { done: false, detail: "Connected, but no ad account chosen yet." }
+        : google.lastSyncError
+          ? { done: false, detail: `Connected, but spend isn't syncing: ${google.lastSyncError}` }
+          : recent(google.lastSyncedAt, 2)
+            ? { done: true, detail: `Spend last synced ${new Date(google.lastSyncedAt).toLocaleString()}.` }
+            : { done: false, detail: "Connected, but spend hasn't synced yet." },
+    tracking: !tracking?.trackingEnabled
+      ? { done: false, detail: "Tracking is switched off in Tracking & Attribution settings." }
+      : recent(tracking?.pixelLastSeenAt, 2)
+        ? { done: true, detail: `Last storefront event ${new Date(tracking.pixelLastSeenAt).toLocaleString()}.` }
+        : { done: false, detail: tracking?.pixelLastSeenAt ? `No storefront events since ${new Date(tracking.pixelLastSeenAt).toLocaleString()}.` : "No storefront events received yet." },
+    conversions: recent(lastTrackedOrder?.createdAt, 30)
+      ? { done: true, detail: `Last order with a tracked visit: ${new Date(lastTrackedOrder.createdAt).toLocaleString()}.${lastSentOrder ? ` Last purchase sent to ad platforms: ${new Date(lastSentOrder.createdAt).toLocaleString()}.` : ""}` }
+      : { done: false, detail: "No order with a tracked visit in the last 30 days yet." },
+    widgets: widgetsLive === null
+      ? { done: false, detail: "Couldn't check your storefront right now.", unknown: true }
+      : widgetsLive
+        ? { done: true, detail: "The Attribix Widgets app embed is on in your live theme." }
+        : { done: false, detail: "The Attribix Widgets app embed isn't on in your live theme, so reviews and newsletter forms won't show." },
+  };
+
+  steps.meta.connected = metaTokenOk;
+  steps.google.connected = googleTokenOk;
+  return json({ shop, steps, embedUrl: appEmbedUrl(shop) });
 }
 
 function StepHeader({ number, title, done }) {
@@ -71,7 +111,7 @@ export default function SetupGuide() {
 
       {/* Progress bar */}
       {(() => {
-        const steps = [data.metaConnected, data.googleConnected, data.storeTrackingActive, data.conversionEventsVerified];
+        const steps = Object.values(data.steps).filter((st) => !st.unknown).map((st) => st.done);
         const done = steps.filter(Boolean).length;
         const pct = Math.round((done / steps.length) * 100);
         return (
@@ -93,7 +133,8 @@ export default function SetupGuide() {
 
         {/* Step 1: Meta */}
         <div style={{ background: "#fff", border: "1px solid #E4E5E7", borderRadius: 12, padding: 24 }}>
-          <StepHeader number={1} title="Connect Meta" done={data.metaConnected} />
+          <StepHeader number={1} title="Connect Meta" done={data.steps.meta.done} />
+          <StepDetail step={data.steps.meta} />
           <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 4px", lineHeight: 1.6 }}>
             Connecting Meta enables server-side Conversions API (CAPI) tracking, ad spend import from Facebook and Instagram, and reliable attribution even with ad blockers or iOS restrictions.
           </p>
@@ -103,15 +144,16 @@ export default function SetupGuide() {
           </div>
           <button
             onClick={() => navigate("/app/integrations/meta")}
-            style={{ background: data.metaConnected ? "#F6F6F7" : "#008060", color: data.metaConnected ? "#202223" : "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+            style={{ background: data.steps.meta.done ? "#F6F6F7" : "#008060", color: data.steps.meta.done ? "#202223" : "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
           >
-            {data.metaConnected ? "Manage Meta →" : "Connect Meta →"}
+            {data.steps.meta.connected ? "Manage Meta →" : "Connect Meta →"}
           </button>
         </div>
 
         {/* Step 2: Google Ads */}
         <div style={{ background: "#fff", border: "1px solid #E4E5E7", borderRadius: 12, padding: 24 }}>
-          <StepHeader number={2} title="Connect Google Ads" done={data.googleConnected} />
+          <StepHeader number={2} title="Connect Google Ads" done={data.steps.google.done} />
+          <StepDetail step={data.steps.google} />
           <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 4px", lineHeight: 1.6 }}>
             Connect your Google Ads account to sync daily spend, view campaign-level ROAS, and automatically upload offline conversions — improving Smart Bidding signals without relying on browser pixels.
           </p>
@@ -121,15 +163,16 @@ export default function SetupGuide() {
           </div>
           <button
             onClick={() => navigate("/app/integrations/google")}
-            style={{ background: data.googleConnected ? "#F6F6F7" : "#008060", color: data.googleConnected ? "#202223" : "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
+            style={{ background: data.steps.google.done ? "#F6F6F7" : "#008060", color: data.steps.google.done ? "#202223" : "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer" }}
           >
-            {data.googleConnected ? "Manage Google Ads →" : "Connect Google Ads →"}
+            {data.steps.google.connected ? "Manage Google Ads →" : "Connect Google Ads →"}
           </button>
         </div>
 
         {/* Step 3: Store tracking */}
         <div style={{ background: "#fff", border: "1px solid #E4E5E7", borderRadius: 12, padding: 24 }}>
-          <StepHeader number={3} title="Verify store tracking" done={data.storeTrackingActive} />
+          <StepHeader number={3} title="Verify store tracking" done={data.steps.tracking.done} />
+          <StepDetail step={data.steps.tracking} />
           <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 12px", lineHeight: 1.6 }}>
             Attribix tracks orders using a lightweight web pixel extension installed directly in your Shopify store. Once active, every order will be matched to an ad click or referral source.
           </p>
@@ -151,7 +194,8 @@ export default function SetupGuide() {
 
         {/* Step 4: Verify conversions */}
         <div style={{ background: "#fff", border: "1px solid #E4E5E7", borderRadius: 12, padding: 24 }}>
-          <StepHeader number={4} title="Verify conversion events" done={data.conversionEventsVerified} />
+          <StepHeader number={4} title="Verify conversion events" done={data.steps.conversions.done} />
+          <StepDetail step={data.steps.conversions} />
           <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 12px", lineHeight: 1.6 }}>
             Once all integrations are set up, verify that conversion events are being sent correctly to Meta and Google Ads. Your attribution dashboard will show the first events within a few minutes of a purchase.
           </p>
@@ -172,7 +216,32 @@ export default function SetupGuide() {
           </button>
         </div>
 
+        {/* Step 5: Storefront widgets */}
+        <div style={{ background: "#fff", border: "1px solid #E4E5E7", borderRadius: 12, padding: 24 }}>
+          <StepHeader number={5} title="Turn on storefront widgets" done={data.steps.widgets.done} />
+          <StepDetail step={data.steps.widgets} />
+          <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 12px", lineHeight: 1.6 }}>
+            Reviews and newsletter sign-up forms appear on your store through the Attribix Widgets app embed. Open the theme editor, make sure it's switched on, and click Save.
+          </p>
+          <a
+            href={data.embedUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ display: "inline-block", background: data.steps.widgets.done ? "#F6F6F7" : "#008060", color: data.steps.widgets.done ? "#202223" : "#fff", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, textDecoration: "none" }}
+          >
+            Open theme editor ↗
+          </a>
+        </div>
+
       </div>
     </div>
+  );
+}
+
+function StepDetail({ step }) {
+  return (
+    <p style={{ fontSize: 13, margin: "0 0 12px", lineHeight: 1.5, color: step.done ? "#006e52" : step.unknown ? "#6D7175" : "#8a5300" }}>
+      {step.detail}
+    </p>
   );
 }

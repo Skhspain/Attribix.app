@@ -604,7 +604,7 @@ export default function SubscriberList() {
         {/* Bottom helper cards */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
           {[
-            { icon: "👥", iconBg: "#DCFCE7", title: "Grow your list", desc: "Create more signup forms to grow your audience.", btn: "Create sign up form", url: "/app/newsletter/widget" },
+            { icon: "👥", iconBg: "#DCFCE7", title: "Grow your list", desc: "Add sign-up forms to grow your audience.", btn: "Set up sign-up form", url: "/app/newsletter/widget" },
             { icon: "🛡️", iconBg: "#DBEAFE", title: "Keep your list healthy", desc: "Remove inactive or invalid contacts regularly.", btn: "View list health", url: "/app/newsletter/subscribers?status=unsubscribed" },
             { icon: "📖", iconBg: "#F3E8FF", title: "Need help?", desc: "Learn how to manage your subscribers.", btn: "View guide", url: "/app/newsletter/subscribers" },
           ].map(card => (

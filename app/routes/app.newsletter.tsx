@@ -19,8 +19,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     update: { newsletterSeenAt: new Date() },
   }).catch(() => null);
 
-  const subscriberCount = await db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } });
-  return json({ subscriberCount, sendingAvailable: !!process.env.SMTP_HOST });
+  const [subscriberCount, settings] = await Promise.all([
+    db.newsletterSubscriber.count({ where: { shop, status: "subscribed" } }),
+    (db as any).newsletterSettings?.findUnique?.({ where: { shop }, select: { fromName: true, fromEmail: true } }).catch(() => null),
+  ]);
+  return json({ subscriberCount, senderReady: !!(settings?.fromName && settings?.fromEmail), sendingAvailable: !!process.env.SMTP_HOST });
 }
 
 const SECTIONS = [
@@ -28,7 +31,7 @@ const SECTIONS = [
   { id: "campaigns", label: "Newsletters", url: "/app/newsletter/campaigns" },
   { id: "flows", label: "Flows", url: "/app/newsletter/flows" },
   { id: "subscribers", label: "Subscribers", url: "/app/newsletter/subscribers" },
-  { id: "widget", label: "Signup form", url: "/app/newsletter/widget" },
+  { id: "widget", label: "Sign-up form", url: "/app/newsletter/widget" },
   { id: "settings", label: "Settings", url: "/app/newsletter/settings" },
 ];
 
@@ -36,7 +39,7 @@ const SECTIONS = [
 const EDITOR_PATHS = [/^\/app\/newsletter\/campaigns\/(?!$)[^/]+$/, /^\/app\/newsletter\/flows\/[^/]+\/steps\//];
 
 export default function NewsletterLayout() {
-  const { subscriberCount, sendingAvailable } = useLoaderData<typeof loader>();
+  const { subscriberCount, senderReady, sendingAvailable } = useLoaderData<typeof loader>();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const path = pathname.replace(/\/$/, "");
@@ -55,7 +58,17 @@ export default function NewsletterLayout() {
   }));
 
   return (
-    <Page title="Newsletter" primaryAction={{ content: "New newsletter", url: "/app/newsletter/campaigns/new" }}>
+    <Page
+      title="Newsletter"
+      // Point to the next prerequisite first: a newsletter needs a sender and people to send to.
+      primaryAction={
+        !senderReady
+          ? { content: "Set up sender", url: "/app/newsletter/settings" }
+          : subscriberCount === 0
+            ? { content: "Set up sign-up form", url: "/app/newsletter/widget" }
+            : { content: "New newsletter", url: "/app/newsletter/campaigns/new" }
+      }
+    >
       <BlockStack gap="400">
         {!sendingAvailable && (
           <Banner tone="warning" title="Sending isn't available yet">

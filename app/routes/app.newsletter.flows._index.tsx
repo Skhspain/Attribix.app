@@ -142,8 +142,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (body.intent === "toggle") {
     if (body.enabled) {
-      const flow = await anyDb.automationFlow.findUnique({
-        where: { id: body.flowId },
+      const flow = await anyDb.automationFlow.findFirst({
+        where: { id: body.flowId, shop },
         include: { steps: true },
       });
       const emptySteps = (flow?.steps ?? []).filter((s: any) => !s.htmlContent);
@@ -154,15 +154,16 @@ export async function action({ request }: ActionFunctionArgs) {
         });
       }
     }
-    await anyDb.automationFlow.update({
-      where: { id: body.flowId },
+    // Scoped to this shop: a flow id alone must not let one store change another's flow.
+    await anyDb.automationFlow.updateMany({
+      where: { id: body.flowId, shop },
       data: { enabled: !!body.enabled },
     });
     return json({ ok: true });
   }
 
   if (body.intent === "delete") {
-    await anyDb.automationFlow.delete({ where: { id: body.flowId } });
+    await anyDb.automationFlow.deleteMany({ where: { id: body.flowId, shop } });
     return json({ ok: true });
   }
 
@@ -352,7 +353,7 @@ export default function FlowsIndex() {
               <InlineStack align="space-between" blockAlign="center">
                 <BlockStack gap="025">
                   <Text as="h2" variant="headingMd">Start from a template</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">Pre-built flows you can activate in one click.</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">Pre-built flows. Adding one creates a paused draft — add your email content, then turn it on.</Text>
                 </BlockStack>
                 {showTemplates && flows.length > 0 && (
                   <Button size="slim" onClick={() => setShowTemplates(false)}>← Back to flows</Button>
@@ -381,7 +382,7 @@ export default function FlowsIndex() {
                         <div style={{ marginTop: 12 }}>
                           {alreadyCreated
                             ? <Button size="slim" disabled>Already added</Button>
-                            : <Button size="slim" variant="primary" loading={fetcher.state !== "idle"} onClick={() => createFromTemplate(tpl.id)}>Use template</Button>
+                            : <Button size="slim" variant="primary" loading={fetcher.state !== "idle"} onClick={() => createFromTemplate(tpl.id)}>Add as draft</Button>
                           }
                         </div>
                       </div>

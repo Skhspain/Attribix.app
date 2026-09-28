@@ -1004,7 +1004,7 @@ export default function LeadsPage() {
               <Text as="p" variant="bodySm" tone="subdued">Bring leads into Attribix from ads, forms, CSV files or manual entry.</Text>
             </BlockStack>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
 
               {/* Meta Lead Ads */}
               <div style={{ border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
@@ -1176,12 +1176,25 @@ export default function LeadsPage() {
                   <Text as="p" variant="headingMd">No leads yet</Text>
                   <div style={{ marginTop: 6, marginBottom: 20 }}>
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Once leads arrive, you'll be able to track status, source, qualification, and follow-up activity here.
+                      {metaConnected
+                        ? "Recommended first step: import the leads from your Meta lead forms."
+                        : "Recommended first step: add a lead, or connect a lead source above."}
                     </Text>
                   </div>
                   <InlineStack gap="200" align="center">
-                    <Button variant="primary" onClick={() => setAddModalOpen(true)}>Add lead</Button>
-                    <Button onClick={() => setImportModalOpen(true)}>Import CSV</Button>
+                    {metaConnected ? (
+                      <Button
+                        variant="primary"
+                        loading={metaSyncFetcher.state !== "idle"}
+                        onClick={() => metaSyncFetcher.submit({ _intent: "sync_meta_leads" }, { method: "post", encType: "application/json" })}
+                      >
+                        Import Meta leads
+                      </Button>
+                    ) : (
+                      <Button variant="primary" onClick={() => setAddModalOpen(true)}>Add lead</Button>
+                    )}
+                    {metaConnected && <Button variant="plain" onClick={() => setAddModalOpen(true)}>Add lead manually</Button>}
+                    <Button variant="plain" onClick={() => setImportModalOpen(true)}>Import CSV</Button>
                   </InlineStack>
                 </div>
 

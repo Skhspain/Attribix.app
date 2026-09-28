@@ -453,7 +453,9 @@ function SourceBreakdown({ sources, currency, metaSpend, googleSpend }) {
         {nonZero.map((s, idx) => {
           const cfg = SOURCE_CFG[s.source] || { color: "#9CA3AF", label: s.source, icon: "?" };
           const spend = s.source === "meta" ? metaSpend : s.source === "google" ? googleSpend : 0;
-          const srcRoas = spend > 0 ? (s.revenue / spend).toFixed(1) : null;
+          // Only with enough tracked orders to mean anything, and labelled as
+          // tracked-only (platforms report more through their own attribution).
+          const srcRoas = spend > 0 && s.orders >= 5 ? (s.revenue / spend).toFixed(1) : null;
           const isLast = idx === nonZero.length - 1;
 
           return (
@@ -474,7 +476,7 @@ function SourceBreakdown({ sources, currency, metaSpend, googleSpend }) {
                   <div style={{ height: "100%", width: `${Math.min(s.share, 100)}%`, background: cfg.color, borderRadius: 2 }} />
                 </div>
                 <Text as="p" variant="bodySm" tone="subdued">{fmt(s.revenue, currency)}</Text>
-                {srcRoas && <Text as="p" variant="bodySm" tone="subdued">{srcRoas}× ROAS</Text>}
+                {srcRoas && <Text as="p" variant="bodySm" tone="subdued">{srcRoas}× on tracked orders</Text>}
               </BlockStack>
             </div>
           );
@@ -538,18 +540,18 @@ function ToolkitGrid({ data, navigate }) {
     },
     {
       icon: "🗺️", bg: "#6366F1",
-      name: "Customer Journeys", desc: "See every touchpoint customers visit before buying",
+      name: "Customer journeys", desc: "See the touchpoints Attribix captured before each order",
       metric: "Multi-touch attribution",
-      status: pixelStatus === "healthy" ? "Active" : "Set up tracking",
-      tone: pixelStatus === "healthy" ? "success" : "new",
+      status: pixelStatus === "healthy" ? "Recording" : "No recent events",
+      tone: pixelStatus === "healthy" ? "success" : "attention",
       url: "/app/journey",
     },
     {
       icon: "📊", bg: "#008060",
       name: "Ads & Attribution", desc: "Track performance and attribute revenue with confidence",
-      metric: orders30 > 0 ? `${tracking.attributionRate}% attributed · ${orders30} orders` : "Tracking active",
-      status: pixelStatus === "healthy" ? "Tracking active" : "Set up tracking",
-      tone: pixelStatus === "healthy" ? "success" : "critical",
+      metric: orders30 > 0 ? `${tracking.attributionRate}% of ${orders30} orders attributed` : "No orders yet",
+      status: pixelStatus !== "healthy" ? "No recent events" : orders30 > 0 && tracking.attributionRate < 60 ? "Partial coverage" : "Events arriving",
+      tone: pixelStatus !== "healthy" ? "critical" : orders30 > 0 && tracking.attributionRate < 60 ? "attention" : "success",
       url: "/app/analytics",
     },
   ];
