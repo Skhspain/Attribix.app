@@ -10,6 +10,8 @@ import db from "~/db.server";
 
 // ─── Channel detection ────────────────────────────────────────────────────────
 
+export const NOT_TRACKED_CHANNEL = "Not tracked";
+
 export function channelOf(data: {
   fbclid?: string | null;
   gclid?: string | null;
@@ -26,15 +28,16 @@ export function channelOf(data: {
 
   const src = (data.utmSource || "").toLowerCase();
   const med = (data.utmMedium  || "").toLowerCase();
+  // Google uses "ppc", Meta often "paid_social"; all of these are paid clicks.
+  const paid = ["cpc", "ppc", "paid", "paid_social", "paidsocial", "paid-social", "cpm", "display"].includes(med);
 
   if (src.includes("email") || src.includes("newsletter") || med === "email") return "Email";
   if (src.includes("facebook") || src.includes("instagram") || src.includes("meta")) {
-    return med === "cpc" || med === "paid" ? "Meta Ads" : "Organic Social";
+    return paid ? "Meta Ads" : "Organic Social";
   }
-  if (src.includes("google") || src.includes("adwords")) {
-    return med === "cpc" || med === "paid" ? "Google Ads" : "Organic Search";
-  }
-  if (src.includes("tiktok")) return med === "cpc" || med === "paid" ? "TikTok Ads" : "Organic Social";
+  if (src.includes("adwords")) return "Google Ads";
+  if (src.includes("google")) return paid ? "Google Ads" : "Organic Search";
+  if (src.includes("tiktok")) return paid ? "TikTok Ads" : "Organic Social";
   if (src.includes("bing") || src.includes("microsoft")) return "Microsoft Ads";
   if (src.includes("organic") || med === "organic") return "Organic Search";
   if (src.includes("social") || med === "social") return "Organic Social";
@@ -47,7 +50,8 @@ export function channelOf(data: {
   if (ref.includes("facebook.") || ref.includes("instagram.")) return "Organic Social";
   if (ref.includes("t.co") || ref.includes("twitter.")) return "Organic Social";
 
-  return "Direct / Unknown";
+  // A visit we saw, with no campaign or referrer: a real direct visit.
+  return "Direct";
 }
 
 function hasAttribution(data: {
@@ -185,6 +189,15 @@ export async function buildJourneyCredits(input: {
   const ATTRIBUTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000; // 90-day window
   const windowStart = new Date(input.purchaseTime.getTime() - ATTRIBUTION_WINDOW_MS);
 
+  // The webhook and the thank-you page both build the journey, in either
+  // order. A call without a visitor id must not replace one that has it.
+  if (!input.visitorId) {
+    const richer = await anyDb.purchaseTouchpoint
+      ?.findFirst?.({ where: { orderId: input.orderId, visitorId: { not: null } }, select: { id: true } })
+      .catch(() => null);
+    if (richer) return;
+  }
+
   // Delete any previously stored touchpoints for this order (idempotent)
   await anyDb.purchaseTouchpoint?.deleteMany?.({ where: { orderId: input.orderId } }).catch(() => null);
 
@@ -216,10 +229,11 @@ export async function buildJourneyCredits(input: {
     }];
   }
 
-  // No attribution data at all — store single Direct row
+  // No visit history and no attribution on the order: we don't know where the
+  // buyer came from (often a declined cookie banner). That's not "direct".
   if (touchpoints.length === 0) {
     touchpoints = [{
-      id: null, channel: "Direct / Unknown",
+      id: null, channel: NOT_TRACKED_CHANNEL,
       utmSource: null, utmMedium: null, utmCampaign: null,
       fbclid: null, gclid: null,
       touchedAt: new Date(input.purchaseTime.getTime() - 60_000),

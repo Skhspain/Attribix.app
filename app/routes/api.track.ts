@@ -8,7 +8,7 @@ import {
 } from "~/services/serverConversions.server";
 import { normalizeTrackedEvent } from "~/services/trackingNormalizer.server";
 import { touchTrackingHealth } from "~/models/trackingSettings.server";
-import { upsertTouchpoint } from "~/services/touchpoints.server";
+import { buildJourneyCredits, upsertTouchpoint } from "~/services/touchpoints.server";
 
 function corsify(request: Request, res: Response) {
   const origin = request.headers.get("origin");
@@ -1223,6 +1223,27 @@ export async function action({ request }: ActionFunctionArgs) {
           landingPage: safeLandingPage ?? undefined,
         },
       });
+
+      // The orders webhook usually builds the journey without a visitor id; now
+      // that the thank-you page reported the order we know the visitor and its
+      // attribution, so rebuild it (idempotent: replaces the webhook's version).
+      buildJourneyCredits({
+        shop: resolvedShop!,
+        orderId: possibleOrderId,
+        visitorId: visitorId ?? null,
+        revenue: possibleTotal ?? 0,
+        currency: possibleCurrency ?? "USD",
+        purchaseTime: new Date(),
+        fallback: {
+          utmSource: finalUtmSource,
+          utmMedium: finalUtmMedium,
+          utmCampaign: finalUtmCampaign,
+          fbclid,
+          gclid,
+          ttclid,
+          msclkid,
+        },
+      }).catch((e: any) => console.error("[/api/track] buildJourneyCredits error:", e?.message));
 
       // One Purchase per order across this path, the orders webhook and retries.
       // This path has the browser context (fbp/fbc, IP, user agent), so it

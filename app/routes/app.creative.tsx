@@ -170,7 +170,7 @@ function fmtK(n: number) {
   return String(n);
 }
 function pct(n: number) { return n.toFixed(2) + "%"; }
-function roasFmt(r: number) { return Math.round(r * 100) + "%"; }
+function roasFmt(r: number) { return r.toFixed(1) + "×"; }
 function roasColor(r: number) {
   if (r >= 4) return "#10b981";
   if (r >= 2) return "#f59e0b";

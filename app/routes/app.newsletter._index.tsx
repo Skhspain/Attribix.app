@@ -11,7 +11,7 @@ import { useState } from "react";
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -150,7 +150,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     { label: "Create a flow", done: hasWelcomeFlow },
   ];
 
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+  const currency = await getReportingCurrency(shop, admin);
+
   return json({
+    currency,
     totalSubscribers, newSubs30, unsubSubs30, unsubscribedTotal, emailsSent30, openRate30, clickRate30, emailRev30,
     attributedOrders30, delivered30, opens30, clicks30, unsubs30,
     subsDelta: pct(newSubs30, newSubsPrev),
@@ -237,9 +241,9 @@ function Delta({ val, sub }: { val: number | null; sub?: string }) {
   );
 }
 
-function fmt(v: number) {
-  try { return new Intl.NumberFormat("en-US", { style: "currency", currency: "NOK", maximumFractionDigits: 0 }).format(v); }
-  catch { return `NOK ${Math.round(v)}`; }
+function fmt(v: number, currency: string) {
+  try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(v); }
+  catch { return `${currency} ${Math.round(v)}`; }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -291,7 +295,7 @@ export default function NewsletterOverview() {
             { icon: "📧", label: "Emails sent", value: d.emailsSent30.toLocaleString(), delta: d.sentDelta },
             { icon: "📬", label: "Open rate", value: `${d.openRate30.toFixed(1)}%`, delta: d.openDelta },
             { icon: "🖱️", label: "Click rate", value: `${d.clickRate30.toFixed(1)}%`, delta: d.clickDelta },
-            { icon: "💰", label: "Revenue from email", value: fmt(d.emailRev30), delta: d.revDelta },
+            { icon: "💰", label: "Revenue from email", value: fmt(d.emailRev30, d.currency), delta: d.revDelta },
           ].map(card => (
             <Card key={card.label}>
               <BlockStack gap="100">
@@ -331,10 +335,10 @@ export default function NewsletterOverview() {
               {/* Revenue metrics row */}
               <div style={{ borderTop: "1px solid #F0F0F0", paddingTop: 12, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
                 {[
-                  { label: "Revenue", value: fmt(d.emailRev30), delta: d.revDelta },
+                  { label: "Revenue", value: fmt(d.emailRev30, d.currency), delta: d.revDelta },
                   { label: "Attributed orders", value: String(d.attributedOrders30), delta: d.revDelta },
-                  { label: "Average order value", value: d.attributedOrders30 > 0 ? fmt(d.emailRev30 / d.attributedOrders30) : "—", delta: null },
-                  { label: "Revenue / email sent", value: d.emailsSent30 > 0 ? fmt(d.emailRev30 / d.emailsSent30) : "—", delta: null },
+                  { label: "Average order value", value: d.attributedOrders30 > 0 ? fmt(d.emailRev30 / d.attributedOrders30, d.currency) : "—", delta: null },
+                  { label: "Revenue / email sent", value: d.emailsSent30 > 0 ? fmt(d.emailRev30 / d.emailsSent30, d.currency) : "—", delta: null },
                 ].map(m => (
                   <BlockStack key={m.label} gap="025">
                     <Text as="p" variant="bodySm" tone="subdued">{m.label}</Text>
@@ -382,7 +386,7 @@ export default function NewsletterOverview() {
                         <Text as="p" variant="bodySm">{c.sent}</Text>
                         <Text as="p" variant="bodySm">{c.openRate}</Text>
                         <Text as="p" variant="bodySm">{c.clickRate}</Text>
-                        <Text as="p" variant="bodySm" tone="success">{c.revenue > 0 ? fmt(c.revenue) : "—"}</Text>
+                        <Text as="p" variant="bodySm" tone="success">{c.revenue > 0 ? fmt(c.revenue, d.currency) : "—"}</Text>
                       </div>
                     </div>
                   ))}

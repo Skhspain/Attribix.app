@@ -1,23 +1,17 @@
 // app/routes/app.journey.tsx
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
-import { Badge, BlockStack, Button, Card, InlineStack, Page, Text } from "@shopify/polaris";
+import { Badge, Banner, BlockStack, Button, Card, InlineStack, Page, Text } from "@shopify/polaris";
+import { periodStart } from "~/utils/reportPeriod";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
-
-  const since90 = new Date();
-  since90.setDate(since90.getDate() - 90);
-  since90.setHours(0, 0, 0, 0);
-
-  const since30 = new Date();
-  since30.setDate(since30.getDate() - 30);
-  since30.setHours(0, 0, 0, 0);
+  const since30 = periodStart(30);
 
   const rows = await (db as any).purchaseTouchpoint.findMany({
     where: { shop, createdAt: { gte: since30 } },
@@ -40,7 +34,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Normalize channel key
   function normCh(ch: string | null, src: string | null): string {
     const raw = (src || ch || "").toLowerCase().trim();
-    if (!raw || raw.includes("direct") || raw.includes("unknown")) return "direct";
+    // No visit data at all is "unknown", not a verified direct visit. Older
+    // rows were stored as "Direct / Unknown", which is just as ambiguous.
+    if (!raw || raw.includes("unknown") || raw.includes("not tracked")) return "untracked";
+    if (raw === "direct") return "direct";
     if (raw === "ig" || raw.includes("instagram")) return "instagram";
     if (raw.includes("meta") || raw.includes("facebook")) return "meta";
     if (raw.includes("google") || raw.includes("adwords")) return "google";
@@ -55,7 +52,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const totalJourneys = orderMap.size;
   const multiTouchCount = Array.from(orderMap.values()).filter(s => s.length > 1).length;
   const totalRevenue = Array.from(orderMap.values()).reduce((s, steps) => s + Number(steps[steps.length - 1]?.revenue ?? 0), 0);
-  const currency = rows[0]?.currency ?? "NOK";
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+  const currency = await getReportingCurrency(shop, admin);
+  const untrackedJourneys = Array.from(orderMap.values()).filter(
+    (steps) => steps.length === 1 && normCh(steps[0].channel, steps[0].utmSource) === "untracked",
+  ).length;
 
   // Aggregate paths
   const pathMap = new Map<string, { count: number; revenue: number; channels: string[] }>();
@@ -108,10 +109,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     .slice(0, 5);
 
   // Date range label
-  const dateLabel = `${since30.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} – ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
+  const dateLabel = `${since30.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })} – ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}`;
 
   return json({
-    totalJourneys, multiTouchCount, totalRevenue, currency,
+    totalJourneys, multiTouchCount, totalRevenue, currency, untrackedJourneys,
     topPath, topPaths, len1, len2, len3plus,
     recentJourneys, dateLabel,
   });
@@ -121,6 +122,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 const SOURCE_CFG: Record<string, { color: string; label: string; icon: string; textColor?: string }> = {
   direct:    { color: "#4B5563", label: "Direct visit", icon: "↗" },
+  untracked: { color: "#B5B5B5", label: "No touchpoints captured", icon: "?" },
   google:    { color: "#4285F4", label: "Google",       icon: "G" },
   meta:      { color: "#0866FF", label: "Meta",         icon: "M" },
   instagram: { color: "#C13584", label: "Instagram",    icon: "IG" },
@@ -131,7 +133,7 @@ const SOURCE_CFG: Record<string, { color: string; label: string; icon: string; t
   yahoo:     { color: "#6001D2", label: "Yahoo",        icon: "Y" },
 };
 
-function fmt(v: number, currency = "NOK") {
+function fmt(v: number, currency = "USD") {
   try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(v); }
   catch { return `${currency} ${v}`; }
 }
@@ -228,7 +230,7 @@ function DonutChart({ len1, len2, len3plus, total }: { len1: number; len2: numbe
 export default function JourneyPage() {
   const data = useLoaderData<typeof loader>();
   const navigate = useNavigate();
-  const { totalJourneys, multiTouchCount, totalRevenue, currency, topPath, topPaths, len1, len2, len3plus, recentJourneys, dateLabel } = data;
+  const { totalJourneys, multiTouchCount, totalRevenue, currency, topPath, topPaths, len1, len2, len3plus, recentJourneys, dateLabel, untrackedJourneys } = data;
 
   const topPathLabel = topPath
     ? topPath.channels.map((ch: string) => SOURCE_CFG[ch]?.label || ch).join(" → ") + " → Purchase"
@@ -245,7 +247,7 @@ export default function JourneyPage() {
         {/* ── Header ─────────────────────────────────────────────────── */}
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
           <BlockStack gap="100">
-            <Text as="h1" variant="headingXl" fontWeight="bold">Customer Journey</Text>
+            <Text as="h1" variant="headingXl" fontWeight="bold">Customer journeys</Text>
             <Text as="p" variant="bodySm" tone="subdued">
               See the ads, channels and touchpoints that influenced each order before purchase.
             </Text>
@@ -259,42 +261,26 @@ export default function JourneyPage() {
               <span style={{ fontSize: 14 }}>📅</span>
               <span>{dateLabel}</span>
             </div>
-            <Button size="slim" icon={<span style={{ fontSize: 13 }}>⊞</span>}>Filters</Button>
           </InlineStack>
         </div>
 
-        {/* ── Tracking status banner ─────────────────────────────────── */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "14px 18px", borderRadius: 10,
-          background: "#F0FDF4", border: "1px solid #BBF7D0", gap: 16,
-        }}>
-          <InlineStack gap="300" blockAlign="center">
-            <div style={{
-              width: 32, height: 32, borderRadius: "50%", background: "#16A34A",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "white", fontSize: 16, fontWeight: 800, flexShrink: 0,
-            }}>✓</div>
-            <BlockStack gap="025">
-              <InlineStack gap="200" blockAlign="center">
-                <Text as="p" variant="headingSm" fontWeight="semibold">Tracking customer journeys</Text>
-                <Badge tone="success">Active</Badge>
-              </InlineStack>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Journeys are being recorded. The more customers return through different channels, the more insights you'll see here.
-              </Text>
-            </BlockStack>
-          </InlineStack>
-          <Button size="slim" onClick={() => navigate("/app/settings")}>View tracking setup</Button>
-        </div>
+        {/* ── What the journeys include (instead of an always-green "Active") ── */}
+        {totalJourneys > 0 && untrackedJourneys > 0 && (
+          <Banner tone="info" title={`${untrackedJourneys} of ${totalJourneys} orders have no captured touchpoints`}>
+            <p>
+              Attribix didn't see these buyers' visits — usually because they declined cookies, or bought on a different device than they browsed on.
+              They're shown as "No touchpoints captured", not as direct visits. The Orders page may still show a source for some of them, taken from the order itself.
+            </p>
+          </Banner>
+        )}
 
         {/* ── Summary cards ─────────────────────────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
           {/* Tracked journeys */}
           <Card>
             <BlockStack gap="100">
               <InlineStack align="space-between" blockAlign="start">
-                <Text as="p" variant="bodySm" tone="subdued">Tracked journeys</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Orders (last 30 days)</Text>
                 <span style={{ fontSize: 22 }}>👥</span>
               </InlineStack>
               <Text as="p" variant="heading2xl" fontWeight="bold">{totalJourneys}</Text>

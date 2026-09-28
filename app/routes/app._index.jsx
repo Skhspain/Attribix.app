@@ -419,6 +419,7 @@ function DeltaBadge({ delta, invert = false }) {
 
 const SOURCE_CFG = {
   direct:    { color: "#6B7280", label: "Direct",    icon: "↗" },
+  untracked: { color: "#B5B5B5", label: "Not tracked", icon: "?" },
   google:    { color: "#4285F4", label: "Google",    icon: "G" },
   meta:      { color: "#0866FF", label: "Meta",      icon: "M" },
   instagram: { color: "#C13584", label: "Instagram", icon: "IG" },
@@ -596,7 +597,8 @@ function ToolkitGrid({ data, navigate }) {
 
 function normalizeJourneyChannel(channel, utmSource) {
   const raw = (utmSource || channel || "").toLowerCase().trim();
-  if (!raw || raw.includes("direct") || raw.includes("unknown")) return "direct";
+  if (!raw || raw.includes("unknown") || raw.includes("not tracked")) return "untracked";
+  if (raw === "direct") return "direct";
   if (raw === "ig" || raw.includes("instagram")) return "instagram";
   if (raw.includes("meta") || raw.includes("facebook")) return "meta";
   if (raw.includes("google") || raw.includes("adwords")) return "google";

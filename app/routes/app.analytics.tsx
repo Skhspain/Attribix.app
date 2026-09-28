@@ -18,6 +18,7 @@ import {
   Text,
 } from "@shopify/polaris";
 import db from "../db.server";
+import { periodStart } from "~/utils/reportPeriod";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
@@ -133,38 +134,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .catch(() => null),
   ]);
 
-  // Get store currency from Shopify (authoritative) — trackingSettings may be unset or stale
-  let storeCurrency = trackingSettings?.storeCurrency ?? "";
-  if (!storeCurrency || storeCurrency === "USD") {
-    try {
-      const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
-      const shopData = await shopRes.json();
-      storeCurrency = shopData?.data?.shop?.currencyCode || storeCurrency || "USD";
-    } catch {}
-  }
-
-  // Fetch Meta ad account currency and exchange rate (same as meta-ads page does)
-  let metaExchangeRate = 1;
-  const hasMetaConn = !!(metaConn?.accessToken && metaConn.accessToken !== "__PENDING__" && metaConn?.adAccountId);
-  if (hasMetaConn) {
-    try {
-      const res = await fetch(
-        `https://graph.facebook.com/v20.0/${metaConn!.adAccountId}?fields=currency&access_token=${metaConn!.accessToken}`
-      );
-      const acct = await res.json();
-      if (acct?.currency && !acct.error && acct.currency !== storeCurrency) {
-        const { convertCurrency } = await import("~/services/currency.server");
-        metaExchangeRate = await convertCurrency(1, acct.currency, storeCurrency).catch(() => 1);
-      }
-    } catch {}
-  }
+  // Shared with every report: the shop currency, and ad-account rates into it.
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+  const { adAccountRates } = await import("~/services/adCurrency.server");
+  const storeCurrency = await getReportingCurrency(shop, admin);
+  const rates = await adAccountRates(shop, storeCurrency);
+  const metaExchangeRate = rates.meta.rate;
+  void metaConn;
+  void trackingSettings;
 
   // Apply exchange rate to meta spend & campaign values (stored in ad account currency)
   const convertedAdSpend30d = (adSpend30d ?? []).map((r: any) => ({
     ...r,
     spend: String(r.platform).toLowerCase().includes("meta")
       ? Number(r.spend || 0) * metaExchangeRate
-      : Number(r.spend || 0),
+      : String(r.platform).toLowerCase().includes("google")
+        ? Number(r.spend || 0) * rates.google.rate
+        : Number(r.spend || 0),
   }));
   const convertedMetaCampaigns30d = (metaCampaigns30d ?? []).map((r: any) => ({
     ...r,
@@ -200,7 +186,7 @@ function safeNum(v: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function fmt(value: number, currency = "NOK") {
+function fmt(value: number, currency = "USD") {
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -212,7 +198,7 @@ function fmt(value: number, currency = "NOK") {
   }
 }
 
-function fmtDecimal(value: number, currency = "NOK") {
+function fmtDecimal(value: number, currency = "USD") {
   try {
     return new Intl.NumberFormat("en-US", {
       style: "currency",
@@ -297,15 +283,11 @@ export default function AppAnalytics() {
   const [window, setWindow] = useState<"7" | "14" | "30">("7");
   const locationBackfill = useFetcher<{ ok: boolean; updated: number; total: number; message?: string }>();
 
-  const currency = useMemo(() => detectCurrency(data.purchases30d, data.storeCurrency), [data.purchases30d, data.storeCurrency]);
+  const currency = data.storeCurrency;
 
   const windowDays = Number(window);
-  const windowCutoff = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - (windowDays - 1));
-    d.setHours(0, 0, 0, 0);
-    return d;
-  }, [windowDays]);
+  // Same UTC calendar days as ad insights and every other report.
+  const windowCutoff = useMemo(() => periodStart(windowDays), [windowDays]);
 
   // Filter purchases to selected window
   const purchases = useMemo(
@@ -365,7 +347,7 @@ export default function AppAnalytics() {
     return Array.from(map.values())
       .sort((a, b) => b.spend - a.spend)
       .map((c) => {
-        const roas = c.spend > 0 ? Math.round((c.value / c.spend) * 100) + "%" : "—";
+        const roas = c.spend > 0 ? (c.value / c.spend).toFixed(1) + "×" : "—";
         const cpa = c.purchases > 0 ? fmt(c.spend / c.purchases, currency) : "—";
         return [
           c.name,
@@ -395,7 +377,7 @@ export default function AppAnalytics() {
     return Array.from(map.values())
       .sort((a, b) => b.spend - a.spend)
       .map((a) => {
-        const roas = a.spend > 0 ? Math.round((a.value / a.spend) * 100) + "%" : "—";
+        const roas = a.spend > 0 ? (a.value / a.spend).toFixed(1) + "×" : "—";
         const ctr = a.impressions > 0 ? ((a.clicks / a.impressions) * 100).toFixed(2) + "%" : "—";
         const cpc = a.clicks > 0 ? fmtDecimal(a.spend / a.clicks, currency) : "—";
         const cpa = a.purchases > 0 ? fmtDecimal(a.spend / a.purchases, currency) : "—";
@@ -503,7 +485,7 @@ export default function AppAnalytics() {
       const rev = revenueMap.get(plat) || 0;
       const spend = spendMap.get(plat) || 0;
       const orders = ordersMap.get(plat) || 0;
-      const roas = spend > 0 ? Math.round((rev / spend) * 100) + "%" : "—";
+      const roas = spend > 0 ? (rev / spend).toFixed(1) + "×" : "—";
       const cpa = orders > 0 && spend > 0 ? fmtDecimal(spend / orders, currency) : "—";
       return [
         <Badge key={plat} tone={sourceTone(plat)}>{plat}</Badge>,
@@ -726,20 +708,20 @@ export default function AppAnalytics() {
             <InlineStack align="space-between" blockAlign="center">
               <BlockStack gap="050">
                 <Text as="h2" variant="headingMd">
-                  Revenue vs Spend{blendedRoas ? ` — ROAS: ${Math.round(blendedRoas * 100)}%` : ""} — last {window} days
+                  Revenue vs spend{blendedRoas ? ` — blended ROAS ${blendedRoas.toFixed(1)}×` : ""} — last {window} days
                 </Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Green/red = revenue on days with ad spend (ROAS positive/negative). Indigo = revenue with no ad spend that day (organic/direct orders). Revenue and spend bars share the same scale.
+                  Green = tracked revenue at or above that day's ad spend; red = below it. Indigo = revenue on days with no ad spend. Bars share one scale. Revenue minus spend is not profit — product costs aren't included.
                 </Text>
               </BlockStack>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 2, background: "linear-gradient(135deg, #4ade80, #16a34a)" }} />
-                  <Text as="span" variant="bodySm" tone="subdued">Revenue (profitable)</Text>
+                  <Text as="span" variant="bodySm" tone="subdued">Revenue at or above spend</Text>
                 </InlineStack>
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 2, background: "linear-gradient(135deg, #f87171, #dc2626)" }} />
-                  <Text as="span" variant="bodySm" tone="subdued">Revenue (loss)</Text>
+                  <Text as="span" variant="bodySm" tone="subdued">Revenue below spend</Text>
                 </InlineStack>
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 2, background: "linear-gradient(135deg, #818cf8, #6366f1)" }} />
@@ -761,7 +743,7 @@ export default function AppAnalytics() {
           {[
             { label: `Revenue (${window}d)`, value: fmtDecimal(totalRevenue, currency), sub: `${totalOrders} attributed orders` },
             { label: `Ad Spend (${window}d)`, value: fmtDecimal(totalSpend, currency), sub: hasSpend ? `Meta ${fmtDecimal(metaSpend, currency)} · Google ${fmtDecimal(googleSpend, currency)}` : "Sync spend in Integrations" },
-            { label: `Blended ROAS (${window}d)`, value: blendedRoas ? Math.round(blendedRoas * 100) + "%" : "—", sub: hasSpend ? "Revenue ÷ total spend" : "No spend data", highlight: blendedRoas !== null && blendedRoas >= 2 },
+            { label: `Blended ROAS (${window}d)`, value: blendedRoas ? blendedRoas.toFixed(1) + "×" : "—", sub: hasSpend ? "Revenue ÷ total spend" : "No spend data", highlight: blendedRoas !== null && blendedRoas >= 2 },
             { label: "Avg Order Value", value: aov > 0 ? fmtDecimal(aov, currency) : "—", sub: "Attributed purchases" },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
@@ -789,7 +771,7 @@ export default function AppAnalytics() {
                   { label: "Meta spend", value: fmtDecimal(metaAdsKpis.spend, currency) },
                   { label: "Meta purchases (reported)", value: String(metaAdsKpis.purchases), sub: "Counted by Meta pixel" },
                   { label: "Meta purchase value", value: fmtDecimal(metaAdsKpis.value, currency) },
-                  { label: "Meta ROAS", value: metaAdsKpis.roas ? Math.round(metaAdsKpis.roas * 100) + "%" : "—", sub: "Meta value ÷ Meta spend" },
+                  { label: "Meta-reported ROAS", value: metaAdsKpis.roas ? metaAdsKpis.roas.toFixed(1) + "×" : "—", sub: "Meta purchase value ÷ Meta spend" },
                 ].map((kpi) => (
                   <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
                     <Box background="bg-surface-secondary" padding="400" borderRadius="200">
@@ -852,7 +834,7 @@ export default function AppAnalytics() {
                         </InlineStack>
                         <Text as="p" variant="headingMd">{topCampaign.name}</Text>
                         <InlineStack gap="400">
-                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? Math.round((topCampaign.value / topCampaign.spend) * 100) + "%" : "—"}</Text></Text>
+                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topCampaign.spend > 0 ? (topCampaign.value / topCampaign.spend).toFixed(1) + "×" : "—"}</Text></Text>
                           <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topCampaign.spend, currency)}</Text>
                           <Text as="p" variant="bodySm" tone="subdued">Value: {fmtDecimal(topCampaign.value, currency)}</Text>
                         </InlineStack>
@@ -878,7 +860,7 @@ export default function AppAnalytics() {
                         </InlineStack>
                         <Text as="p" variant="headingMd">{topAd.name}</Text>
                         <InlineStack gap="400">
-                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? Math.round((topAd.value / topAd.spend) * 100) + "%" : "—"}</Text></Text>
+                          <Text as="p" variant="bodySm" tone="subdued">ROAS: <Text as="span" fontWeight="bold">{topAd.spend > 0 ? (topAd.value / topAd.spend).toFixed(1) + "×" : "—"}</Text></Text>
                           <Text as="p" variant="bodySm" tone="subdued">CTR: {topAd.impressions > 0 ? ((topAd.clicks / topAd.impressions) * 100).toFixed(2) + "%" : "—"}</Text>
                           <Text as="p" variant="bodySm" tone="subdued">Spend: {fmtDecimal(topAd.spend, currency)}</Text>
                         </InlineStack>
@@ -966,7 +948,7 @@ export default function AppAnalytics() {
                   <Box background="bg-surface-secondary" padding="400" borderRadius="200">
                     <BlockStack gap="100">
                       <Text as="p" variant="bodySm" tone="subdued">Google ROAS (attributed)</Text>
-                      <Text as="p" variant="headingXl">{googleSpend > 0 ? Math.round((purchases.filter((p: any) => normalizeSource(p) === "google").reduce((s: number, p: any) => s + safeNum(p.totalValue), 0) / googleSpend) * 100) + "%" : "—"}</Text>
+                      <Text as="p" variant="headingXl">{googleSpend > 0 ? (purchases.filter((p: any) => normalizeSource(p) === "google").reduce((s: number, p: any) => s + safeNum(p.totalValue), 0) / googleSpend).toFixed(1) + "×" : "—"}</Text>
                     </BlockStack>
                   </Box>
                 </Grid.Cell>
@@ -1053,7 +1035,7 @@ export default function AppAnalytics() {
                 <BlockStack gap="400">
                   {sourceBreakdown.map(({ source, orders, revenue, share }) => {
                     const spend = spendMap.get(source) || 0;
-                    const roas = spend > 0 ? Math.round((revenue / spend) * 100) + "%" : null;
+                    const roas = spend > 0 ? (revenue / spend).toFixed(1) + "×" : null;
                     return (
                       <div key={source} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "0 24px", alignItems: "center" }}>
                         {/* Left: % + badge + orders */}

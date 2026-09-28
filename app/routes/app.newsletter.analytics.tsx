@@ -13,7 +13,7 @@ import {
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -153,7 +153,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     .sort((a, b) => b.openRate - a.openRate)
     .slice(0, 5);
 
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+  const currency = await getReportingCurrency(shop, admin);
+
   return json({
+    currency,
     totalSubscribers, newSubs30, unsubSubs30,
     emailsSent30, openRate30, clickRate30, unsubRate30,
     emailRevenue30, emailOrders30,
@@ -267,7 +271,7 @@ function Delta({ delta }: { delta: number | null }) {
   );
 }
 
-function fmt(v: number, currency = "NOK") {
+function fmt(v: number, currency: string) {
   try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(v); }
   catch { return `${currency} ${Math.round(v)}`; }
 }
@@ -277,7 +281,7 @@ function fmt(v: number, currency = "NOK") {
 export default function NewsletterAnalytics() {
   const d = useLoaderData<typeof loader>();
   const navigate = useNavigate();
-  const currency = "NOK";
+  const currency = d.currency;
   const [activeTab, setActiveTab] = useState("Overview");
 
   const TABS = ["Overview", "Campaigns", "Subscribers", "Engagement", "Revenue", "Forms", "Flows"];
@@ -370,7 +374,7 @@ export default function NewsletterAnalytics() {
           { label: "Revenue", value: fmt(d.emailRevenue30, currency), delta: d.revDelta },
         ].map((card) => (
           <Card key={card.label}>
-            <BlockStack gap="075">
+            <BlockStack gap="050">
               <Text as="p" variant="bodySm" tone="subdued">{card.label}</Text>
               <Text as="p" variant="headingLg" fontWeight="bold">{card.value}</Text>
               {card.delta !== null && (
@@ -401,7 +405,7 @@ export default function NewsletterAnalytics() {
             <div style={{ position: "relative" }}>
               <div style={{ display: "flex", gap: 0, height: 130 }}>
                 <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", paddingRight: 8, width: 60, flexShrink: 0 }}>
-                  {[fmt(d.emailRevenue30, currency), fmt(d.emailRevenue30 * 0.6, currency), fmt(d.emailRevenue30 * 0.3, currency), "NOK 0"].map((l, i) => (
+                  {(() => { const top = Math.max(0, ...(d.dailyRevArr ?? [])); return [top, top * 0.66, top * 0.33, 0].map((v) => fmt(v, currency)); })().map((l, i) => (
                     <Text key={i} as="p" variant="bodySm" tone="subdued" alignment="end">{l}</Text>
                   ))}
                 </div>
