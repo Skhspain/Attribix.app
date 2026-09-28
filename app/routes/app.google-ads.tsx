@@ -98,7 +98,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       console.error("[google-ads] live metrics fetch failed:", e);
       const msg = String(e?.message ?? e);
       liveError = /only approved for use with test accounts/i.test(msg)
-        ? "Attribix's Google Ads API access is still limited to test accounts, so this ad account can't be read yet."
+        ? "Google hasn't yet approved Attribix to read live ad accounts. You don't need to do anything — data will appear once it's approved."
         : msg.split("\n")[0].slice(0, 300);
     }
   }

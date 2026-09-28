@@ -8,10 +8,10 @@ import { googleAdsSearchStream, syncGoogleCampaignInsights } from "~/services/go
 import { getValidGoogleToken } from "~/services/tokenRefresh.server";
 
 /** Short, merchant-readable reason for a failed sync. */
-function describeGoogleError(err: unknown): string {
+export function describeGoogleError(err: unknown): string {
   const msg = String((err as any)?.message ?? err ?? "Unknown error");
   if (/only approved for use with test accounts/i.test(msg)) {
-    return "Attribix's Google Ads API access is still limited to test accounts, so real ad accounts can't be read yet.";
+    return "Google hasn't yet approved Attribix to read live ad accounts. You don't need to do anything — spend will sync automatically once it's approved.";
   }
   if (/PERMISSION_DENIED|USER_PERMISSION_DENIED|\(403\)/i.test(msg)) return "Google denied access to this ad account. Check that the connected Google user can view it.";
   if (/invalid_grant|UNAUTHENTICATED|\(401\)/i.test(msg)) return "The Google connection has expired. Reconnect Google Ads.";

@@ -22,6 +22,11 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, error: "No Google Ads account selected. Go to Integrations → Google and complete the setup by selecting your ad account." }, { status: 400 });
   }
 
+  // Record the attempt and its outcome like the hourly sync does, so the
+  // status shown in the app (Setup, Overview, Integrations) stays current.
+  const anyDb = db as any;
+  await anyDb.googleConnection.update({ where: { shop }, data: { lastSyncAttemptAt: new Date() } }).catch(() => null);
+
   // Auto-refresh expired token
   const tokenResult = await getValidGoogleToken(shop);
   if (!tokenResult.ok) {
@@ -35,8 +40,12 @@ export async function action({ request }: ActionFunctionArgs) {
       customerId: conn.adCustomerId,
     });
 
+    await anyDb.googleConnection.update({ where: { shop }, data: { lastSyncedAt: new Date(), lastSyncError: null } }).catch(() => null);
     return json({ ok: true, result: out });
   } catch (e: any) {
-    return json({ ok: false, error: e?.message || "Sync failed" }, { status: 500 });
+    const { describeGoogleError } = await import("~/services/googleSync.server");
+    const reason = describeGoogleError(e);
+    await anyDb.googleConnection.update({ where: { shop }, data: { lastSyncError: reason } }).catch(() => null);
+    return json({ ok: false, error: reason }, { status: 500 });
   }
 }
