@@ -131,7 +131,7 @@ export default function Index() {
           <div className="feature">
             <div className="icon">🎯</div>
             <h3>Accurate attribution</h3>
-            <p>Server-side tracking via Meta CAPI and Google offline conversions for reliable data.</p>
+            <p>Server-side tracking via Meta CAPI and Google Ads spend sync for reliable data.</p>
           </div>
           <div className="feature">
             <div className="icon">⚡</div>

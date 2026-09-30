@@ -284,7 +284,7 @@ function GoogleIntegrationsInner({ data }) {
   return (
     <Page
       title="Google Ads"
-      subtitle="Connect Google Ads to sync daily spend and upload offline conversions."
+      subtitle="Connect Google Ads to sync daily spend and campaign results."
       backAction={{ content: "Integrations", url: "/app/ads" }}
     >
       <Layout>
@@ -459,10 +459,9 @@ function GoogleIntegrationsInner({ data }) {
           <Layout.Section>
             <Banner tone="info" title="How it works">
               <Text as="p">
-                After connecting, Attribix will pull daily spend from Google Ads and report ROAS on
-                your Attribution dashboard. When an order is attributed to a Google click (gclid),
-                an offline conversion is automatically uploaded to Google Ads — improving your
-                Smart Bidding signals without relying on browser pixels.
+                After connecting, Attribix pulls daily spend and campaign results from Google Ads and
+                compares them with the orders it tracked from Google clicks. It doesn't send
+                conversions to Google Ads: keep your existing Google conversion tracking in place.
               </Text>
             </Banner>
           </Layout.Section>

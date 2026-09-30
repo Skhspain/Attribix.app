@@ -156,11 +156,11 @@ export default function SetupGuide() {
           <StepHeader number={2} title="Connect Google Ads" done={data.steps.google.done} />
           <StepDetail step={data.steps.google} />
           <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 4px", lineHeight: 1.6 }}>
-            Connect your Google Ads account to sync daily spend, view campaign-level ROAS, and automatically upload offline conversions — improving Smart Bidding signals without relying on browser pixels.
+            Connect your Google Ads account to sync daily spend and view campaign-level results. Attribix doesn't send conversions to Google Ads, so keep your existing Google conversion tracking in place.
           </p>
-          <FeatureList items={["Sync Google Ads spend daily", "Upload offline conversions", "ROAS per campaign", "Works with P-Max & Search"]} />
+          <FeatureList items={["Sync Google Ads spend daily", "ROAS per campaign", "Works with P-Max & Search"]} />
           <div style={{ background: "#FFF9E6", border: "1px solid #FFE4A0", borderRadius: 8, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#7C5C00" }}>
-            <strong>You'll need:</strong> A Google Ads account with manager access. Make sure Enhanced Conversions is enabled in your Google Ads settings.
+            <strong>You'll need:</strong> A Google Ads account with manager access.
           </div>
           <button
             onClick={() => navigate("/app/integrations/google")}
@@ -198,14 +198,13 @@ export default function SetupGuide() {
           <StepHeader number={4} title="Verify conversion events" done={data.steps.conversions.done} />
           <StepDetail step={data.steps.conversions} />
           <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 12px", lineHeight: 1.6 }}>
-            Once all integrations are set up, verify that conversion events are being sent correctly to Meta and Google Ads. Your attribution dashboard will show the first events within a few minutes of a purchase.
+            Once all integrations are set up, verify that purchase events are reaching Meta and that orders appear in Attribix. Your attribution dashboard will show the first events within a few minutes of a purchase.
           </p>
           <div style={{ background: "#F6F6F7", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#202223", marginBottom: 8 }}>How to verify</div>
             <ol style={{ margin: 0, padding: "0 0 0 18px", fontSize: 13, color: "#6D7175", lineHeight: 1.8 }}>
               <li>Place a real or test order in your store</li>
               <li>Check <strong>Meta Events Manager</strong> → test events should appear within 5 min</li>
-              <li>Check <strong>Google Ads → Conversions</strong> → offline conversion should be uploaded within 24h</li>
               <li>Your Attribix analytics page will show the matched conversion immediately</li>
             </ol>
           </div>

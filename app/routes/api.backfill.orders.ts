@@ -93,6 +93,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const form = await request.formData().catch(() => new FormData());
   const maxPages = Math.min(parseInt((form.get("maxPages") as string) || "4", 10), 40);
+  // Only add orders the webhook missed; leave existing rows (and their
+  // attribution) exactly as they are.
+  const onlyMissing = form.get("onlyMissing") === "1";
 
   // ── 0. Dedup pass: merge GID-format rows into numeric-ID rows ────────────
   // The webhook used to store admin_graphql_api_id ("gid://shopify/Order/123")
@@ -182,6 +185,11 @@ export async function action({ request }: ActionFunctionArgs) {
         const existing = await (db.purchase as any).findFirst({
           where: { OR: [{ orderId: numericId }, { orderId: gid }] },
         });
+
+        if (existing && onlyMissing) {
+          skipped++;
+          continue;
+        }
 
         if (existing) {
           // Patch: only fill in fields that are currently empty

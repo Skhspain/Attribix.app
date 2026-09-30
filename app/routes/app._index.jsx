@@ -4,7 +4,7 @@ import { channelFromCampaign, orderSource, hasCampaign, visitSeen, bucketRank } 
 import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useMemo, useEffect } from "react";
 import {
-  Badge, BlockStack, Button, Card, DataTable,
+  Badge, Banner, BlockStack, Button, Card, DataTable,
   Grid, InlineGrid, InlineStack, Layout, Page, Text, Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
@@ -135,6 +135,17 @@ export async function loader({ request }) {
     const next = new Date(d); next.setDate(next.getDate() + 1);
     return purchases30.filter(p => { const t = new Date(p.createdAt); return t >= d && t < next; }).length;
   });
+
+  // Shopify's own order count for the same period, so a missed webhook shows
+  // up as "35 of 41 Shopify orders" instead of silently lower numbers.
+  const shopifyOrders30 = await Promise.race([
+    admin.graphql(`#graphql
+      query OrdersCount($q: String!) { ordersCount(query: $q) { count precision } }`,
+      { variables: { q: `created_at:>='${since30.toISOString()}'` } })
+      .then((r) => r.json())
+      .then((j) => (typeof j?.data?.ordersCount?.count === "number" ? j.data.ordersCount.count : null)),
+    new Promise((r) => setTimeout(() => r(null), 3000)),
+  ]).catch(() => null);
 
   const storeCurrency = await getReportingCurrency(shop, admin);
   const rates = await adAccountRates(shop, storeCurrency);
@@ -301,7 +312,7 @@ export async function loader({ request }) {
 
   return json({
     shop,
-    rev30, rev7, orders30, orders7, aov,
+    rev30, rev7, orders30, orders7, aov, shopifyOrders30,
     rev30Delta, orders30Delta,
     dailyRevArr, dailyOrdersArr,
     periodDays: PERIOD_DAYS,
@@ -720,6 +731,7 @@ export default function AppIndex() {
   const navigate = useNavigate();
   const currency = data.storeCurrency || "NOK";
   const pixelEnsureFetcher = useFetcher();
+  const importFetcher = useFetcher();
 
   useEffect(() => {
     pixelEnsureFetcher.submit(
@@ -733,7 +745,7 @@ export default function AppIndex() {
   if (data.isNewInstall) {
     const steps = [
       { icon: "📘", title: "Connect Meta Ads", body: "Sync ad spend, enable server-side Conversions API, and see ROAS.", url: "/app/integrations/meta?from=onboarding", cta: "Connect Meta", done: data.metaConnected },
-      { icon: "📈", title: "Connect Google Ads", body: "Sync Google campaign spend and upload offline conversions.", url: "/app/integrations/google?from=onboarding", cta: "Connect Google", done: data.googleConnected },
+      { icon: "📈", title: "Connect Google Ads", body: "Sync Google campaign spend and results.", url: "/app/integrations/google?from=onboarding", cta: "Connect Google", done: data.googleConnected },
       { icon: "🔌", title: "Install Tracking Pixel", body: "Captures UTM parameters and click IDs so orders can be matched to their source.", url: "/app/settings/tracking", cta: "View pixel settings", done: data.pixelStatus === "healthy" },
     ];
     const completedCount = steps.filter(s => s.done).length;
@@ -784,6 +796,7 @@ export default function AppIndex() {
   const metaRoas = data.metaKpis.spend > 0 ? data.metaKpis.value / data.metaKpis.spend : null;
   const aov = data.aov || 0;
   const t = data.tracking;
+  const missingOrders = data.shopifyOrders30 !== null ? Math.max(0, data.shopifyOrders30 - data.orders30) : 0;
 
   const trackingOk = data.pixelStatus === "healthy";
   const googleFailing = data.googleConnected && !!data.freshness?.googleSyncError;
@@ -904,12 +917,33 @@ export default function AppIndex() {
           </BlockStack>
         </Card>
 
+        {/* ── Orders Shopify has that Attribix never received ────────── */}
+        {missingOrders > 0 && (
+          <Banner
+            tone="warning"
+            title={`Attribix has ${data.orders30} of ${data.shopifyOrders30} Shopify orders from the ${periodText.toLowerCase()}`}
+            action={{
+              content: importFetcher.state !== "idle" ? "Importing…" : `Import ${missingOrders} missing order${missingOrders === 1 ? "" : "s"}`,
+              loading: importFetcher.state !== "idle",
+              onAction: () => importFetcher.submit({ onlyMissing: "1", maxPages: "8" }, { method: "post", action: "/api/backfill/orders" }),
+            }}
+          >
+            <p>
+              {importFetcher.data?.ok
+                ? `Imported ${importFetcher.data.created} order${importFetcher.data.created === 1 ? "" : "s"}. Reload the page to see updated figures.`
+                : importFetcher.data && !importFetcher.data.ok
+                  ? `Import failed: ${importFetcher.data.error || "unknown error"}`
+                  : "Revenue, order counts and ROAS below leave these orders out until they're imported. Imported orders get their source from Shopify's own visit data where it has any."}
+            </p>
+          </Banner>
+        )}
+
         {/* ── KPI cards (all the same period) ─────────────────────── */}
         <Grid>
           <Grid.Cell columnSpan={{ xs: 3, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Revenue tracked · {days} days</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Revenue · {days} days</Text>
                 <InlineStack align="space-between" blockAlign="end" wrap={false}>
                   <Text as="p" variant="heading2xl">{fmt(data.rev30, currency)}</Text>
                   {data.dailyRevArr?.some(v => v > 0) && <Sparkline values={data.dailyRevArr} color="#008060" />}
@@ -925,11 +959,16 @@ export default function AppIndex() {
           <Grid.Cell columnSpan={{ xs: 3, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Orders tracked · {days} days</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Orders · {days} days</Text>
                 <InlineStack align="space-between" blockAlign="end" wrap={false}>
                   <Text as="p" variant="heading2xl">{data.orders30}</Text>
                   {data.dailyOrdersArr?.some(v => v > 0) && <Sparkline values={data.dailyOrdersArr} color="#3B82F6" />}
                 </InlineStack>
+                {data.shopifyOrders30 !== null && (
+                  <Text as="p" variant="bodySm" tone={missingOrders > 0 ? "caution" : "subdued"}>
+                    {missingOrders > 0 ? `${data.orders30} of ${data.shopifyOrders30} Shopify orders received` : "Matches Shopify's order count"}
+                  </Text>
+                )}
                 <InlineStack gap="150" blockAlign="center" wrap={false}>
                   <DeltaBadge delta={data.orders30Delta} />
                   <Text as="p" variant="bodySm" tone="subdued">vs previous {days} days</Text>
