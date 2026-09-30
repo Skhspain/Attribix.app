@@ -20,6 +20,7 @@ import {
   Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
+import { channelFromCampaign, orderSource, bucketLabel } from "~/utils/orderSource";
 import db from "~/db.server";
 
 export async function loader({ request }) {
@@ -45,6 +46,8 @@ export async function loader({ request }) {
         utmCampaign: true,
         fbclid: true,
         gclid: true,
+        ttclid: true,
+        msclkid: true,
         landingPage: true,
         referrer: true,
         createdAt: true,
@@ -104,34 +107,9 @@ function formatDate(value) {
   }
 }
 
-function normalizeSource(purchase) {
-  const s = (purchase?.utmSource || "").toLowerCase();
-  if (s) {
-    if (s.includes("meta") || s.includes("facebook") || s.includes("instagram")) return "meta";
-    if (s.includes("google") || s.includes("adwords")) return "google";
-    if (s.includes("tiktok")) return "tiktok";
-    if (s.includes("email") || s.includes("klaviyo") || s.includes("mailchimp")) return "email";
-    if (s.includes("sms")) return "sms";
-    return s;
-  }
-  if (purchase?.fbclid) return "meta";
-  if (purchase?.gclid) return "google";
-  return null;
-}
-
-// Every order lands in exactly one bucket. Orders without a campaign are
-// split by whether we saw the visit at all, so missing data never reads as
-// direct traffic (same rules as Overview).
-const BUCKET_LABELS = { direct: "Direct (no referrer)", referral: "Referral", untracked: "Not tracked (visit unseen)" };
-function sourceBucket(purchase) {
-  const s = normalizeSource(purchase);
-  if (s) return s;
-  if (!purchase?.tracked) return "untracked";
-  return purchase?.referrer ? "referral" : "direct";
-}
-function bucketLabel(bucket) {
-  return BUCKET_LABELS[bucket] || bucket.charAt(0).toUpperCase() + bucket.slice(1);
-}
+// Channel, direct/referral or not tracked: shared with Overview.
+const normalizeSource = channelFromCampaign;
+const sourceBucket = orderSource;
 
 function sourceBadgeTone(source) {
   if (!source) return "new";

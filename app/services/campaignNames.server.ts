@@ -4,6 +4,7 @@
 // synced Meta insights. utmCampaign itself stays the id (matching uses it).
 
 import db from "~/db.server";
+import { visitSeen } from "~/utils/orderSource";
 
 const META_ID = /^\d{12,20}$/;
 
@@ -34,6 +35,6 @@ export async function labelOrders<T extends Record<string, any>>(shop: string, o
   return orders.map((o) => ({
     ...o,
     campaignLabel: o.utmCampaign ? names.get(String(o.utmCampaign).trim()) ?? o.utmCampaign : null,
-    tracked: !!(o.visitorId || o.sessionId || o.landingPage || o.referrer || o.utmSource || o.fbclid || o.gclid),
+    tracked: visitSeen(o),
   }));
 }

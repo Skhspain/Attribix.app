@@ -1,5 +1,6 @@
 // app/routes/app._index.jsx
 import { json } from "@remix-run/node";
+import { channelFromCampaign, orderSource, hasCampaign, visitSeen, bucketRank } from "~/utils/orderSource";
 import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useMemo, useEffect } from "react";
 import {
@@ -185,35 +186,8 @@ export async function loader({ request }) {
   const adList = Array.from(adMap.values()).filter(a => a.spend > 0);
   const bestAd = adList.length ? adList.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0] : null;
 
-  function normalizeSource(p) {
-    const s = String(p.utmSource || "").toLowerCase();
-    if (s === "ig" || s === "instagram") return "instagram";
-    if (s.includes("meta") || s.includes("facebook")) return "meta";
-    if (s.includes("google") || s.includes("adwords")) return "google";
-    if (s.includes("tiktok")) return "tiktok";
-    if (s.includes("snapchat")) return "snapchat";
-    if (s.includes("email") || s.includes("klaviyo") || s.includes("mailchimp")) return "email";
-    if (s.includes("bing") || s.includes("microsoft")) return "bing";
-    if (s.includes("yahoo")) return "yahoo";
-    if (s) return s;
-    if (p.fbclid) return "meta";
-    if (p.gclid) return "google";
-    if (p.ttclid) return "tiktok";
-    if (p.msclkid) return "bing";
-    return "direct";
-  }
-
-  // Orders are split three ways so missing data is never shown as traffic:
-  // "untracked" = we never saw the buyer's visit; "direct" = we saw the visit
-  // and it had no campaign, click ID or referrer; "referral" = a referrer but
-  // no campaign; everything else is attributed to a channel.
-  const hasCampaign = (p) => !!(p.utmSource || p.fbclid || p.gclid || p.ttclid || p.msclkid);
-  const visitSeen = (p) => !!(p.visitorId || p.sessionId || p.landingPage || p.referrer) || hasCampaign(p);
-  function orderSource(p) {
-    if (!visitSeen(p)) return "untracked";
-    if (hasCampaign(p)) return normalizeSource(p);
-    return p.referrer ? "referral" : "direct";
-  }
+  // Overview, Orders and the other reports classify orders the same way.
+  const normalizeSource = (p) => channelFromCampaign(p) ?? "direct";
 
   const sourceMap = new Map();
   for (const p of purchases30) {
@@ -255,9 +229,8 @@ export async function loader({ request }) {
 
   // Attributed channels first (by revenue), then direct/referral, with
   // untracked last so it can't read as the top "source".
-  const sourceRank = (src) => (src === "untracked" ? 2 : src === "direct" || src === "referral" ? 1 : 0);
   const sourceSummary = Array.from(sourceMap.entries())
-    .sort((a, b) => sourceRank(a[0]) - sourceRank(b[0]) || b[1].revenue - a[1].revenue)
+    .sort((a, b) => bucketRank(a[0]) - bucketRank(b[0]) || b[1].revenue - a[1].revenue)
     .map(([src, r]) => ({
       source: src,
       orders: r.orders,
