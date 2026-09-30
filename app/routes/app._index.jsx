@@ -203,9 +203,21 @@ export async function loader({ request }) {
     return "direct";
   }
 
+  // Orders are split three ways so missing data is never shown as traffic:
+  // "untracked" = we never saw the buyer's visit; "direct" = we saw the visit
+  // and it had no campaign, click ID or referrer; "referral" = a referrer but
+  // no campaign; everything else is attributed to a channel.
+  const hasCampaign = (p) => !!(p.utmSource || p.fbclid || p.gclid || p.ttclid || p.msclkid);
+  const visitSeen = (p) => !!(p.visitorId || p.sessionId || p.landingPage || p.referrer) || hasCampaign(p);
+  function orderSource(p) {
+    if (!visitSeen(p)) return "untracked";
+    if (hasCampaign(p)) return normalizeSource(p);
+    return p.referrer ? "referral" : "direct";
+  }
+
   const sourceMap = new Map();
   for (const p of purchases30) {
-    const src = normalizeSource(p);
+    const src = orderSource(p);
     const cur = sourceMap.get(src) || { orders: 0, revenue: 0 };
     cur.orders++;
     cur.revenue += Number(p.totalValue || 0);
@@ -241,8 +253,11 @@ export async function loader({ request }) {
     if (e.visitorId) visitorMap.get(src).add(String(e.visitorId));
   }
 
+  // Attributed channels first (by revenue), then direct/referral, with
+  // untracked last so it can't read as the top "source".
+  const sourceRank = (src) => (src === "untracked" ? 2 : src === "direct" || src === "referral" ? 1 : 0);
   const sourceSummary = Array.from(sourceMap.entries())
-    .sort((a, b) => b[1].revenue - a[1].revenue)
+    .sort((a, b) => sourceRank(a[0]) - sourceRank(b[0]) || b[1].revenue - a[1].revenue)
     .map(([src, r]) => ({
       source: src,
       orders: r.orders,
@@ -251,11 +266,11 @@ export async function loader({ request }) {
       visitors: visitorMap.get(src)?.size ?? 0,
     }));
 
-  const attributedOrders = purchases30.filter(p => p.utmSource || p.fbclid || p.gclid || p.ttclid || p.msclkid).length;
-  // Orders where we never saw the buyer's visit at all (typically declined
-  // cookies) vs. visits we saw that simply had no source (real direct traffic).
-  const notTrackedOrders = purchases30.filter(p => !(p.visitorId || p.sessionId || p.landingPage || p.referrer || p.utmSource || p.fbclid || p.gclid || p.ttclid || p.msclkid)).length;
-  const directOrders = orders30 - attributedOrders - notTrackedOrders;
+  const attributedOrders = purchases30.filter(hasCampaign).length;
+  // Orders where we never saw the buyer's visit at all vs. visits we saw that
+  // simply had no campaign or referrer (observed direct traffic).
+  const notTrackedOrders = purchases30.filter(p => !visitSeen(p)).length;
+  const directOrders = purchases30.filter(p => orderSource(p) === "direct").length;
 
   // Storefront widgets (reviews/newsletter) need the theme app embed. Cached
   // check of the live storefront; don't hold the page up if it's slow.
@@ -418,8 +433,9 @@ function DeltaBadge({ delta, invert = false }) {
 }
 
 const SOURCE_CFG = {
-  direct:    { color: "#6B7280", label: "Direct",    icon: "↗" },
-  untracked: { color: "#B5B5B5", label: "Not tracked", icon: "?" },
+  direct:    { color: "#6B7280", label: "Direct (no referrer)", icon: "↗" },
+  referral:  { color: "#8B5CF6", label: "Referral",  icon: "↪" },
+  untracked: { color: "#D1D5DB", label: "Not tracked (visit unseen)", icon: "?", textColor: "#374151" },
   google:    { color: "#4285F4", label: "Google",    icon: "G" },
   meta:      { color: "#0866FF", label: "Meta",      icon: "M" },
   instagram: { color: "#C13584", label: "Instagram", icon: "IG" },
@@ -482,6 +498,18 @@ function SourceBreakdown({ sources, currency, metaSpend, googleSpend }) {
           );
         })}
       </div>
+
+      {/* Make the three kinds of revenue explicit so a gap in tracking never
+          reads as direct traffic. */}
+      <Text as="p" variant="bodySm" tone="subdued">
+        {(() => {
+          const pct = (pred) => Math.round((nonZero.filter(pred).reduce((a, x) => a + x.revenue, 0) / total) * 100);
+          const untracked = pct(s => s.source === "untracked");
+          const direct = pct(s => s.source === "direct" || s.source === "referral");
+          const attributed = 100 - untracked - direct;
+          return `${attributed}% attributed to a channel · ${direct}% seen visits with no campaign · ${untracked}% not tracked — Attribix never saw the visit, so its source is unknown (not direct).`;
+        })()}
+      </Text>
     </BlockStack>
   );
 }
@@ -733,7 +761,7 @@ export default function AppIndex() {
     const steps = [
       { icon: "📘", title: "Connect Meta Ads", body: "Sync ad spend, enable server-side Conversions API, and see ROAS.", url: "/app/integrations/meta?from=onboarding", cta: "Connect Meta", done: data.metaConnected },
       { icon: "📈", title: "Connect Google Ads", body: "Sync Google campaign spend and upload offline conversions.", url: "/app/integrations/google?from=onboarding", cta: "Connect Google", done: data.googleConnected },
-      { icon: "🔌", title: "Install Tracking Pixel", body: "Captures UTM parameters and click IDs so every order is attributed.", url: "/app/settings/tracking", cta: "View pixel settings", done: data.pixelStatus === "healthy" },
+      { icon: "🔌", title: "Install Tracking Pixel", body: "Captures UTM parameters and click IDs so orders can be matched to their source.", url: "/app/settings/tracking", cta: "View pixel settings", done: data.pixelStatus === "healthy" },
     ];
     const completedCount = steps.filter(s => s.done).length;
 
@@ -788,6 +816,13 @@ export default function AppIndex() {
   const googleFailing = data.googleConnected && !!data.freshness?.googleSyncError;
   const googleStale = data.googleConnected && !data.freshness?.googleSyncedAt;
   const metaStale = data.metaConnected && (!data.freshness?.metaSyncedAt || Date.now() - new Date(data.freshness.metaSyncedAt).getTime() > 48 * 3600e3);
+  // Connected platforms whose spend we can't vouch for this period. Any
+  // headline figure built on spend is then partial, and says so.
+  const spendGaps = [
+    (googleFailing || googleStale) && "Google spend unavailable",
+    metaStale && "Meta spend may be out of date",
+  ].filter(Boolean);
+  const spendPartial = spendGaps.length > 0;
 
   // Contextual "recommended next step" banner
   const nextStep = !trackingOk
@@ -813,7 +848,7 @@ export default function AppIndex() {
           tone: "warning",
           title: `${pct}% of orders have no tracked source (${periodText.toLowerCase()})`,
           body: t.notTrackedOrders > 0
-            ? `${t.notTrackedOrders} of ${orders30} orders came from visits Attribix couldn't see, usually because the buyer declined cookies. ${t.directOrders > 0 ? `${t.directOrders} more were visits with no campaign or referrer. ` : ""}Channel and ROAS figures based on tracked orders will understate these sales.`
+            ? `${t.notTrackedOrders} of ${orders30} orders came from visits Attribix couldn't see, so their source is unknown. Possible reasons include declined cookies, ad blockers, or buying on a different device. ${t.directOrders > 0 ? `${t.directOrders} more were visits with no campaign or referrer. ` : ""}Channel and ROAS figures based on tracked orders will understate these sales.`
             : `${noSource} of ${orders30} orders came from visits with no campaign or referrer. Check that your ad links carry UTM parameters.`,
         });
       }
@@ -933,19 +968,22 @@ export default function AppIndex() {
           <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Ad spend · {days} days</Text>
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="p" variant="bodySm" tone="subdued">Ad spend · {days} days</Text>
+                  {spendPartial && <Badge tone="warning">Partial</Badge>}
+                </InlineStack>
                 <Text as="p" variant="heading2xl">{data.totalSpend > 0 ? fmt(data.totalSpend, currency) : "—"}</Text>
                 {data.totalSpend > 0 ? (
                   <InlineStack gap="150" blockAlign="center" wrap={false}>
                     <DeltaBadge delta={data.totalSpendDelta} invert />
                     <Text as="p" variant="bodySm" tone="subdued">
                       {[data.metaConnected && "Meta", data.googleConnected && !googleFailing && "Google"].filter(Boolean).join(" + ") || "—"}
-                      {googleFailing ? " · Google missing" : ""}
+                      {spendPartial ? ` · ${spendGaps.join(", ")}` : ""}
                     </Text>
                   </InlineStack>
                 ) : (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    {data.metaConnected || data.googleConnected ? "No spend recorded in this period" : "No ad account connected"}
+                    {spendPartial ? `Partial — ${spendGaps.join(", ")}` : data.metaConnected || data.googleConnected ? "No spend recorded in this period" : "No ad account connected"}
                   </Text>
                 )}
               </BlockStack>
@@ -955,10 +993,17 @@ export default function AppIndex() {
           <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
-                <Text as="p" variant="bodySm" tone="subdued">Blended ROAS · {days} days</Text>
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="p" variant="bodySm" tone="subdued">Blended ROAS · {days} days</Text>
+                  {spendPartial && blendedRoas !== null && <Badge tone="warning">Partial</Badge>}
+                </InlineStack>
                 <Text as="p" variant="heading2xl">{blendedRoas !== null ? fmtRoas(blendedRoas) : "—"}</Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  {blendedRoas !== null ? "All tracked revenue ÷ ad spend" : "Needs ad spend to calculate"}
+                <Text as="p" variant="bodySm" tone={spendPartial && blendedRoas !== null ? "caution" : "subdued"}>
+                  {blendedRoas === null
+                    ? "Needs ad spend to calculate"
+                    : spendPartial
+                      ? `Partial — ${spendGaps.join(", ")}, so this is likely overstated`
+                      : "All tracked revenue ÷ ad spend"}
                 </Text>
               </BlockStack>
             </Card>
@@ -1152,7 +1197,7 @@ export default function AppIndex() {
 function NotTrackedOrDirect({ tracked }) {
   return tracked
     ? <Text as="span" variant="bodySm" tone="subdued">direct</Text>
-    : <Tooltip content="We didn't see this buyer's visit, usually because they declined cookies. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>;
+    : <Tooltip content="We didn't see this buyer's visit, so the source is unknown. Possible reasons include declined cookies, ad blockers or a different device. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>;
 }
 
 function HealthItem({ label, value, detail, tone }) {

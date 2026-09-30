@@ -58,6 +58,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Also pull live metrics from Google Ads API if connected
   let liveMetrics: any[] = [];
   let liveError: string | null = null;
+  let conversionActionRows: any[] = [];
+  let conversionActionsLoaded = false;
   // Unknown account currency → assume the store currency rather than guessing USD.
   let adAccountCurrency: string = googleConn?.currencyCode || storeCurrency;
   if (hasConnection && googleConn) {
@@ -84,13 +86,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
         const since = new Date(); since.setDate(since.getDate() - 90);
         const fmtD = (d: Date) => d.toISOString().slice(0, 10);
         const today = new Date();
-        const query = `SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, segments.date FROM campaign WHERE segments.date BETWEEN '${fmtD(since)}' AND '${fmtD(today)}' AND campaign.status != 'REMOVED' ORDER BY segments.date DESC`;
+        const query = `SELECT campaign.id, campaign.name, campaign.advertising_channel_type, campaign.bidding_strategy_type, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, segments.date FROM campaign WHERE segments.date BETWEEN '${fmtD(since)}' AND '${fmtD(today)}' AND campaign.status != 'REMOVED' ORDER BY segments.date DESC`;
         const streamResults = await googleAdsSearchStream({
           accessToken: tokenResult.accessToken,
           customerId: googleConn.adCustomerId!,
           query,
         });
         liveMetrics = streamResults.flatMap((chunk: any) => chunk?.results ?? []);
+
+        // Which conversion actions each campaign's conversions came from, so a
+        // lead or sign-up campaign isn't judged on purchase ROAS. Non-fatal:
+        // without it the page says the goal is unknown instead of guessing.
+        try {
+          const actionQuery = `SELECT campaign.id, segments.conversion_action_name, segments.conversion_action_category, metrics.conversions, metrics.conversions_value, segments.date FROM campaign WHERE segments.date BETWEEN '${fmtD(since)}' AND '${fmtD(today)}' AND campaign.status != 'REMOVED'`;
+          const actionResults = await googleAdsSearchStream({
+            accessToken: tokenResult.accessToken,
+            customerId: googleConn.adCustomerId!,
+            query: actionQuery,
+          });
+          conversionActionRows = actionResults.flatMap((chunk: any) => chunk?.results ?? []);
+          conversionActionsLoaded = true;
+        } catch (e) {
+          console.warn("[google-ads] conversion action breakdown failed:", e);
+        }
       } else {
         liveError = "The Google connection needs to be renewed. Reconnect Google Ads.";
       }
@@ -113,11 +131,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const transformedCampaigns = liveMetrics.map((row: any) => ({
     campaignId: row.campaign?.id || "unknown",
     campaignName: row.campaign?.name || "Unknown campaign",
+    channelType: row.campaign?.advertisingChannelType || null,
+    biddingStrategy: row.campaign?.biddingStrategyType || null,
     spend: (Number(row.metrics?.costMicros || 0) / 1_000_000) * rate,
     impressions: Number(row.metrics?.impressions || 0),
     clicks: Number(row.metrics?.clicks || 0),
     conversions: Number(row.metrics?.conversions || 0),
     conversionValue: Number(row.metrics?.conversionsValue || 0) * rate,
+    date: row.segments?.date ? new Date(row.segments.date + "T00:00:00Z").toISOString() : new Date().toISOString(),
+  }));
+
+  const conversionActions = conversionActionRows.map((row: any) => ({
+    campaignId: row.campaign?.id || "unknown",
+    action: row.segments?.conversionActionName || "Unnamed conversion action",
+    category: row.segments?.conversionActionCategory || "UNKNOWN",
+    conversions: Number(row.metrics?.conversions || 0),
+    value: Number(row.metrics?.conversionsValue || 0) * rate,
     date: row.segments?.date ? new Date(row.segments.date + "T00:00:00Z").toISOString() : new Date().toISOString(),
   }));
 
@@ -139,6 +168,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     shop,
     nowMs: Date.now(),
     campaigns: transformedCampaigns,
+    conversionActions,
+    conversionActionsLoaded,
     lastSyncedAt: googleConn?.lastSyncedAt ?? null,
     lastSyncAttemptAt: googleConn?.lastSyncAttemptAt ?? null,
     lastSyncError: googleConn?.lastSyncError ?? null,
@@ -168,6 +199,34 @@ function fmtDecimal(value: number, currency = "USD") {
   } catch {
     return `${currency} ${Number(value || 0).toFixed(2)}`;
   }
+}
+
+type CampaignGoal = "purchases" | "mixed" | "other" | "unknown";
+type CampaignSummary = {
+  id: string; name: string; channelType: string | null; biddingStrategy: string | null;
+  spend: number; impressions: number; clicks: number; conversions: number; value: number;
+  actions: Map<string, { category: string; conversions: number; value: number }>;
+  goal: CampaignGoal;
+};
+
+// "PERFORMANCE_MAX" → "Performance max"
+function humanEnum(v: string | null) {
+  if (!v || v === "UNSPECIFIED" || v === "UNKNOWN") return null;
+  const s = v.toLowerCase().replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// What a campaign's conversions and value are based on, in one line.
+function campaignBasis(c: CampaignSummary) {
+  const type = [humanEnum(c.channelType), humanEnum(c.biddingStrategy)].filter(Boolean).join(" · ");
+  const acts = Array.from(c.actions.entries()).filter(([, a]) => a.conversions > 0).map(([name]) => name);
+  const actText = acts.length ? `Conversions: ${acts.slice(0, 3).join(", ")}${acts.length > 3 ? ` +${acts.length - 3}` : ""}` : null;
+  const valueText =
+    c.goal === "purchases" ? "value = purchase value"
+    : c.goal === "mixed" ? "value mixes purchases and other actions"
+    : c.goal === "other" ? "value = values assigned to non-purchase actions"
+    : "conversion actions unavailable";
+  return [type, actText, valueText].filter(Boolean).join(" · ");
 }
 
 function dayKey(v: unknown) {
@@ -290,47 +349,19 @@ export default function GoogleAdsDetail() {
     return Array.from(map.values());
   }, [campaigns, data.attributedPurchases, windowDays]);
 
-  // Winning campaign — best ROAS, any campaign with spend
-  const topCampaign = useMemo(() => {
-    const map = new Map<string, { name: string; spend: number; value: number; conversions: number }>();
+  // One summary per campaign, including what its conversions actually are.
+  // ROAS only means "return on ad spend" for purchase conversions; a lead or
+  // sign-up campaign's value is whatever was assigned to those actions.
+  const campaignSummaries = useMemo(() => {
+    const map = new Map<string, CampaignSummary>();
     for (const r of campaigns) {
       const id = String(r.campaignId);
-      const cur = map.get(id) || { name: r.campaignName || id, spend: 0, value: 0, conversions: 0 };
-      cur.spend += safeNum(r.spend);
-      cur.value += safeNum(r.conversionValue);
-      cur.conversions += safeNum(r.conversions);
-      map.set(id, cur);
-    }
-    const rows = Array.from(map.values()).filter((c) => c.spend > 0);
-    if (!rows.length) return null;
-    return rows.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0];
-  }, [campaigns]);
-
-  // Wasting budget — spend > 0, conversions > 0, ROAS < 1
-  const worstCampaign = useMemo(() => {
-    const map = new Map<string, { name: string; spend: number; value: number; conversions: number }>();
-    for (const r of campaigns) {
-      const id = String(r.campaignId);
-      const cur = map.get(id) || { name: r.campaignName || id, spend: 0, value: 0, conversions: 0 };
-      cur.spend += safeNum(r.spend);
-      cur.value += safeNum(r.conversionValue);
-      cur.conversions += safeNum(r.conversions);
-      map.set(id, cur);
-    }
-    const rows = Array.from(map.values()).filter((c) => {
-      if (c.spend <= 0) return false;
-      return c.conversions > 0 && c.value / c.spend < 1;
-    });
-    if (!rows.length) return null;
-    return rows.sort((a, b) => (a.value / a.spend) - (b.value / b.spend))[0];
-  }, [campaigns]);
-
-  // Campaign table rows
-  const campaignTableRows = useMemo(() => {
-    const map = new Map<string, { name: string; spend: number; impressions: number; clicks: number; conversions: number; value: number }>();
-    for (const r of campaigns) {
-      const id = String(r.campaignId);
-      const cur = map.get(id) || { name: r.campaignName || id, spend: 0, impressions: 0, clicks: 0, conversions: 0, value: 0 };
+      const cur = map.get(id) || {
+        id, name: r.campaignName || id, channelType: r.channelType, biddingStrategy: r.biddingStrategy,
+        spend: 0, impressions: 0, clicks: 0, conversions: 0, value: 0,
+        actions: new Map<string, { category: string; conversions: number; value: number }>(),
+        goal: "unknown" as CampaignGoal,
+      };
       cur.spend += safeNum(r.spend);
       cur.impressions += safeNum(r.impressions);
       cur.clicks += safeNum(r.clicks);
@@ -338,20 +369,60 @@ export default function GoogleAdsDetail() {
       cur.value += safeNum(r.conversionValue);
       map.set(id, cur);
     }
-    return Array.from(map.values())
+    for (const a of data.conversionActions as any[]) {
+      if (new Date(a.date) < windowCutoff) continue;
+      const c = map.get(String(a.campaignId));
+      if (!c) continue;
+      const cur = c.actions.get(a.action) || { category: a.category, conversions: 0, value: 0 };
+      cur.conversions += safeNum(a.conversions);
+      cur.value += safeNum(a.value);
+      c.actions.set(a.action, cur);
+    }
+    for (const c of map.values()) {
+      const acts = Array.from(c.actions.values()).filter((a) => a.conversions > 0);
+      if (!data.conversionActionsLoaded || acts.length === 0) c.goal = "unknown";
+      else if (acts.every((a) => a.category === "PURCHASE")) c.goal = "purchases";
+      else if (acts.some((a) => a.category === "PURCHASE")) c.goal = "mixed";
+      else c.goal = "other";
+    }
+    return Array.from(map.values());
+  }, [campaigns, data.conversionActions, data.conversionActionsLoaded, windowCutoff]);
+
+  // Winning campaign — best ROAS among campaigns whose conversions are purchases
+  const topCampaign = useMemo(() => {
+    const rows = campaignSummaries.filter((c) => c.spend > 0 && c.goal === "purchases");
+    if (!rows.length) return null;
+    return [...rows].sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0];
+  }, [campaignSummaries]);
+
+  // Below break-even — only judged for purchase campaigns; others are listed
+  // in the table with their goal instead of a red label.
+  const worstCampaign = useMemo(() => {
+    const rows = campaignSummaries.filter((c) => c.spend > 0 && c.goal === "purchases" && c.conversions > 0 && c.value / c.spend < 1);
+    if (!rows.length) return null;
+    return [...rows].sort((a, b) => (a.value / a.spend) - (b.value / b.spend))[0];
+  }, [campaignSummaries]);
+  const unjudgedCampaigns = campaignSummaries.filter((c) => c.spend > 0 && c.goal !== "purchases").length;
+
+  // Campaign table rows
+  const campaignTableRows = useMemo(() => {
+    return [...campaignSummaries]
       .sort((a, b) => b.spend - a.spend)
       .map((c) => [
-        c.name,
+        <BlockStack key={c.id} gap="050">
+          <Text as="span" variant="bodySm" fontWeight="semibold">{c.name}</Text>
+          <Text as="span" variant="bodySm" tone="subdued">{campaignBasis(c)}</Text>
+        </BlockStack>,
         fmtDecimal(c.spend, currency),
         String(c.impressions.toLocaleString()),
         String(c.clicks.toLocaleString()),
         c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + "%" : "—",
         String(Math.round(c.conversions).toLocaleString()),
         fmtDecimal(c.value, currency),
-        c.spend > 0 ? fmtRoas(c.value / c.spend) : "—",
+        c.spend > 0 ? `${fmtRoas(c.value / c.spend)}${c.goal === "purchases" ? "" : " *"}` : "—",
         c.conversions > 0 && c.spend > 0 ? fmtDecimal(c.spend / c.conversions, currency) : "—",
       ]);
-  }, [campaigns, currency]);
+  }, [campaignSummaries, currency]);
 
   return (
     <Page
@@ -528,8 +599,9 @@ export default function GoogleAdsDetail() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="start">
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#166534", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Highest ROAS (Google-reported)</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#166534", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Highest ROAS · purchase campaigns (Google-reported)</p>
                         <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#14532d", marginTop: 4, lineHeight: 1.3 }}>{topCampaign.name}</p>
+                        <p style={{ margin: 0, fontSize: 12, color: "#166534", marginTop: 4 }}>{campaignBasis(topCampaign)}</p>
                       </div>
                       {topCampaign.conversions < 3 && <Badge>Few conversions</Badge>}
                     </InlineStack>
@@ -581,8 +653,9 @@ export default function GoogleAdsDetail() {
                   <BlockStack gap="300">
                     <InlineStack align="space-between" blockAlign="start">
                       <div>
-                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Lowest ROAS (Google-reported)</p>
+                        <p style={{ margin: 0, fontSize: 11, color: "#991b1b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>Lowest ROAS · purchase campaigns (Google-reported)</p>
                         <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: "#7f1d1d", marginTop: 4, lineHeight: 1.3 }}>{worstCampaign.name}</p>
+                        <p style={{ margin: 0, fontSize: 12, color: "#991b1b", marginTop: 4 }}>{campaignBasis(worstCampaign)}</p>
                       </div>
                       <Badge tone="critical">Below 1×</Badge>
                     </InlineStack>
@@ -652,7 +725,15 @@ export default function GoogleAdsDetail() {
                 rows={campaignTableRows}
                 increasedTableDensity
               />
-            ) : (
+            ) : null}
+            {campaignTableRows.length > 0 && unjudgedCampaigns > 0 ? (
+              <Text as="p" variant="bodySm" tone="subdued">
+                * {data.conversionActionsLoaded
+                  ? "Conversions for this campaign aren't only purchases (for example leads or sign-ups), so its value is whatever was assigned to those actions in Google Ads. ROAS isn't a fair measure of it and it isn't rated above."
+                  : "Google didn't return which conversion actions these campaigns count, so they aren't rated above. Check each campaign's goal and conversion values in Google Ads."}
+              </Text>
+            ) : null}
+            {campaignTableRows.length > 0 ? null : (
               <Text as="p" tone="subdued">
                 {data.hasConnection
                   ? "No campaign data for this window. Sync runs automatically every 24h."

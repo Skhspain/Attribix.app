@@ -20,7 +20,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     select: {
       orderId: true, position: true, totalSteps: true,
       channel: true, utmSource: true, utmMedium: true, utmCampaign: true,
-      revenue: true, currency: true, touchedAt: true, createdAt: true,
+      revenue: true, currency: true, touchedAt: true, createdAt: true, touchpointId: true,
     },
   });
 
@@ -49,18 +49,38 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return raw;
   }
 
-  const totalJourneys = orderMap.size;
-  const multiTouchCount = Array.from(orderMap.values()).filter(s => s.length > 1).length;
-  const totalRevenue = Array.from(orderMap.values()).reduce((s, steps) => s + Number(steps[steps.length - 1]?.revenue ?? 0), 0);
+  const orderRevenue = (steps: any[]) => Number(steps[steps.length - 1]?.revenue ?? 0);
+  // An order's journey is "captured" only if at least one step came from a
+  // visit or an attributed order. Orders we never saw are unknown: they're
+  // counted, but kept out of every behavioural statistic below.
+  const isCaptured = (steps: any[]) => steps.some((st) => normCh(st.channel, st.utmSource) !== "untracked");
+  const allJourneys = Array.from(orderMap.entries());
+  const captured = allJourneys.filter(([, steps]) => isCaptured(steps));
+
+  const totalOrders = orderMap.size;
+  const capturedCount = captured.length;
+  const unknownCount = totalOrders - capturedCount;
+  const capturedRevenue = captured.reduce((sum, [, steps]) => sum + orderRevenue(steps), 0);
+  const unknownRevenue = allJourneys.reduce((sum, [, steps]) => sum + orderRevenue(steps), 0) - capturedRevenue;
+  const multiTouchCount = captured.filter(([, s]) => s.length > 1).length;
+
   const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
   const currency = await getReportingCurrency(shop, admin);
-  const untrackedJourneys = Array.from(orderMap.values()).filter(
-    (steps) => steps.length === 1 && normCh(steps[0].channel, steps[0].utmSource) === "untracked",
-  ).length;
 
-  // Aggregate paths
+  // Order times, for time-to-purchase. Touchpoint rows are written when the
+  // journey is built, which can lag the order.
+  const purchases = await db.purchase.findMany({
+    where: { shop, orderId: { in: Array.from(orderMap.keys()) } },
+    select: { orderId: true, createdAt: true },
+  }).catch(() => []);
+  const orderTime = new Map(purchases.map((p: any) => [p.orderId, new Date(p.createdAt)]));
+
+  const googleConn = await db.googleConnection.findUnique({ where: { shop } }).catch(() => null);
+  const googleConnected = !!(googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && googleConn.adCustomerId);
+
+  // Aggregate paths (captured journeys only)
   const pathMap = new Map<string, { count: number; revenue: number; channels: string[] }>();
-  for (const [, steps] of orderMap) {
+  for (const [, steps] of captured) {
     const sorted = steps.sort((a: any, b: any) => a.position - b.position);
     const channels = sorted.map((s: any) => normCh(s.channel, s.utmSource));
     const key = channels.join(" → ");
@@ -76,31 +96,37 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   const topPath = topPaths[0] ?? null;
 
-  // Journey length distribution
-  const len1 = Array.from(orderMap.values()).filter(s => s.length === 1).length;
-  const len2 = Array.from(orderMap.values()).filter(s => s.length === 2).length;
-  const len3plus = Array.from(orderMap.values()).filter(s => s.length >= 3).length;
+  // Journey length distribution (captured journeys only)
+  const len1 = captured.filter(([, s]) => s.length === 1).length;
+  const len2 = captured.filter(([, s]) => s.length === 2).length;
+  const len3plus = captured.filter(([, s]) => s.length >= 3).length;
 
-  // Recent journeys table (top 5 by revenue)
-  const recentJourneys = Array.from(orderMap.entries())
+  // Recent journeys table (top 5 by revenue). Unknown journeys stay listed but
+  // show "Unknown" rather than an invented touchpoint count or timing.
+  const recentJourneys = allJourneys
     .map(([orderId, steps]) => {
       const sorted = steps.sort((a: any, b: any) => a.position - b.position);
+      const known = isCaptured(sorted);
       const channels = sorted.map((s: any) => normCh(s.channel, s.utmSource));
-      const revenue = Number(sorted[sorted.length - 1]?.revenue ?? 0);
-      const firstTouched = sorted[0]?.touchedAt ? new Date(sorted[0].touchedAt) : null;
-      const lastTouched = sorted[sorted.length - 1]?.touchedAt ? new Date(sorted[sorted.length - 1].touchedAt) : null;
-      const diffMs = firstTouched && lastTouched ? lastTouched.getTime() - firstTouched.getTime() : 0;
-      const diffHours = diffMs / 3600000;
-      const timeToPurchase = sorted.length === 1
-        ? "Same session"
-        : diffHours < 1 ? "< 1 hour"
-        : diffHours < 24 ? `${Math.round(diffHours)}h`
-        : `${Math.round(diffHours / 24)}d`;
+      const revenue = orderRevenue(sorted);
+      // Only a step from a real tracked visit has a real time; fallback steps
+      // built from the order's own UTM data are stamped just before purchase.
+      const first = sorted[0];
+      const firstTouched = first?.touchpointId && first?.touchedAt ? new Date(first.touchedAt) : null;
+      const purchasedAt = orderTime.get(orderId) ?? null;
+      let timeToPurchase = "Unknown";
+      if (known && firstTouched && purchasedAt) {
+        const diffHours = Math.max(0, purchasedAt.getTime() - firstTouched.getTime()) / 3600000;
+        timeToPurchase = diffHours < 1 ? "< 1 hour"
+          : diffHours < 24 ? `${Math.round(diffHours)}h`
+          : `${Math.round(diffHours / 24)}d`;
+      }
 
       return {
         orderId: String(orderId).split("/").pop() || orderId,
         channels,
-        touchpoints: sorted.length,
+        known,
+        touchpoints: known ? sorted.length : null,
         revenue,
         timeToPurchase,
       };
@@ -112,7 +138,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const dateLabel = `${since30.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })} – ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}`;
 
   return json({
-    totalJourneys, multiTouchCount, totalRevenue, currency, untrackedJourneys,
+    totalOrders, capturedCount, unknownCount, capturedRevenue, unknownRevenue,
+    multiTouchCount, currency, googleConnected,
     topPath, topPaths, len1, len2, len3plus,
     recentJourneys, dateLabel,
   });
@@ -171,15 +198,16 @@ function Arrow({ size = 24 }: { size?: number }) {
 }
 
 function DonutChart({ len1, len2, len3plus, total }: { len1: number; len2: number; len3plus: number; total: number }) {
+  const labels = ["1 touchpoint", "2 touchpoints", "3+ touchpoints"];
   const r = 60;
   const circ = 2 * Math.PI * r;
   const cx = 80, cy = 80;
 
   // Segments: [value, color]
   const segments = [
-    { value: len1, color: "#3B82F6" },
-    { value: len2, color: "#22C55E" },
-    { value: len3plus, color: "#F59E0B" },
+    { value: len1, color: "#3B82F6", label: labels[0] },
+    { value: len2, color: "#22C55E", label: labels[1] },
+    { value: len3plus, color: "#F59E0B", label: labels[2] },
   ].filter(s => total > 0);
 
   // If all zero show grey placeholder
@@ -199,7 +227,7 @@ function DonutChart({ len1, len2, len3plus, total }: { len1: number; len2: numbe
       <svg width={160} height={160} viewBox="0 0 160 160">
         <circle cx={cx} cy={cy} r={r} fill="none" stroke={nonZero[0].color} strokeWidth={20} />
         <text x={cx} y={cy - 6} textAnchor="middle" dominantBaseline="middle" fontSize="22" fontWeight="700" fill="#111">{pct}%</text>
-        <text x={cx} y={cy + 16} textAnchor="middle" dominantBaseline="middle" fontSize="11" fill="#6B7280">1 touchpoint</text>
+        <text x={cx} y={cy + 16} textAnchor="middle" dominantBaseline="middle" fontSize="11" fill="#6B7280">{nonZero[0].label}</text>
       </svg>
     );
   }
@@ -230,14 +258,21 @@ function DonutChart({ len1, len2, len3plus, total }: { len1: number; len2: numbe
 export default function JourneyPage() {
   const data = useLoaderData<typeof loader>();
   const navigate = useNavigate();
-  const { totalJourneys, multiTouchCount, totalRevenue, currency, topPath, topPaths, len1, len2, len3plus, recentJourneys, dateLabel, untrackedJourneys } = data;
+  const {
+    totalOrders, capturedCount, unknownCount, capturedRevenue, unknownRevenue,
+    multiTouchCount, currency, googleConnected,
+    topPath, len1, len2, len3plus, recentJourneys, dateLabel,
+  } = data;
+  // Below this, patterns in captured journeys are anecdotes, not behaviour.
+  const MIN_JOURNEYS_FOR_PATTERNS = 10;
+  const enoughForPatterns = capturedCount >= MIN_JOURNEYS_FOR_PATTERNS;
 
   const topPathLabel = topPath
     ? topPath.channels.map((ch: string) => SOURCE_CFG[ch]?.label || ch).join(" → ") + " → Purchase"
     : "—";
 
-  const topPathShare = topPath && totalJourneys > 0
-    ? Math.round((topPath.count / totalJourneys) * 100)
+  const topPathShare = topPath && capturedCount > 0
+    ? Math.round((topPath.count / capturedCount) * 100)
     : 0;
 
   return (
@@ -265,11 +300,11 @@ export default function JourneyPage() {
         </div>
 
         {/* ── What the journeys include (instead of an always-green "Active") ── */}
-        {totalJourneys > 0 && untrackedJourneys > 0 && (
-          <Banner tone="info" title={`${untrackedJourneys} of ${totalJourneys} orders have no captured touchpoints`}>
+        {totalOrders > 0 && unknownCount > 0 && (
+          <Banner tone={unknownCount > capturedCount ? "warning" : "info"} title={`${unknownCount} of ${totalOrders} orders have no captured touchpoints`}>
             <p>
-              Attribix didn't see these buyers' visits — usually because they declined cookies, or bought on a different device than they browsed on.
-              They're shown as "No touchpoints captured", not as direct visits. The Orders page may still show a source for some of them, taken from the order itself.
+              Attribix didn't see these buyers' visits, so their journeys are unknown. Possible reasons include declined cookies, ad blockers,
+              or browsing on a different device. They're counted below but left out of path, length and timing figures, and never shown as direct visits.
             </p>
           </Banner>
         )}
@@ -283,8 +318,10 @@ export default function JourneyPage() {
                 <Text as="p" variant="bodySm" tone="subdued">Orders (last 30 days)</Text>
                 <span style={{ fontSize: 22 }}>👥</span>
               </InlineStack>
-              <Text as="p" variant="heading2xl" fontWeight="bold">{totalJourneys}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">customer journeys captured</Text>
+              <Text as="p" variant="heading2xl" fontWeight="bold">{totalOrders}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {capturedCount} with captured touchpoints · {unknownCount} unknown
+              </Text>
             </BlockStack>
           </Card>
 
@@ -292,11 +329,13 @@ export default function JourneyPage() {
           <Card>
             <BlockStack gap="100">
               <InlineStack align="space-between" blockAlign="start">
-                <Text as="p" variant="bodySm" tone="subdued">Revenue mapped</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Revenue with captured journeys</Text>
                 <span style={{ fontSize: 22 }}>💰</span>
               </InlineStack>
-              <Text as="p" variant="heading2xl" fontWeight="bold">{fmt(totalRevenue, currency)}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">from tracked journeys</Text>
+              <Text as="p" variant="heading2xl" fontWeight="bold">{fmt(capturedRevenue, currency)}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {unknownRevenue > 0 ? `+ ${fmt(unknownRevenue, currency)} from orders with unknown journeys` : "all orders in the period"}
+              </Text>
             </BlockStack>
           </Card>
 
@@ -308,7 +347,9 @@ export default function JourneyPage() {
                 <span style={{ fontSize: 22 }}>🔀</span>
               </InlineStack>
               <Text as="p" variant="headingMd" fontWeight="bold">{topPathLabel}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">most common path</Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                {capturedCount > 0 ? `most common of ${capturedCount} captured journey${capturedCount === 1 ? "" : "s"}` : "no captured journeys yet"}
+              </Text>
             </BlockStack>
           </Card>
 
@@ -320,7 +361,7 @@ export default function JourneyPage() {
                 <span style={{ fontSize: 22 }}>👤</span>
               </InlineStack>
               <Text as="p" variant="heading2xl" fontWeight="bold">{multiTouchCount}</Text>
-              <Text as="p" variant="bodySm" tone="subdued">returning visitors yet</Text>
+              <Text as="p" variant="bodySm" tone="subdued">of {capturedCount} captured journey{capturedCount === 1 ? "" : "s"}</Text>
             </BlockStack>
           </Card>
         </div>
@@ -336,7 +377,7 @@ export default function JourneyPage() {
               <BlockStack gap="400">
                 <BlockStack gap="025">
                   <Text as="h2" variant="headingMd">Most common path</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">This is the path most customers took before purchasing.</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">The most common path among orders with captured touchpoints.</Text>
                 </BlockStack>
 
                 {topPath ? (
@@ -369,7 +410,7 @@ export default function JourneyPage() {
                       {[
                         { label: "orders", value: String(topPath.count) },
                         { label: "revenue", value: fmt(topPath.revenue, currency) },
-                        { label: "of recorded journeys", value: `${topPathShare}%` },
+                        { label: "of captured journeys", value: `${topPathShare}%` },
                       ].map((s, i) => (
                         <div key={i} style={{ padding: "14px 16px", background: "#fff", textAlign: "center" }}>
                           <Text as="p" variant="headingMd" fontWeight="semibold">{s.value}</Text>
@@ -386,10 +427,25 @@ export default function JourneyPage() {
                     }}>
                       <span style={{ fontSize: 16, marginTop: 1 }}>ℹ️</span>
                       <BlockStack gap="025">
-                        <Text as="p" variant="bodySm" fontWeight="semibold">Most purchases currently happen in a single visit.</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">
-                          When customers return from ads, email, Google, or social, those touchpoints will appear here.
-                        </Text>
+                        {!enoughForPatterns ? (
+                          <>
+                            <Text as="p" variant="bodySm" fontWeight="semibold">Too few captured journeys to show a pattern yet.</Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {capturedCount} of {totalOrders} orders have captured touchpoints. Treat this path as an example, not typical behaviour.
+                            </Text>
+                          </>
+                        ) : len1 / capturedCount > 0.5 ? (
+                          <>
+                            <Text as="p" variant="bodySm" fontWeight="semibold">Most captured journeys have a single touchpoint.</Text>
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              Earlier visits Attribix didn't see may be missing, so some of these buyers may have visited before.
+                            </Text>
+                          </>
+                        ) : (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Based on {capturedCount} orders with captured touchpoints; {unknownCount} orders with unknown journeys are excluded.
+                          </Text>
+                        )}
                       </BlockStack>
                     </div>
                   </>
@@ -428,22 +484,24 @@ export default function JourneyPage() {
                     }}>
                       <Text as="p" variant="bodySm" tone="subdued">#{j.orderId}</Text>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        {j.channels.map((ch: string, ci: number) => (
+                        {!j.known ? (
+                        <Text as="p" variant="bodySm" tone="subdued">Unknown — visit not seen</Text>
+                      ) : j.channels.map((ch: string, ci: number) => (
                           <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <ChannelBox channel={ch} size={26} />
                             <Arrow size={14} />
                           </div>
                         ))}
-                        <PurchaseBox size={26} />
+                        {j.known && <PurchaseBox size={26} />}
                       </div>
-                      <Text as="p" variant="bodySm">{j.touchpoints}</Text>
+                      <Text as="p" variant="bodySm" tone={j.known ? undefined : "subdued"}>{j.touchpoints ?? "Unknown"}</Text>
                       <Text as="p" variant="bodySm" fontWeight="semibold">{fmt(j.revenue, currency)}</Text>
                       <Text as="p" variant="bodySm" tone="subdued">{j.timeToPurchase}</Text>
                     </div>
                   ))}
 
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Showing {recentJourneys.length} of {totalJourneys} journeys
+                    Showing {recentJourneys.length} of {totalOrders} orders ({capturedCount} with captured touchpoints)
                   </Text>
                 </BlockStack>
               </Card>
@@ -459,12 +517,14 @@ export default function JourneyPage() {
               <BlockStack gap="300">
                 <BlockStack gap="025">
                   <Text as="h2" variant="headingMd">Journey overview</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">Distribution of journey lengths</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Touchpoints per order, across {capturedCount} captured journey{capturedCount === 1 ? "" : "s"}{unknownCount > 0 ? ` (${unknownCount} unknown excluded)` : ""}
+                  </Text>
                 </BlockStack>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
                   <div style={{ flexShrink: 0 }}>
-                    <DonutChart len1={len1} len2={len2} len3plus={len3plus} total={totalJourneys} />
+                    <DonutChart len1={len1} len2={len2} len3plus={len3plus} total={capturedCount} />
                   </div>
                   <BlockStack gap="150">
                     {[
@@ -480,7 +540,7 @@ export default function JourneyPage() {
                         <InlineStack gap="200" blockAlign="center">
                           <Text as="p" variant="bodySm" fontWeight="semibold">{item.value}</Text>
                           <Text as="p" variant="bodySm" tone="subdued">
-                            ({totalJourneys > 0 ? Math.round((item.value / totalJourneys) * 100) : 0}%)
+                            ({capturedCount > 0 ? Math.round((item.value / capturedCount) * 100) : 0}%)
                           </Text>
                         </InlineStack>
                       </div>
@@ -527,10 +587,14 @@ export default function JourneyPage() {
 
                   <Text as="p" variant="bodySm" tone="subdued">
                     Attribix has not seen customers return through multiple channels before purchasing yet.
-                    Keep tracking active and connect more channels to unlock deeper insights.
+                    {unknownCount > capturedCount
+                      ? "Most orders have no captured touchpoints, so returning visits may be going unseen. Check that tracking is set up on every page."
+                      : "Keep tracking active and connect more channels to unlock deeper insights."}
                   </Text>
 
-                  <Button onClick={() => navigate("/app/integrations/google")}>Connect Google Ads</Button>
+                  {googleConnected
+                    ? <Button onClick={() => navigate("/app/setup")}>Check tracking setup</Button>
+                    : <Button onClick={() => navigate("/app/integrations/google")}>Connect Google Ads</Button>}
                 </BlockStack>
               </Card>
             )}

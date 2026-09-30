@@ -102,6 +102,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
   });
 }
 
+// Sales-oriented objectives — ROAS is a meaningful metric for these
+const SALES_OBJECTIVES = new Set([
+  "OUTCOME_SALES", "CONVERSIONS", "PRODUCT_CATALOG_SALES", "STORE_TRAFFIC",
+]);
+
+// "OUTCOME_TRAFFIC" → "traffic"
+function objectiveLabel(objective: string) {
+  return objective.replace(/^OUTCOME_/, "").toLowerCase().replace(/_/g, " ");
+}
+
 function safeNum(v: unknown) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -226,8 +236,25 @@ export default function MetaAdsDetail() {
       purchases += safeNum(r.purchases);
       value += safeNum(r.purchaseValue);
     }
-    return { spend, impressions, clicks, purchases, value, roas: spend > 0 ? value / spend : null, ctr: impressions > 0 ? (clicks / impressions) * 100 : null, cpc: clicks > 0 ? spend / clicks : null };
+    // Spend on traffic/awareness/lead campaigns lowers ROAS without being
+    // expected to produce purchases, so the headline figure says so.
+    const nonSales = new Map<string, number>();
+    for (const r of campaigns as any[]) {
+      if (r.objective && !SALES_OBJECTIVES.has(r.objective)) {
+        nonSales.set(String(r.campaignId), (nonSales.get(String(r.campaignId)) ?? 0) + safeNum(r.spend));
+      }
+    }
+    const nonSalesSpend = Array.from(nonSales.values()).reduce((a, b) => a + b, 0);
+    return {
+      spend, impressions, clicks, purchases, value,
+      roas: spend > 0 ? value / spend : null,
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : null, cpc: clicks > 0 ? spend / clicks : null,
+      nonSalesSpend, nonSalesCampaigns: Array.from(nonSales.values()).filter((v) => v > 0).length,
+    };
   }, [campaigns]);
+  const roasNote = kpis.nonSalesSpend > 0
+    ? `Includes ${fmtDecimal(kpis.nonSalesSpend, data.storeCurrency)} on ${kpis.nonSalesCampaigns} traffic, awareness or lead campaign${kpis.nonSalesCampaigns === 1 ? "" : "s"} that don't aim for purchases`
+    : null;
 
   // Attribix-attributed revenue: orders tracked via fbclid/meta UTM within the window
   const { attributedRevenue, attributedOrders } = useMemo(() => {
@@ -294,11 +321,6 @@ export default function MetaAdsDetail() {
     if (!rows.length) return null;
     return rows.sort((a, b) => (b.value / b.spend) - (a.value / a.spend))[0];
   }, [campaigns]);
-
-  // Sales-oriented objectives — ROAS is a meaningful metric for these
-  const SALES_OBJECTIVES = new Set([
-    "OUTCOME_SALES", "CONVERSIONS", "PRODUCT_CATALOG_SALES", "STORE_TRAFFIC",
-  ]);
 
   const worstCampaign = useMemo(() => {
     const map = new Map<string, { name: string; objective: string | null; spend: number; value: number; purchases: number }>();
@@ -538,10 +560,11 @@ export default function MetaAdsDetail() {
                   <BlockStack gap="200">
                     <Text as="h3" variant="headingSm">Meta reports</Text>
                     <InlineGrid columns={3} gap="200">
-                      <Metric label="ROAS" value={fmtRoas(kpis.roas)} />
+                      <Metric label={roasNote ? "ROAS (all campaigns)" : "ROAS"} value={fmtRoas(kpis.roas)} />
                       <Metric label="Purchases" value={kpis.purchases.toLocaleString()} />
                       <Metric label="Purchase value" value={fmtDecimal(kpis.value, currency)} />
                     </InlineGrid>
+                    {roasNote && <Text as="p" variant="bodySm" tone="subdued">{roasNote}.</Text>}
                   </BlockStack>
                 </Box>
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
@@ -565,8 +588,8 @@ export default function MetaAdsDetail() {
               {!enoughTracked ? (
                 <Banner tone="info">
                   {`Attribix tracked ${attributedOrders} Meta order${attributedOrders === 1 ? "" : "s"} in this period — too few to judge performance on. `}
-                  {totalOrdersInWindow > 0 && `Across all channels, ${totalOrdersInWindow} orders were placed; many buyers decline cookies, so their ad clicks can't be seen. `}
-                  Use Meta's figures as the main guide for now, and compare again over a longer period.
+                  {totalOrdersInWindow > 0 && `Across all channels, ${totalOrdersInWindow} orders were placed; Attribix couldn't see the visit behind some of them, so their ad clicks may be missing. `}
+                  Before relying on either figure, compare the two over a longer period and check how they differ: Meta's attribution window, how many orders Attribix could track, and which events Meta counts as a purchase.
                 </Banner>
               ) : (
                 <Text as="p" tone="subdued">
@@ -583,7 +606,7 @@ export default function MetaAdsDetail() {
             { label: "Total spend", value: fmtDecimal(kpis.spend, currency) },
             { label: "Impressions", value: kpis.impressions.toLocaleString() },
             { label: "Clicks", value: kpis.clicks.toLocaleString(), sub: kpis.ctr ? `CTR ${kpis.ctr.toFixed(2)}%` : undefined },
-            { label: "ROAS (Meta-reported)", value: fmtRoas(kpis.roas), sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value` },
+            { label: "ROAS (Meta-reported)", value: fmtRoas(kpis.roas), sub: `${kpis.purchases} purchases · ${fmtDecimal(kpis.value, currency)} value${roasNote ? ` · ${roasNote}` : ""}` },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
               <Card>
@@ -1081,10 +1104,10 @@ export default function MetaAdsDetail() {
                       ))}
                     </div>
                     {(() => {
-                      const map = new Map<string, { name: string; spend: number; value: number; purchases: number }>();
+                      const map = new Map<string, { name: string; objective: string | null; spend: number; value: number; purchases: number }>();
                       for (const r of campaigns) {
                         const id = String((r as any).campaignId);
-                        const cur = map.get(id) || { name: (r as any).campaignName || id, spend: 0, value: 0, purchases: 0 };
+                        const cur = map.get(id) || { name: (r as any).campaignName || id, objective: (r as any).objective ?? null, spend: 0, value: 0, purchases: 0 };
                         cur.spend += safeNum((r as any).spend);
                         cur.value += safeNum((r as any).purchaseValue);
                         cur.purchases += safeNum((r as any).purchases);
@@ -1109,6 +1132,7 @@ export default function MetaAdsDetail() {
                           let perfLabel = "No sales yet"; let perfColor = "#9ca3af";
                           if (roas !== null && roas >= 3) { perfLabel = "3× ROAS or more"; perfColor = "#16a34a"; }
                           else if (roas !== null && roas >= 1) { perfLabel = "1–3× ROAS"; perfColor = "#d97706"; }
+                          else if (c.objective && !SALES_OBJECTIVES.has(c.objective)) { perfLabel = `${objectiveLabel(c.objective)} campaign — not aiming for purchases`; perfColor = "#6b7280"; }
                           else if (roas !== null && roas < 1 && c.spend > 0) { perfLabel = "Below 1× ROAS"; perfColor = "#dc2626"; }
 
                           let targetNote = "";

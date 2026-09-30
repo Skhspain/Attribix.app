@@ -220,7 +220,7 @@ export default function AppOrders() {
         ? <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
         : p.tracked
           ? <Text as="span" variant="bodySm" tone="subdued">direct</Text>
-          : <Tooltip content="We didn't see this buyer's visit, usually because they declined cookies. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>,
+          : <Tooltip content="We didn't see this buyer's visit, so the source is unknown. Possible reasons include declined cookies, ad blockers or a different device. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>,
       <Text as="span" variant="bodySm" tone="subdued">{p.campaignLabel || "—"}</Text>,
       <Text as="span" variant="bodySm" tone="subdued" title={p.landingPage || ""}>{truncateUrl(p.landingPage)}</Text>,
       <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,

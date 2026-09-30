@@ -126,11 +126,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       .catch(() => []),
   ]);
 
-  const [metaConn, trackingSettings] = await Promise.all([
+  const [metaConn, trackingSettings, googleConn] = await Promise.all([
     db.metaConnection
       .findUnique({ where: { shop }, select: { lastSyncedAt: true, adAccountId: true, accessToken: true } })
       .catch(() => null),
     (anyDb.trackingSettings?.findUnique?.({ where: { shop }, select: { storeCurrency: true } }) as Promise<{ storeCurrency: string | null } | null>)
+      .catch(() => null),
+    db.googleConnection
+      .findUnique({ where: { shop }, select: { lastSyncedAt: true, lastSyncError: true, adCustomerId: true, accessToken: true } })
       .catch(() => null),
   ]);
 
@@ -173,6 +176,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     metaAds30d: convertedMetaAds30d,
     metaLastSyncedAt: metaConn?.lastSyncedAt ?? null,
     metaConnected: !!(metaConn?.adAccountId),
+    googleConnected: !!(googleConn?.accessToken && googleConn.accessToken !== "__PENDING__" && googleConn.adCustomerId),
+    googleLastSyncedAt: googleConn?.lastSyncedAt ?? null,
+    googleSyncError: googleConn?.lastSyncError ?? null,
     plan,
     historyDays: plan === "starter" ? 30 : plan === "growth" ? 90 : 365,
     storeCurrency,
@@ -332,6 +338,12 @@ export default function AppAnalytics() {
   const metaSpend = metaAdsKpis.spend;
   const totalSpend = metaSpend + googleSpend;
   const blendedRoas = totalSpend > 0 ? totalRevenue / totalSpend : null;
+  // Same rule as Overview: a connected platform whose spend we can't vouch
+  // for makes every spend-based figure partial.
+  const googleMissing = data.googleConnected && (!!data.googleSyncError || !data.googleLastSyncedAt);
+  const metaStale = data.metaConnected && (!data.metaLastSyncedAt || Date.now() - new Date(data.metaLastSyncedAt).getTime() > 48 * 3600e3);
+  const spendGaps = [googleMissing && "Google spend unavailable", metaStale && "Meta spend may be out of date"].filter(Boolean) as string[];
+  const spendPartial = spendGaps.length > 0;
 
   // ── Meta campaign table (Ads Manager) ──
   const metaCampaignRows = useMemo(() => {
@@ -708,7 +720,7 @@ export default function AppAnalytics() {
             <InlineStack align="space-between" blockAlign="center">
               <BlockStack gap="050">
                 <Text as="h2" variant="headingMd">
-                  Revenue vs spend{blendedRoas ? ` — blended ROAS ${blendedRoas.toFixed(1)}×` : ""} — last {window} days
+                  Revenue vs spend{blendedRoas ? ` — blended ROAS ${blendedRoas.toFixed(1)}×${spendPartial ? " (partial)" : ""}` : ""} — last {window} days
                 </Text>
                 <Text as="p" variant="bodySm" tone="subdued">
                   Green = tracked revenue at or above that day's ad spend; red = below it. Indigo = revenue on days with no ad spend. Bars share one scale. Revenue minus spend is not profit — product costs aren't included.
@@ -742,8 +754,8 @@ export default function AppAnalytics() {
         <Grid>
           {[
             { label: `Revenue (${window}d)`, value: fmtDecimal(totalRevenue, currency), sub: `${totalOrders} attributed orders` },
-            { label: `Ad Spend (${window}d)`, value: fmtDecimal(totalSpend, currency), sub: hasSpend ? `Meta ${fmtDecimal(metaSpend, currency)} · Google ${fmtDecimal(googleSpend, currency)}` : "Sync spend in Integrations" },
-            { label: `Blended ROAS (${window}d)`, value: blendedRoas ? blendedRoas.toFixed(1) + "×" : "—", sub: hasSpend ? "Revenue ÷ total spend" : "No spend data", highlight: blendedRoas !== null && blendedRoas >= 2 },
+            { label: `Ad Spend (${window}d)${spendPartial ? " · Partial" : ""}`, value: fmtDecimal(totalSpend, currency), sub: spendPartial ? `Partial — ${spendGaps.join(", ")}` : hasSpend ? `Meta ${fmtDecimal(metaSpend, currency)} · Google ${fmtDecimal(googleSpend, currency)}` : "Sync spend in Integrations" },
+            { label: `Blended ROAS (${window}d)${spendPartial && blendedRoas ? " · Partial" : ""}`, value: blendedRoas ? blendedRoas.toFixed(1) + "×" : "—", sub: !hasSpend ? "No spend data" : spendPartial ? `Partial — ${spendGaps.join(", ")}, so likely overstated` : "Revenue ÷ total spend", highlight: !spendPartial && blendedRoas !== null && blendedRoas >= 2 },
             { label: "Avg Order Value", value: aov > 0 ? fmtDecimal(aov, currency) : "—", sub: "Attributed purchases" },
           ].map((kpi) => (
             <Grid.Cell key={kpi.label} columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
@@ -802,7 +814,7 @@ export default function AppAnalytics() {
                         )}
                       </Text>
                       <Text as="p" variant="bodySm" tone="subdued">
-                        What Attribix tracked via UTM/fbclid attribution — may differ from Meta's reported value due to view-through, cross-device, or iOS gaps
+                        What Attribix tracked via UTM/fbclid attribution — may differ from Meta's reported value, for example because of view-through conversions, cross-device buying or iOS tracking limits
                       </Text>
                     </BlockStack>
                   </Box>
@@ -813,7 +825,7 @@ export default function AppAnalytics() {
                       <Text as="p" variant="bodySm" tone="subdued">Meta reported purchase value</Text>
                       <Text as="p" variant="headingLg">{fmtDecimal(metaAdsKpis.value, currency)}</Text>
                       <Text as="p" variant="bodySm" tone="subdued">
-                        What Meta Ads Manager reports — includes view-through conversions and Meta's attribution window (typically 7-day click, 1-day view)
+                        What Meta Ads Manager reports, using Meta's own attribution window (by default 7-day click, 1-day view), which can include view-through conversions
                       </Text>
                     </BlockStack>
                   </Box>

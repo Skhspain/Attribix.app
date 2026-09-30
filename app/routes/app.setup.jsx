@@ -174,7 +174,7 @@ export default function SetupGuide() {
           <StepHeader number={3} title="Verify store tracking" done={data.steps.tracking.done} />
           <StepDetail step={data.steps.tracking} />
           <p style={{ color: "#6D7175", fontSize: 14, margin: "0 0 12px", lineHeight: 1.6 }}>
-            Attribix tracks orders using a lightweight web pixel extension installed directly in your Shopify store. Once active, every order will be matched to an ad click or referral source.
+            Attribix tracks orders using a lightweight web pixel extension installed directly in your Shopify store. Once active, it records the ad click or referral source for orders whose visits it can see. Some orders will still show as not tracked, for example when a buyer declines cookies or uses an ad blocker.
           </p>
           <div style={{ background: "#F6F6F7", borderRadius: 8, padding: "14px 16px", marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#202223", marginBottom: 8 }}>How to verify</div>
