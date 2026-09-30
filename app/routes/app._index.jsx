@@ -902,9 +902,9 @@ export default function AppIndex() {
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
               <Text as="h2" variant="headingSm">Tracking health</Text>
-              {setupDone < setupSteps.length && <Button size="slim" url="/app/setup">Review setup</Button>}
+              <Button size="slim" variant={setupDone < setupSteps.length ? "primary" : "plain"} url="/app/setup">{setupDone < setupSteps.length ? `Review setup (${setupDone} of ${setupSteps.length} done)` : "Setup guide"}</Button>
             </InlineStack>
-            <InlineGrid columns={{ xs: 1, sm: 2, md: 4 }} gap="300">
+            <InlineGrid columns={{ xs: 2, md: 4 }} gap="300">
               <HealthItem
                 label="Storefront events"
                 tone={trackingOk ? "success" : data.pixelStatus === "never" ? "critical" : "warning"}
@@ -933,7 +933,7 @@ export default function AppIndex() {
 
         {/* ── KPI cards (all the same period) ─────────────────────── */}
         <Grid>
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+          <Grid.Cell columnSpan={{ xs: 3, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
                 <Text as="p" variant="bodySm" tone="subdued">Revenue tracked · {days} days</Text>
@@ -949,7 +949,7 @@ export default function AppIndex() {
             </Card>
           </Grid.Cell>
 
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+          <Grid.Cell columnSpan={{ xs: 3, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
                 <Text as="p" variant="bodySm" tone="subdued">Orders tracked · {days} days</Text>
@@ -965,7 +965,7 @@ export default function AppIndex() {
             </Card>
           </Grid.Cell>
 
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+          <Grid.Cell columnSpan={{ xs: 3, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
                 <InlineStack align="space-between" blockAlign="center">
@@ -990,7 +990,7 @@ export default function AppIndex() {
             </Card>
           </Grid.Cell>
 
-          <Grid.Cell columnSpan={{ xs: 6, sm: 3, md: 3, lg: 3, xl: 3 }}>
+          <Grid.Cell columnSpan={{ xs: 3, sm: 3, md: 3, lg: 3, xl: 3 }}>
             <Card>
               <BlockStack gap="100">
                 <InlineStack align="space-between" blockAlign="center">

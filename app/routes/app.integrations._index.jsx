@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { formatDateTime } from "~/utils/formatDate";
 
 export async function loader({ request }) {
   const result = await authenticate.admin(request);
@@ -118,7 +119,7 @@ export default function IntegrationsIndex() {
       {/* Status row */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
         {[
-          { label: "Meta", status: metaConnected, desc: metaConnected ? (data.metaLastSyncedAt ? `Connected · spend synced ${new Date(data.metaLastSyncedAt).toLocaleString()}` : "Connected · not synced yet") : "Connect to enable Meta CAPI" },
+          { label: "Meta", status: metaConnected, desc: metaConnected ? (data.metaLastSyncedAt ? `Connected · spend synced ${formatDateTime(data.metaLastSyncedAt)}` : "Connected · not synced yet") : "Connect to enable Meta CAPI" },
           {
             label: "Google Ads",
             status: googleConnected && !data.googleSyncError && !!data.googleLastSyncedAt,
@@ -129,7 +130,7 @@ export default function IntegrationsIndex() {
                 : data.googleSyncError
                   ? "Connected · spend sync failing"
                   : data.googleLastSyncedAt
-                    ? `Spend synced ${new Date(data.googleLastSyncedAt).toLocaleString()}`
+                    ? `Spend synced ${formatDateTime(data.googleLastSyncedAt)}`
                     : "Connected · not synced yet",
           },
           { label: "Storefront tracking", status: storeTrackingActive, desc: storeTrackingActive ? "Events received in the last 48 hours" : "No storefront events in the last 48 hours" },

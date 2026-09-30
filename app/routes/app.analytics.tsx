@@ -19,6 +19,7 @@ import {
 } from "@shopify/polaris";
 import db from "../db.server";
 import { periodStart } from "~/utils/reportPeriod";
+import { formatDateTime } from "~/utils/formatDate";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
@@ -904,7 +905,7 @@ export default function AppAnalytics() {
               <Text as="p" tone="subdued">
                 {data.metaConnected
                   ? data.metaLastSyncedAt
-                    ? `No campaign data found for this period. Meta syncs automatically every 24h — last synced ${new Date(data.metaLastSyncedAt).toLocaleString()}.`
+                    ? `No campaign data found for this period. Meta syncs automatically every 24h — last synced ${formatDateTime(data.metaLastSyncedAt)}.`
                     : "Meta is connected. A sync will run automatically within the next 24 hours."
                   : <>
                       Connect your Meta ad account in{" "}

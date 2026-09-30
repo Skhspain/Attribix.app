@@ -2,6 +2,7 @@ import { json } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { formatDateTime } from "~/utils/formatDate";
 
 // Each step is "done" only when it's verifiably working, with a reason when
 // it isn't — connecting an account isn't the same as data arriving.
@@ -29,8 +30,8 @@ export async function loader({ request }) {
       : !meta.adAccountId
         ? { done: false, detail: "Connected, but no ad account chosen yet." }
         : recent(meta.lastSyncedAt, 2)
-          ? { done: true, detail: `Spend last synced ${new Date(meta.lastSyncedAt).toLocaleString()}.` }
-          : { done: false, detail: meta.lastSyncedAt ? `Last sync ${new Date(meta.lastSyncedAt).toLocaleString()} — more than 2 days ago.` : "Connected, but spend hasn't synced yet." },
+          ? { done: true, detail: `Spend last synced ${formatDateTime(meta.lastSyncedAt)}.` }
+          : { done: false, detail: meta.lastSyncedAt ? `Last sync ${formatDateTime(meta.lastSyncedAt)} — more than 2 days ago.` : "Connected, but spend hasn't synced yet." },
     google: !googleTokenOk
       ? { done: false, detail: "Not connected." }
       : !google.adCustomerId
@@ -38,15 +39,15 @@ export async function loader({ request }) {
         : google.lastSyncError
           ? { done: false, detail: `Connected, but spend isn't syncing: ${google.lastSyncError}` }
           : recent(google.lastSyncedAt, 2)
-            ? { done: true, detail: `Spend last synced ${new Date(google.lastSyncedAt).toLocaleString()}.` }
+            ? { done: true, detail: `Spend last synced ${formatDateTime(google.lastSyncedAt)}.` }
             : { done: false, detail: "Connected, but spend hasn't synced yet." },
     tracking: !tracking?.trackingEnabled
       ? { done: false, detail: "Tracking is switched off in Tracking & Attribution settings." }
       : recent(tracking?.pixelLastSeenAt, 2)
-        ? { done: true, detail: `Last storefront event ${new Date(tracking.pixelLastSeenAt).toLocaleString()}.` }
-        : { done: false, detail: tracking?.pixelLastSeenAt ? `No storefront events since ${new Date(tracking.pixelLastSeenAt).toLocaleString()}.` : "No storefront events received yet." },
+        ? { done: true, detail: `Last storefront event ${formatDateTime(tracking.pixelLastSeenAt)}.` }
+        : { done: false, detail: tracking?.pixelLastSeenAt ? `No storefront events since ${formatDateTime(tracking.pixelLastSeenAt)}.` : "No storefront events received yet." },
     conversions: recent(lastTrackedOrder?.createdAt, 30)
-      ? { done: true, detail: `Last order with a tracked visit: ${new Date(lastTrackedOrder.createdAt).toLocaleString()}.${lastSentOrder ? ` Last purchase sent to ad platforms: ${new Date(lastSentOrder.createdAt).toLocaleString()}.` : ""}` }
+      ? { done: true, detail: `Last order with a tracked visit: ${formatDateTime(lastTrackedOrder.createdAt)}.${lastSentOrder ? ` Last purchase sent to ad platforms: ${formatDateTime(lastSentOrder.createdAt)}.` : ""}` }
       : { done: false, detail: "No order with a tracked visit in the last 30 days yet." },
     widgets: widgetsLive === null
       ? { done: false, detail: "Couldn't check your storefront right now.", unknown: true }

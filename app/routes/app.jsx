@@ -142,6 +142,7 @@ export default function AppRoute() {
         <a href="/app/overview">Overview</a>
         {/* Ads & Attribution */}
         <a href="/app/analytics">Analytics</a>
+        <a href="/app/journey">Customer journeys</a>
         <a href="/app/meta-ads">Meta Ads</a>
         <a href="/app/google-ads">Google Ads</a>
         {/* <a href="/app/tiktok-ads">TikTok Ads</a> — hidden until TikTok dev app approved */}

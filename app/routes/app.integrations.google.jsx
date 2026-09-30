@@ -19,6 +19,7 @@ import {
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
+import { formatDateTime, formatDate } from "~/utils/formatDate";
 
 function isResponseLike(x) {
   return (
@@ -318,7 +319,7 @@ function GoogleIntegrationsInner({ data }) {
 
               {data.connected && data.expiresAt && (
                 <Text as="p" tone="subdued" variant="bodySm">
-                  Token expires: {new Date(data.expiresAt).toLocaleDateString()}
+                  Token expires: {formatDate(data.expiresAt)}
                 </Text>
               )}
 
@@ -368,8 +369,8 @@ function GoogleIntegrationsInner({ data }) {
                       <Text as="span" fontWeight="semibold">{formatCustomerId(data.adCustomerId)}</Text>
                     </Text>
                     <Text as="p" tone="subdued" variant="bodySm">
-                      {`Last successful sync: ${data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "never"}`}
-                      {data.lastSyncAttemptAt ? ` · last attempt: ${new Date(data.lastSyncAttemptAt).toLocaleString()}` : ""}
+                      {`Last successful sync: ${data.lastSyncedAt ? formatDateTime(data.lastSyncedAt) : "never"}`}
+                      {data.lastSyncAttemptAt ? ` · last attempt: ${formatDateTime(data.lastSyncAttemptAt)}` : ""}
                     </Text>
                   </BlockStack>
                 )}

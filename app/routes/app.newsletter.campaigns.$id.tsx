@@ -65,6 +65,20 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     .sort((a, b) => b.count - a.count);
   const sendingAvailable = !!process.env.SMTP_HOST;
 
+  // Sending domain, for the checklist. The merchant's address is only used as
+  // From when this domain is verified; otherwise mail goes from the shared one.
+  const domainStatus: string | null = newsletterSettings?.resendDomainStatus ?? null;
+  let verifiedDomain: string | null = null;
+  if (domainStatus === "verified" && newsletterSettings?.resendDomainId) {
+    const { getResendDomain } = await import("~/services/resend-api.server");
+    const res = await Promise.race([
+      getResendDomain(newsletterSettings.resendDomainId),
+      new Promise<null>((r) => setTimeout(() => r(null), 2500)),
+    ]).catch(() => null);
+    if (res && res.ok) verifiedDomain = res.domain.name?.toLowerCase() ?? null;
+  }
+  const sharedFromEmail = process.env.SMTP_FROM_EMAIL || "newsletters@attribix.email";
+
   // HMAC token used by the /api/newsletter/test-send endpoint so the client
   // can send a test email without needing a live Shopify session token.
   const { createHmac } = await import("node:crypto");
@@ -81,6 +95,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     progress,
     recipientPreview,
     sendingAvailable,
+    domainStatus,
+    verifiedDomain,
+    sharedFromEmail,
     testSendToken,
     defaultFromName: newsletterSettings?.fromName || brand.storeName || "",
     defaultFromEmail: newsletterSettings?.fromEmail || "",
@@ -425,13 +442,38 @@ export default function CampaignEditor() {
     }
   };
 
-  const checks = [
-    { label: "Subject line", ok: !!subject.trim(), value: subject || "Missing" },
-    { label: "Sender name", ok: !!fromName.trim(), value: fromName || "Missing" },
-    { label: "Recipients", ok: recipientPreview > 0, value: `${recipientPreview.toLocaleString()} subscribers` },
-    { label: "Store address in footer", ok: !missingAddress, value: missingAddress ? "Missing" : "Added" },
+  // Everything that decides whether (and how) this sends, in one place.
+  // Blocking items stop sending; the rest affect deliverability or replies.
+  const senderEmail = fromEmail.trim().toLowerCase();
+  const senderEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderEmail);
+  const senderDomain = senderEmailValid ? senderEmail.split("@")[1] : null;
+  const domainMatches = !!data.verifiedDomain && senderDomain === data.verifiedDomain;
+  const domainCheck = domainMatches
+    ? { ok: true, value: `${data.verifiedDomain} verified`, detail: `Sends from ${senderEmail}.` }
+    : data.domainStatus === "verified" && data.verifiedDomain && senderDomain
+      ? { ok: false, value: `Sender email isn't on ${data.verifiedDomain}`, detail: `${senderDomain} isn't verified, so inboxes may reject or spam-folder this email. Use an address on ${data.verifiedDomain} or verify ${senderDomain} in newsletter settings.` }
+      : data.domainStatus === "verified"
+        ? { ok: true, value: "Verified", detail: undefined }
+      : data.domainStatus === "pending"
+        ? { ok: false, value: "Verification pending", detail: `Until it's verified, this sends from ${data.sharedFromEmail} and replies go to your sender email.` }
+        : data.domainStatus === "failed"
+          ? { ok: false, value: "Verification failed", detail: `Sends from ${data.sharedFromEmail} for now. Check the DNS records in newsletter settings.` }
+          : { ok: false, value: "Not verified", detail: `Sends from ${data.sharedFromEmail} and replies go to your sender email. Verify your domain in newsletter settings to send from your own address.` };
+  const checks: { label: string; ok: boolean; value: string; detail?: string; blocking: boolean; url?: string }[] = [
+    { label: "Email sending", ok: sendingAvailable, value: sendingAvailable ? "Switched on" : "Not switched on for your store yet — contact Attribix support", blocking: true },
+    { label: "Subject line", ok: !!subject.trim(), value: subject || "Missing", blocking: true },
+    { label: "Sender name", ok: !!fromName.trim(), value: fromName || "Missing", blocking: true },
+    {
+      label: "Sender email", ok: senderEmailValid, blocking: false,
+      value: senderEmailValid ? senderEmail : senderEmail ? "Not a valid email address" : "Missing",
+      detail: senderEmailValid ? undefined : "Without it, replies from subscribers won't reach you. Add it under Settings.",
+    },
+    { label: "Sending domain", ...domainCheck, blocking: false, url: "/app/newsletter/settings" },
+    { label: "Recipients", ok: recipientPreview > 0, value: `${recipientPreview.toLocaleString()} subscribers`, blocking: true },
+    { label: "Store address in footer", ok: !missingAddress, value: missingAddress ? "Missing" : "Added", blocking: true },
   ];
-  const canSend = !isSent && sendingAvailable && checks.every((c) => c.ok) && !!doc;
+  const blockers = checks.filter((c) => c.blocking && !c.ok);
+  const canSend = !isSent && blockers.length === 0 && !!doc;
   const statusBadge: Record<string, { label: string; tone?: "success" | "info" | "attention" | "critical" }> = {
     draft: { label: "Draft" },
     scheduled: { label: "Scheduled", tone: "info" },
@@ -612,14 +654,29 @@ export default function CampaignEditor() {
               </Card>
               <Card>
                 <BlockStack gap="300">
-                  <Text as="h2" variant="headingMd">Checklist</Text>
+                  <BlockStack gap="050">
+                    <Text as="h2" variant="headingMd">Ready to send?</Text>
+                    <Text as="p" tone="subdued">
+                      {isSent
+                        ? "This newsletter has been sent."
+                        : blockers.length > 0
+                          ? `${blockers.length} thing${blockers.length === 1 ? "" : "s"} to fix before you can send.`
+                          : checks.some((c) => !c.ok)
+                            ? "Ready to send. The recommendations below improve delivery and replies."
+                            : "Everything's ready."}
+                    </Text>
+                  </BlockStack>
                   {checks.map((c) => (
                     <InlineGrid key={c.label} columns="1fr auto" gap="200">
                       <BlockStack gap="050">
                         <Text as="p" fontWeight="semibold">{c.label}</Text>
                         <Text as="p" tone="subdued" truncate>{c.value}</Text>
+                        {c.detail && !c.ok && <Text as="p" variant="bodySm" tone="subdued">{c.detail}</Text>}
+                        {c.url && !c.ok && <Box><Button variant="plain" onClick={() => navigate(c.url!)}>Open newsletter settings</Button></Box>}
                       </BlockStack>
-                      <Badge tone={c.ok ? "success" : "critical"}>{c.ok ? "Ready" : "Needs attention"}</Badge>
+                      <Badge tone={c.ok ? "success" : c.blocking ? "critical" : "attention"}>
+                        {c.ok ? "Ready" : c.blocking ? "Needs attention" : "Recommended"}
+                      </Badge>
                     </InlineGrid>
                   ))}
                 </BlockStack>

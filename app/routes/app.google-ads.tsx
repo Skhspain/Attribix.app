@@ -21,6 +21,7 @@ import {
 } from "@shopify/polaris";
 import db from "../db.server";
 import { RevenueSpendChart } from "~/components/RevenueSpendChart";
+import { formatDateTime } from "~/utils/formatDate";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
@@ -488,8 +489,8 @@ export default function GoogleAdsDetail() {
                 </Badge>
               </InlineStack>
               <Text as="p" tone="subdued">
-                {`Ad account ${formatCustomerId(data.adCustomerId)} · last successful sync: ${data.lastSyncedAt ? new Date(data.lastSyncedAt).toLocaleString() : "never"}`}
-                {data.lastSyncAttemptAt ? ` · last attempt: ${new Date(data.lastSyncAttemptAt).toLocaleString()}` : ""}
+                {`Ad account ${formatCustomerId(data.adCustomerId)} · last successful sync: ${data.lastSyncedAt ? formatDateTime(data.lastSyncedAt) : "never"}`}
+                {data.lastSyncAttemptAt ? ` · last attempt: ${formatDateTime(data.lastSyncAttemptAt)}` : ""}
               </Text>
               {dataUnavailable && (
                 <Banner tone="critical" title="Google Ads data couldn't be loaded, so the figures below are not real zeros">
@@ -715,7 +716,7 @@ export default function GoogleAdsDetail() {
             </InlineStack>
             {data.lastSyncedAt && (
               <Text as="p" variant="bodySm" tone="subdued">
-                Last synced: {new Date(data.lastSyncedAt).toLocaleString()}
+                Last synced: {formatDateTime(data.lastSyncedAt)}
               </Text>
             )}
             {campaignTableRows.length > 0 ? (
@@ -764,7 +765,7 @@ export default function GoogleAdsDetail() {
           </Button>
           {data.lastSyncedAt && (
             <Text as="p" variant="bodySm" tone="subdued">
-              Last synced: {new Date(data.lastSyncedAt).toLocaleString()}
+              Last synced: {formatDateTime(data.lastSyncedAt)}
             </Text>
           )}
         </InlineStack>

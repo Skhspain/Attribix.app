@@ -20,6 +20,7 @@ import {
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
+import { formatDateTime, formatDate } from "~/utils/formatDate";
 
 function isResponseLike(x) {
   return (
@@ -409,7 +410,7 @@ function MetaIntegrationsInner({ data }) {
 
               {connected && data.expiresAt && !data.businessLoginActive && (
                 <Text as="p" tone="subdued" variant="bodySm">
-                  Token expires: {new Date(data.expiresAt).toLocaleDateString()}
+                  Token expires: {formatDate(data.expiresAt)}
                 </Text>
               )}
 
@@ -480,7 +481,7 @@ function MetaIntegrationsInner({ data }) {
                             {data.connectedAssets.pixel.name} <code style={{ background: "#fff", padding: "1px 6px", borderRadius: 3, fontSize: 11 }}>{data.connectedAssets.pixel.id}</code>
                           </div>
                           {data.connectedAssets.pixel.lastFired && (
-                            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>Last fired: {new Date(data.connectedAssets.pixel.lastFired).toLocaleString()}</div>
+                            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>Last fired: {formatDateTime(data.connectedAssets.pixel.lastFired)}</div>
                           )}
                         </>
                       ) : (

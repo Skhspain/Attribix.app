@@ -119,6 +119,20 @@ function normalizeSource(purchase) {
   return null;
 }
 
+// Every order lands in exactly one bucket. Orders without a campaign are
+// split by whether we saw the visit at all, so missing data never reads as
+// direct traffic (same rules as Overview).
+const BUCKET_LABELS = { direct: "Direct (no referrer)", referral: "Referral", untracked: "Not tracked (visit unseen)" };
+function sourceBucket(purchase) {
+  const s = normalizeSource(purchase);
+  if (s) return s;
+  if (!purchase?.tracked) return "untracked";
+  return purchase?.referrer ? "referral" : "direct";
+}
+function bucketLabel(bucket) {
+  return BUCKET_LABELS[bucket] || bucket.charAt(0).toUpperCase() + bucket.slice(1);
+}
+
 function sourceBadgeTone(source) {
   if (!source) return "new";
   const s = source.toLowerCase();
@@ -157,23 +171,16 @@ export default function AppOrders() {
 
   const sourceOptions = useMemo(() => {
     const sources = new Set();
-    for (const p of purchases) {
-      const s = normalizeSource(p);
-      if (s) sources.add(s);
-    }
+    for (const p of purchases) sources.add(sourceBucket(p));
     return [
       { label: "All sources", value: "all" },
-      { label: "Direct / unknown", value: "direct" },
-      ...Array.from(sources).map((s) => ({ label: s.charAt(0).toUpperCase() + s.slice(1), value: s })),
+      ...Array.from(sources).map((s) => ({ label: bucketLabel(s), value: s })),
     ];
   }, [purchases]);
 
   const filtered = useMemo(() => {
     return purchases.filter((p) => {
-      const source = normalizeSource(p);
-
-      if (sourceFilter === "direct" && source !== null) return false;
-      if (sourceFilter !== "all" && sourceFilter !== "direct" && source !== sourceFilter) return false;
+      if (sourceFilter !== "all" && sourceBucket(p) !== sourceFilter) return false;
 
       if (search.trim()) {
         const q = search.trim().toLowerCase();
@@ -193,15 +200,16 @@ export default function AppOrders() {
   const sourceBreakdown = useMemo(() => {
     const map = new Map();
     for (const p of purchases) {
-      const src = normalizeSource(p) || "direct";
+      const src = sourceBucket(p);
       const cur = map.get(src) || { orders: 0, revenue: 0 };
       cur.orders++;
       cur.revenue += Number(p.totalValue || 0);
       map.set(src, cur);
     }
     const totalRev = Array.from(map.values()).reduce((s, r) => s + r.revenue, 0);
+    // Untracked last so it can't read as the top source.
     return Array.from(map.entries())
-      .sort((a, b) => b[1].orders - a[1].orders)
+      .sort((a, b) => (a[0] === "untracked") - (b[0] === "untracked") || b[1].orders - a[1].orders)
       .map(([src, r]) => ({
         source: src,
         orders: r.orders,
@@ -219,7 +227,7 @@ export default function AppOrders() {
       source
         ? <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
         : p.tracked
-          ? <Text as="span" variant="bodySm" tone="subdued">direct</Text>
+          ? <Text as="span" variant="bodySm" tone="subdued">{p.referrer ? "referral" : "direct (no referrer)"}</Text>
           : <Tooltip content="We didn't see this buyer's visit, so the source is unknown. Possible reasons include declined cookies, ad blockers or a different device. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>,
       <Text as="span" variant="bodySm" tone="subdued">{p.campaignLabel || "—"}</Text>,
       <Text as="span" variant="bodySm" tone="subdued" title={p.landingPage || ""}>{truncateUrl(p.landingPage)}</Text>,
@@ -310,20 +318,20 @@ export default function AppOrders() {
             {sourceBreakdown.map(({ source, orders, revenue, share }) => (
               <div
                 key={source}
-                onClick={() => setSourceFilter(source === "direct" ? "direct" : source)}
+                onClick={() => setSourceFilter(source)}
                 style={{
                   cursor: "pointer",
-                  border: `2px solid ${sourceFilter === source || (sourceFilter === "direct" && source === "direct") ? "#303030" : "#e1e3e5"}`,
+                  border: `2px solid ${sourceFilter === source ? "#303030" : "#e1e3e5"}`,
                   borderRadius: 12,
                   padding: "12px 16px",
                   minWidth: 140,
-                  background: sourceFilter === source || (sourceFilter === "direct" && source === "direct") ? "#f6f6f7" : "#fff",
+                  background: sourceFilter === source ? "#f6f6f7" : "#fff",
                   transition: "border-color 0.15s",
                 }}
               >
                 <BlockStack gap="050">
                   <Text as="p" variant="headingXl" fontWeight="bold">{share}%</Text>
-                  <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
+                  <Badge tone={sourceBadgeTone(source)}>{bucketLabel(source)}</Badge>
                   <Text as="p" variant="bodySm" tone="subdued">{orders} orders · {formatMoney(revenue, storeCurrency)}</Text>
                 </BlockStack>
               </div>

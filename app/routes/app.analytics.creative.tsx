@@ -9,6 +9,7 @@ import {
   Page, Card, BlockStack, InlineStack, Text, Badge, Select, Grid, Button, Icon,
 } from "@shopify/polaris";
 import { useState } from "react";
+import { formatDateTime } from "~/utils/formatDate";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session, admin } = await authenticate.admin(request);
@@ -348,7 +349,7 @@ export default function CreativeAnalyticsPage() {
             </InlineStack>
             {lastSync && (
               <Text as="p" variant="bodySm" tone="subdued">
-                Last sync: {new Date(lastSync).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} {new Date(lastSync).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                Last sync: {formatDateTime(lastSync)}
               </Text>
             )}
           </InlineStack>

@@ -194,8 +194,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   ).length;
   const converted = allLeads.filter((l: Lead) => l.status === "converted").length;
   const qualified = allLeads.filter((l: Lead) => l.status === "qualified").length;
+  // No leads means no rate, not a 0% one.
   const conversionRate =
-    totalLeads > 0 ? Math.round((converted / totalLeads) * 100) : 0;
+    totalLeads > 0 ? Math.round((converted / totalLeads) * 100) : null;
 
   // Webhook token + Meta connection status
   const trackingSettings = await anyDb.trackingSettings?.findUnique?.({ where: { shop } }).catch(() => null);
@@ -212,7 +213,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       updatedAt: l.updatedAt instanceof Date ? (l.updatedAt as Date).toISOString() : String(l.updatedAt),
       convertedAt: l.convertedAt ? (l.convertedAt instanceof Date ? (l.convertedAt as Date).toISOString() : String(l.convertedAt)) : null,
     })),
-    stats: { totalLeads, newToday, conversionRate, qualified },
+    stats: { totalLeads, newToday, conversionRate, qualified, converted },
     statusFilter,
     sourceFilter,
     webhookUrl,
@@ -977,11 +978,11 @@ export default function LeadsPage() {
         )}
 
         {/* 3 metric cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
           {[
-            { icon: "👥", label: "Total leads", value: stats.totalLeads, sub: "across all sources" },
-            { icon: "✅", label: "Qualified", value: stats.qualified, sub: "ready to convert" },
-            { icon: "🏆", label: "Converted", value: stats.totalLeads > 0 ? Math.round((stats.conversionRate / 100) * stats.totalLeads) : 0, sub: `${stats.conversionRate}% conversion rate` },
+            { icon: "👥", label: "Total leads", value: stats.totalLeads, sub: stats.totalLeads > 0 ? "across all sources" : "No data yet" },
+            { icon: "✅", label: "Qualified", value: stats.qualified, sub: stats.totalLeads > 0 ? "ready to convert" : "No data yet" },
+            { icon: "🏆", label: "Converted", value: stats.converted, sub: stats.conversionRate === null ? "No data yet" : `${stats.conversionRate}% conversion rate` },
           ].map(card => (
             <Card key={card.label}>
               <BlockStack gap="100">

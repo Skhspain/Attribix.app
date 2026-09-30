@@ -148,8 +148,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // ─── Source config ────────────────────────────────────────────────────────────
 
 const SOURCE_CFG: Record<string, { color: string; label: string; icon: string; textColor?: string }> = {
-  direct:    { color: "#4B5563", label: "Direct visit", icon: "↗" },
-  untracked: { color: "#B5B5B5", label: "No touchpoints captured", icon: "?" },
+  direct:    { color: "#6B7280", label: "Direct (no referrer)", icon: "↗" },
+  untracked: { color: "#D1D5DB", label: "Not tracked (visit unseen)", icon: "?", textColor: "#374151" },
   google:    { color: "#4285F4", label: "Google",       icon: "G" },
   meta:      { color: "#0866FF", label: "Meta",         icon: "M" },
   instagram: { color: "#C13584", label: "Instagram",    icon: "IG" },
@@ -367,7 +367,9 @@ export default function JourneyPage() {
         </div>
 
         {/* ── Two-column middle section ─────────────────────────────── */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 16, alignItems: "start" }}>
+        {/* Sidebar drops below the main column on narrow screens */}
+        <style>{`.journey-cols{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start}@media (max-width:900px){.journey-cols{grid-template-columns:minmax(0,1fr)}}`}</style>
+        <div className="journey-cols">
 
           {/* LEFT */}
           <BlockStack gap="400">
@@ -467,6 +469,8 @@ export default function JourneyPage() {
                     <Button size="slim" variant="plain" onClick={() => {}}>View all journeys</Button>
                   </InlineStack>
 
+                  <div style={{ overflowX: "auto" }}>
+                  <div style={{ minWidth: 560 }}>
                   {/* Table header */}
                   <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 90px 90px 110px", gap: 8, paddingBottom: 8, borderBottom: "1px solid #F0F0F0" }}>
                     {["Order", "Journey", "Touchpoints", "Revenue", "Time to purchase"].map(h => (
@@ -499,6 +503,8 @@ export default function JourneyPage() {
                       <Text as="p" variant="bodySm" tone="subdued">{j.timeToPurchase}</Text>
                     </div>
                   ))}
+                  </div>
+                  </div>
 
                   <Text as="p" variant="bodySm" tone="subdued">
                     Showing {recentJourneys.length} of {totalOrders} orders ({capturedCount} with captured touchpoints)

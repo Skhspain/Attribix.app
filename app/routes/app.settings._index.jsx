@@ -8,6 +8,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import { SettingsNav } from "~/components/SettingsNav";
+import { formatDateTime } from "~/utils/formatDate";
 
 async function getCurrentShop(request) {
   const { session } = await authenticate.admin(request);
@@ -257,7 +258,7 @@ export default function TrackingAndAttributionPage() {
                 <Button onClick={() => submitKeyAction("generateTrackingKey")} loading={isKeyBusy}>Generate tracking key</Button>
               )}
               {latestSettings?.lastEventAt && (
-                <Text as="p" variant="bodySm" tone="subdued">Last event received: {new Date(latestSettings.lastEventAt).toLocaleString()}</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Last event received: {formatDateTime(latestSettings.lastEventAt)}</Text>
               )}
             </BlockStack>
           </Card>

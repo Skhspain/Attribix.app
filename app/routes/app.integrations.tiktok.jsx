@@ -19,6 +19,7 @@ import {
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
+import { formatDateTime } from "~/utils/formatDate";
 
 function getAppOrigin(request) {
   const url = new URL(request.url);
@@ -51,7 +52,7 @@ export async function loader({ request }) {
     appOrigin,
     connected,
     advertiserId: conn?.advertiserId || null,
-    lastSyncedAt: conn?.lastSyncedAt ? new Date(conn.lastSyncedAt).toLocaleString() : null,
+    lastSyncedAt: conn?.lastSyncedAt ? formatDateTime(conn.lastSyncedAt) : null,
   });
 }
 
