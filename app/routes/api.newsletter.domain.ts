@@ -54,11 +54,13 @@ export async function action({ request }: ActionFunctionArgs) {
         footerText: settings?.footerText ?? "",
         resendDomainId: result.domain.id,
         resendDomainStatus: result.domain.status,
+        resendDomainName: result.domain.name?.toLowerCase() ?? null,
         resendDomainRecords: result.domain.records,
       },
       update: {
         resendDomainId: result.domain.id,
         resendDomainStatus: result.domain.status,
+        resendDomainName: result.domain.name?.toLowerCase() ?? null,
         resendDomainRecords: result.domain.records,
       },
     }).catch(() => null);
@@ -77,6 +79,7 @@ export async function action({ request }: ActionFunctionArgs) {
       where: { shop },
       data: {
         resendDomainStatus: result.domain.status,
+        resendDomainName: result.domain.name?.toLowerCase() ?? null,
         resendDomainRecords: result.domain.records,
       },
     }).catch(() => null);
@@ -90,7 +93,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     await anyDb.newsletterSettings?.update?.({
       where: { shop },
-      data: { resendDomainId: null, resendDomainStatus: null, resendDomainRecords: null },
+      data: { resendDomainId: null, resendDomainStatus: null, resendDomainName: null, resendDomainRecords: null },
     }).catch(() => null);
 
     return json({ ok: true });

@@ -100,23 +100,53 @@ export function ensureUnsubscribeFooter(html: string, footerText?: string) {
   return html.includes("</body>") ? html.replace("</body>", `${footer}</body>`) : html + footer;
 }
 
+/** The domain part of an email address, lowercased; null if it isn't one. */
+export function emailDomain(email?: string | null): string | null {
+  const m = /^[^\s@]+@([^\s@]+\.[^\s@]+)$/.exec((email ?? "").trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
 /**
  * Sender for marketing mail. The merchant's own address is only used as From
- * when their domain is verified (otherwise DMARC fails); until then we send from
- * the shared domain and route replies to the merchant.
+ * when it's on their verified domain (otherwise DMARC fails); any other
+ * address sends from the shared domain with replies routed to the merchant.
  */
 export function senderFor(opts: {
   fromName?: string | null;
   merchantEmail?: string | null;
   replyTo?: string | null;
-  domainVerified: boolean;
+  /** The shop's verified sending domain, or null if none is verified. */
+  verifiedDomain: string | null;
   shop: string;
 }) {
   const name = (opts.fromName || opts.shop.replace(".myshopify.com", "")).replace(/[<>"]/g, "");
   const shared = process.env.SMTP_FROM_EMAIL || "newsletters@attribix.email";
-  const fromEmail = opts.domainVerified && opts.merchantEmail ? opts.merchantEmail : shared;
+  const onVerifiedDomain = !!opts.verifiedDomain && emailDomain(opts.merchantEmail) === opts.verifiedDomain.toLowerCase();
+  const fromEmail = onVerifiedDomain ? opts.merchantEmail!.trim() : shared;
   const replyTo = opts.replyTo || (fromEmail === shared ? opts.merchantEmail : undefined) || undefined;
   return { from: `${name} <${fromEmail}>`, replyTo };
+}
+
+/**
+ * The shop's verified sending domain, or null. Domains verified before the
+ * name was stored are looked up once from Resend and saved.
+ */
+export async function verifiedSendingDomain(shop: string): Promise<string | null> {
+  const anyDb = db as any;
+  const settings = await anyDb.newsletterSettings
+    ?.findUnique?.({ where: { shop }, select: { resendDomainId: true, resendDomainStatus: true, resendDomainName: true } })
+    .catch(() => null);
+  if (settings?.resendDomainStatus !== "verified") return null;
+  if (settings.resendDomainName) return String(settings.resendDomainName).toLowerCase();
+  if (!settings.resendDomainId) return null;
+
+  const { getResendDomain } = await import("~/services/resend-api.server");
+  const res = await getResendDomain(settings.resendDomainId).catch(() => null);
+  const name = res && res.ok ? res.domain.name?.toLowerCase() ?? null : null;
+  if (name) {
+    await anyDb.newsletterSettings?.update?.({ where: { shop }, data: { resendDomainName: name } }).catch(() => null);
+  }
+  return name;
 }
 
 // Click tracking: links are signed so /api/newsletter/track can't be used as an
@@ -311,7 +341,7 @@ async function sendConfirmationEmail(shop: string, email: string, firstName?: st
     fromName: storeName,
     merchantEmail: settings?.fromEmail,
     replyTo: settings?.replyTo,
-    domainVerified: settings?.resendDomainStatus === "verified",
+    verifiedDomain: await verifiedSendingDomain(shop),
     shop,
   });
   const result = await sendEmail({ from: sender.from, replyTo: sender.replyTo, to: email, subject: `Confirm your subscription to ${storeName}`, html, tags: [{ name: "shop", value: shop }, { name: "kind", value: "confirm" }] });
@@ -402,7 +432,7 @@ export async function prepareCampaign(campaign: any): Promise<PreparedCampaign> 
     fromName: campaign.fromName,
     merchantEmail: campaign.fromEmail,
     replyTo: campaign.replyTo,
-    domainVerified: settings?.resendDomainStatus === "verified",
+    verifiedDomain: await verifiedSendingDomain(campaign.shop),
     shop: campaign.shop,
   });
 

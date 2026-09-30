@@ -68,15 +68,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Sending domain, for the checklist. The merchant's address is only used as
   // From when this domain is verified; otherwise mail goes from the shared one.
   const domainStatus: string | null = newsletterSettings?.resendDomainStatus ?? null;
-  let verifiedDomain: string | null = null;
-  if (domainStatus === "verified" && newsletterSettings?.resendDomainId) {
-    const { getResendDomain } = await import("~/services/resend-api.server");
-    const res = await Promise.race([
-      getResendDomain(newsletterSettings.resendDomainId),
-      new Promise<null>((r) => setTimeout(() => r(null), 2500)),
-    ]).catch(() => null);
-    if (res && res.ok) verifiedDomain = res.domain.name?.toLowerCase() ?? null;
-  }
+  const { verifiedSendingDomain } = await import("~/services/newsletter.server");
+  const verifiedDomain = await Promise.race([
+    verifiedSendingDomain(shop),
+    new Promise<null>((r) => setTimeout(() => r(null), 2500)),
+  ]).catch(() => null);
   const sharedFromEmail = process.env.SMTP_FROM_EMAIL || "newsletters@attribix.email";
 
   // HMAC token used by the /api/newsletter/test-send endpoint so the client

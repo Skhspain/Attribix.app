@@ -9,6 +9,7 @@ import {
   personalize,
   senderFor,
   unsubscribeUrlFor,
+  verifiedSendingDomain,
 } from "~/services/newsletter.server";
 
 let processorStarted = false;
@@ -102,7 +103,7 @@ export async function processAutomationQueue() {
         fromName: settings?.fromName,
         merchantEmail: settings?.fromEmail,
         replyTo: settings?.replyTo,
-        domainVerified: settings?.resendDomainStatus === "verified",
+        verifiedDomain: await verifiedSendingDomain(enrollment.shop),
         shop: enrollment.shop,
       });
 

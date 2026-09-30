@@ -40,12 +40,22 @@ describe("email preparation", () => {
   });
 
   it("uses the merchant address as From only when their domain is verified", () => {
-    const unverified = senderFor({ fromName: "LD", merchantEmail: "hi@ld.com", domainVerified: false, shop: "ld.myshopify.com" });
+    const unverified = senderFor({ fromName: "LD", merchantEmail: "hi@ld.com", verifiedDomain: null, shop: "ld.myshopify.com" });
     expect(unverified.from).not.toContain("hi@ld.com");
     expect(unverified.replyTo).toBe("hi@ld.com");
 
-    const verified = senderFor({ fromName: "LD", merchantEmail: "hi@ld.com", domainVerified: true, shop: "ld.myshopify.com" });
-    expect(verified.from).toBe("LD <hi@ld.com>");
+    const verified = senderFor({ fromName: "LD", merchantEmail: "hi@LD.com", verifiedDomain: "ld.com", shop: "ld.myshopify.com" });
+    expect(verified.from).toBe("LD <hi@LD.com>");
+  });
+
+  it("never sends From an address on a different domain than the verified one", () => {
+    const other = senderFor({ fromName: "LD", merchantEmail: "hi@gmail.com", verifiedDomain: "ld.com", shop: "ld.myshopify.com" });
+    expect(other.from).not.toContain("gmail.com");
+    expect(other.replyTo).toBe("hi@gmail.com");
+
+    // A subdomain or look-alike isn't the verified domain either.
+    expect(senderFor({ merchantEmail: "hi@mail.ld.com", verifiedDomain: "ld.com", shop: "ld.myshopify.com" }).from).not.toContain("mail.ld.com");
+    expect(senderFor({ merchantEmail: "hi@notld.com", verifiedDomain: "ld.com", shop: "ld.myshopify.com" }).from).not.toContain("notld.com");
   });
 
   it("sets one-click unsubscribe headers", () => {

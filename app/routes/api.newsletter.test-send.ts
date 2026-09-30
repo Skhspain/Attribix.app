@@ -62,12 +62,12 @@ export async function action({ request }: ActionFunctionArgs) {
     select: { resendDomainStatus: true, footerText: true },
   }).catch(() => null);
 
-  const { senderFor, personalize, ensureUnsubscribeFooter } = await import("~/services/newsletter.server");
+  const { senderFor, personalize, ensureUnsubscribeFooter, verifiedSendingDomain } = await import("~/services/newsletter.server");
   const sender = senderFor({
     fromName: bodyFromName || campaign.fromName,
     merchantEmail: campaign.fromEmail,
     replyTo: campaign.replyTo,
-    domainVerified: nlSettings?.resendDomainStatus === "verified",
+    verifiedDomain: await verifiedSendingDomain(shop),
     shop,
   });
 

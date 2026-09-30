@@ -340,6 +340,8 @@ model NewsletterSettings {
   // Resend domain verification
   resendDomainId      String?
   resendDomainStatus  String?  // "pending" | "verified" | "failed"
+  // The registered domain ("example.com"); From may only use addresses on it.
+  resendDomainName    String?
   resendDomainRecords Json?
 
   createdAt DateTime @default(now())

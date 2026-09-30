@@ -330,6 +330,7 @@ model NewsletterSettings {
   doubleOptIn       Boolean @default(false)
   resendDomainId      String?
   resendDomainStatus  String?
+  resendDomainName    String?
   resendDomainRecords Json?
 
   createdAt DateTime @default(now())
