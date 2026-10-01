@@ -5,6 +5,7 @@ import { Banner, Button, InlineStack, Text } from "@shopify/polaris";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import shopify, { authenticate } from "~/shopify.server";
 import { useEffect, useState } from "react";
+import { rememberVisitedPath } from "~/components/overview/storage";
 
 // Meta Pixel browser-side tracking is handled by the attribix-pixel web pixel
 // extension (extensions/attribix-pixel). Storefront widgets (reviews, newsletter,
@@ -122,6 +123,8 @@ export default function AppRoute() {
   // Going to another page (not just submitting a form on this one): fade the
   // current page so it isn't mistaken for the destination while it loads.
   const changingPage = navigation.state === "loading" && !!navigation.location && navigation.location.pathname !== location.pathname;
+  // Lets Overview tell which tools the merchant has already opened.
+  useEffect(() => { rememberVisitedPath(location.pathname); }, [location.pathname]);
 
   return (
     <AppProvider apiKey={apiKey} isEmbeddedApp>
