@@ -4,6 +4,7 @@ import { useLoaderData, useNavigate } from "@remix-run/react";
 import { Badge, Banner, BlockStack, Button, Card, InlineStack, Page, Text } from "@shopify/polaris";
 import { periodStart } from "~/utils/reportPeriod";
 import { offlineChannelLabel, orderSource } from "~/utils/orderSource";
+import { formatDate } from "~/utils/formatDate";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
@@ -101,6 +102,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       offlineLabel: kind === "offline" ? offlineChannelLabel(p) : null,
       touchpoints: kind === "full" ? steps.length : null,
       revenue: Number(p.totalValue || 0),
+      createdAt: p.createdAt,
       timeToPurchase,
     };
   });
@@ -146,9 +148,28 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   // Most informative first: full journeys, then known sources, then the rest.
   const kindRank: Record<Kind, number> = { full: 0, source: 1, offline: 2, unknown: 3 };
-  const recentJourneys = [...journeys]
+  const listed = [...journeys]
     .sort((a: any, b: any) => kindRank[a.kind as Kind] - kindRank[b.kind as Kind] || b.revenue - a.revenue)
     .slice(0, 8);
+
+  // Merchants know orders by name ("#1042"), not by Shopify's internal id.
+  const names = new Map<string, string>();
+  const numericIds = listed.map((j: any) => String(j.orderId)).filter((id: string) => /^\d+$/.test(id));
+  if (numericIds.length) {
+    try {
+      const res = await admin.graphql(`#graphql
+        query OrderNames($ids: [ID!]!) { nodes(ids: $ids) { ... on Order { legacyResourceId name } } }`,
+        { variables: { ids: numericIds.map((id: string) => `gid://shopify/Order/${id}`) } });
+      for (const n of ((await res.json())?.data?.nodes ?? []).filter(Boolean)) names.set(String(n.legacyResourceId), n.name);
+    } catch {
+      // Fall back to the id.
+    }
+  }
+  const recentJourneys = listed.map((j: any) => ({
+    ...j,
+    name: names.get(String(j.orderId)) ?? null,
+    date: j.createdAt ? formatDate(j.createdAt) : null,
+  }));
 
   // Date range label
   const dateLabel = `${since30.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })} – ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}`;
@@ -167,6 +188,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 const SOURCE_CFG: Record<string, { color: string; label: string; icon: string; textColor?: string }> = {
   direct:    { color: "#6B7280", label: "Direct (no referrer)", icon: "↗" },
   referral:  { color: "#8B5CF6", label: "Referral",  icon: "↪" },
+  offline:   { color: "#A16207", label: "Not online", icon: "✎" },
   untracked: { color: "#D1D5DB", label: "Not tracked (visit unseen)", icon: "?", textColor: "#374151" },
   google:    { color: "#4285F4", label: "Google",       icon: "G" },
   meta:      { color: "#0866FF", label: "Meta",         icon: "M" },
@@ -177,6 +199,19 @@ const SOURCE_CFG: Record<string, { color: string; label: string; icon: string; t
   bing:      { color: "#00A4EF", label: "Bing",         icon: "B" },
   yahoo:     { color: "#6001D2", label: "Yahoo",        icon: "Y" },
 };
+
+// One readable line about what's known for an order's journey.
+function journeyDetail(j: any): string {
+  const names = j.channels.map((ch: string) => SOURCE_CFG[ch]?.label || ch);
+  if (j.kind === "full") {
+    const visits = `${j.touchpoints} visit${j.touchpoints === 1 ? "" : "s"}`;
+    const timing = j.timeToPurchase !== "Unknown" ? ` · first visit ${j.timeToPurchase === "< 1 hour" ? "under an hour" : j.timeToPurchase} before buying` : "";
+    return `${names.join(" → ")} · ${visits}${timing}`;
+  }
+  if (j.kind === "source") return `${names[0]} · source only, no visit history`;
+  if (j.kind === "offline") return j.offlineLabel ?? "Not an online order";
+  return "Visit not seen · source unknown";
+}
 
 function fmt(v: number, currency = "USD") {
   try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(v); }
@@ -503,47 +538,40 @@ export default function JourneyPage() {
                   <InlineStack align="space-between" blockAlign="center">
                     <BlockStack gap="025">
                       <Text as="h2" variant="headingMd">Order journeys</Text>
-                      <Text as="p" variant="bodySm" tone="subdued">Full journeys first, then orders with only a known source.</Text>
+                      <Text as="p" variant="bodySm" tone="subdued">Full journeys first, then orders where only the source is known.</Text>
                     </BlockStack>
                   </InlineStack>
 
-                  <div style={{ overflowX: "auto" }}>
-                  <div style={{ minWidth: 560 }}>
-                  {/* Table header */}
-                  <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 90px 90px 110px", gap: 8, paddingBottom: 8, borderBottom: "1px solid #F0F0F0" }}>
-                    {["Order", "Journey", "Touchpoints", "Revenue", "Time to purchase"].map(h => (
-                      <Text key={h} as="p" variant="bodySm" tone="subdued" fontWeight="semibold">{h}</Text>
-                    ))}
-                  </div>
-
-                  {/* Table rows */}
-                  {recentJourneys.map((j, i) => (
-                    <div key={j.orderId} style={{
-                      display: "grid", gridTemplateColumns: "130px 1fr 90px 90px 110px",
-                      gap: 8, alignItems: "center",
-                      paddingBottom: i < recentJourneys.length - 1 ? 12 : 0,
-                      borderBottom: i < recentJourneys.length - 1 ? "1px solid #F9F9F9" : "none",
-                    }}>
-                      <Text as="p" variant="bodySm" tone="subdued">#{j.orderId}</Text>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        {j.kind === "unknown" ? (
-                        <Text as="p" variant="bodySm" tone="subdued">Unknown — visit not seen</Text>
-                      ) : j.kind === "offline" ? (
-                        <Text as="p" variant="bodySm" tone="subdued">{j.offlineLabel ?? "Not an online order"}</Text>
-                      ) : j.channels.map((ch: string, ci: number) => (
-                          <div key={ci} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <ChannelBox channel={ch} size={26} />
-                            <Arrow size={14} />
-                          </div>
-                        ))}
-                        {(j.kind === "full" || j.kind === "source") && <PurchaseBox size={26} />}
+                  {/* One line per order: path, order + plain-English detail, revenue.
+                      Fits the narrow column without sideways scrolling. */}
+                  <div>
+                    {recentJourneys.map((j: any, i: number) => (
+                      <div key={j.orderId} style={{
+                        display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto",
+                        gap: 12, alignItems: "center", padding: "10px 0",
+                        borderTop: i === 0 ? "none" : "1px solid #F1F2F4",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {j.kind === "full" || j.kind === "source"
+                            ? j.channels.map((ch: string, ci: number) => (
+                                <div key={ci} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                  <ChannelBox channel={ch} size={28} />
+                                  <Arrow size={12} />
+                                </div>
+                              ))
+                            : <><ChannelBox channel={j.kind === "offline" ? "offline" : "untracked"} size={28} /><Arrow size={12} /></>}
+                          <PurchaseBox size={28} />
+                        </div>
+                        <BlockStack gap="025">
+                          <Text as="p" variant="bodyMd" fontWeight="semibold" truncate>
+                            {j.name ?? `Order ${j.orderId}`}
+                            {j.date ? <Text as="span" variant="bodySm" tone="subdued">{` · ${j.date}`}</Text> : null}
+                          </Text>
+                          <Text as="p" variant="bodySm" tone="subdued" truncate>{journeyDetail(j)}</Text>
+                        </BlockStack>
+                        <Text as="p" variant="bodyMd" fontWeight="semibold" alignment="end">{fmt(j.revenue, currency)}</Text>
                       </div>
-                      <Text as="p" variant="bodySm" tone={j.kind === "full" ? undefined : "subdued"}>{j.touchpoints ?? (j.kind === "offline" ? "—" : j.kind === "source" ? "Source only" : "Unknown")}</Text>
-                      <Text as="p" variant="bodySm" fontWeight="semibold">{fmt(j.revenue, currency)}</Text>
-                      <Text as="p" variant="bodySm" tone="subdued">{j.timeToPurchase}</Text>
-                    </div>
-                  ))}
-                  </div>
+                    ))}
                   </div>
 
                   <Text as="p" variant="bodySm" tone="subdued">
