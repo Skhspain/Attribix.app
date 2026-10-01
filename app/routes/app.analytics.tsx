@@ -20,6 +20,7 @@ import {
 import db from "../db.server";
 import { periodStart } from "~/utils/reportPeriod";
 import { formatDateTime } from "~/utils/formatDate";
+import { useReportPeriod } from "~/utils/useReportPeriod";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
@@ -287,7 +288,7 @@ function KPI({ label, value, sub, highlight }: { label: string; value: string; s
 export default function AppAnalytics() {
   const data = useLoaderData<typeof loader>();
   const nav = useNavigate();
-  const [window, setWindow] = useState<"7" | "14" | "30">("7");
+  const [window, setWindow] = useReportPeriod(["7", "14", "30"] as const);
   const locationBackfill = useFetcher<{ ok: boolean; updated: number; total: number; message?: string }>();
 
   const currency = data.storeCurrency;

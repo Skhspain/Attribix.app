@@ -342,15 +342,8 @@ export default function NewsletterOverview() {
           <Text as="h1" variant="headingXl" fontWeight="bold">Newsletter overview</Text>
           <Text as="p" variant="bodySm" tone="subdued">Grow your audience, engage your subscribers and drive more revenue.</Text>
           <div style={{ marginTop: 10 }}>
-            <button style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "6px 14px", border: "1px solid #E5E7EB", borderRadius: 8,
-              background: "#fff", cursor: "default", fontSize: 13, color: "#374151",
-            }}>
-              <span>📅</span>
-              <span>{d.startLabel} – {d.endLabel}</span>
-              <span style={{ color: "#9CA3AF" }}>▾</span>
-            </button>
+            {/* A label, not a picker: this page always shows the last 30 days. */}
+            <Text as="p" variant="bodySm" tone="subdued">Last 30 days · {d.startLabel} – {d.endLabel}</Text>
           </div>
         </div>
 

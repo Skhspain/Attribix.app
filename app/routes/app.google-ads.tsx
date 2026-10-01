@@ -22,6 +22,7 @@ import {
 import db from "../db.server";
 import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 import { formatDateTime } from "~/utils/formatDate";
+import { useReportPeriod } from "~/utils/useReportPeriod";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
@@ -249,7 +250,7 @@ export default function GoogleAdsDetail() {
   const data = useLoaderData<typeof loader>();
   const revalidator = useRevalidator();
   const authFetch = useAuthenticatedFetch();
-  const [window, setWindow] = useState<"7" | "14" | "30" | "90">("7");
+  const [window, setWindow] = useReportPeriod(["7", "14", "30", "90"] as const);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const windowDays = Number(window);
