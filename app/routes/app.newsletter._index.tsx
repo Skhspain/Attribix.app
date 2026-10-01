@@ -5,7 +5,7 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import { Card, Text, BlockStack, InlineStack, Button, Badge } from "@shopify/polaris";
+import { Box, Card, Text, BlockStack, InlineStack, Button, Badge } from "@shopify/polaris";
 import { useState } from "react";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
@@ -273,6 +273,59 @@ export default function NewsletterOverview() {
   const nextStep = d.setupSteps.find((st: any) => !st.done && st.key !== "domain") ?? d.setupSteps.find((st: any) => !st.done);
 
   const totalSourceSubs = d.sourceCounts.reduce((s: number, x: any) => s + x.count, 0);
+
+  // Before there's anyone to email or anything sent, the charts are all
+  // zeros. Show just the steps to get started instead.
+  const isNew = d.totalSubscribers === 0 && d.totalCampaignsSent === 0;
+  if (isNew) {
+    const STEP_HELP: Record<string, string> = {
+      sender: "The name and address subscribers see, and where replies go.",
+      domain: "Lets emails come from your own address and keeps them out of spam. Optional to start.",
+      subscribers: "Add a sign-up form to your store so visitors can join your list.",
+      flow: "Automatically welcome new subscribers, often with a discount code.",
+      send: "Design and send a newsletter once you have subscribers.",
+    };
+    return (
+      <Box maxWidth="720px">
+        <BlockStack gap="400">
+          <BlockStack gap="100">
+            <Text as="h1" variant="headingXl" fontWeight="bold">Newsletter</Text>
+            <Text as="p" tone="subdued">
+              Set up these steps to start collecting subscribers and sending emails. Results and charts appear here once you have subscribers.
+            </Text>
+          </BlockStack>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">Get started</Text>
+                <Text as="p" variant="bodySm" tone="subdued">{setupDone} of {d.setupSteps.length} done</Text>
+              </InlineStack>
+              <div style={{ background: "#F3F4F6", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${(setupDone / d.setupSteps.length) * 100}%`, background: "#16A34A" }} />
+              </div>
+              {d.setupSteps.map((step: any, i: number) => (
+                <div key={step.key} style={{ display: "grid", gridTemplateColumns: "28px minmax(0, 1fr) auto", gap: 12, alignItems: "center" }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                    background: step.done ? "#16A34A" : "#F3F4F6", color: step.done ? "#fff" : "#6B7280", fontSize: 13, fontWeight: 700,
+                  }}>
+                    {step.done ? "✓" : i + 1}
+                  </div>
+                  <BlockStack gap="025">
+                    <Text as="p" fontWeight="semibold" tone={step.done ? "subdued" : undefined}>{step.label}</Text>
+                    {!step.done && <Text as="p" variant="bodySm" tone="subdued">{STEP_HELP[step.key]}</Text>}
+                  </BlockStack>
+                  {step.done
+                    ? <Badge tone="success">Done</Badge>
+                    : <Button variant={step === nextStep ? "primary" : "secondary"} onClick={() => navigate(step.url)}>{step.cta}</Button>}
+                </div>
+              ))}
+            </BlockStack>
+          </Card>
+        </BlockStack>
+      </Box>
+    );
+  }
 
   return (
     <div className="ax-nl-overview">
