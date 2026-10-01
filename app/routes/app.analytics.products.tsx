@@ -32,7 +32,7 @@ async function fetchShopifyOrders(shop: string, accessToken: string, since: Date
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const accessToken = session.accessToken!;
   const url = new URL(request.url);
@@ -40,8 +40,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const since = new Date(Date.now() - days * 86400_000);
   const anyDb = db as any;
 
-  // Fetch Shopify orders with line items
-  const orders = await fetchShopifyOrders(shop, accessToken, since);
+  const [orders, shopCurrencyRes] = await Promise.all([
+    fetchShopifyOrders(shop, accessToken, since),
+    (admin as any).graphql(`{ shop { currencyCode } }`).then((r: any) => r.json()).catch(() => null),
+  ]);
+  const shopCurrency: string | null = shopCurrencyRes?.data?.shop?.currencyCode || null;
 
   // ── Product aggregation ──
   type ProductRow = {
@@ -126,7 +129,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const totalOrders = orders.length;
   const uniqueCustomers = totalUniqueCustomers;
   const aov = totalOrders > 0 ? totalRevenue / totalOrders : 0;
-  const currency = orders[0]?.currency ?? "USD";
+  const currency = shopCurrency || orders[0]?.currency || "USD";
 
   // ── Top vendors ──
   const vendorMap: Record<string, { revenue: number; units: number }> = {};

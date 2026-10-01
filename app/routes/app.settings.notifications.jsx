@@ -71,7 +71,7 @@ export default function NotificationsSettings() {
 
   return (
     <Page fullWidth>
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
+      <div className="ax-settings-layout">
         <SettingsNav />
         <div style={{ flex: 1, minWidth: 0 }}>
           <BlockStack gap="100">

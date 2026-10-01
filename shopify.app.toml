@@ -2,9 +2,11 @@
 
 client_id = "e56855f068d35fe1fc96e73bf90ae937"
 name = "Attribix"
-application_url = "https://attribix-app.fly.dev"
+application_url = "https://api.attribix.app"
 embedded = true
 handle = "attribix-app"
+# Only the root web config — stops the CLI picking up copies in .claude/worktrees/
+web_directories = ["."]
 
 [build]
 automatically_update_urls_on_dev = false
@@ -13,9 +15,9 @@ automatically_update_urls_on_dev = false
 api_version = "2025-04"
 
 [webhooks.privacy_compliance]
-customer_deletion_url = "https://attribix-app.fly.dev/webhooks/gdpr/customers_redact"
-customer_data_request_url = "https://attribix-app.fly.dev/webhooks/gdpr/customers_data_request"
-shop_deletion_url = "https://attribix-app.fly.dev/webhooks/gdpr/shop_redact"
+customer_deletion_url = "https://api.attribix.app/webhooks/gdpr/customers_redact"
+customer_data_request_url = "https://api.attribix.app/webhooks/gdpr/customers_data_request"
+shop_deletion_url = "https://api.attribix.app/webhooks/gdpr/shop_redact"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
@@ -23,13 +25,16 @@ scopes = "read_customer_events,read_orders,read_products,write_app_proxy,write_p
 
 [auth]
 redirect_urls = [
+  "https://api.attribix.app/auth/callback",
+  "https://api.attribix.app/auth/login",
+  "https://api.attribix.app/auth",
   "https://attribix-app.fly.dev/auth/callback",
   "https://attribix-app.fly.dev/auth/login",
   "https://attribix-app.fly.dev/auth"
 ]
 
 [app_proxy]
-url = "https://attribix-app.fly.dev/app-proxy"
+url = "https://api.attribix.app/app-proxy"
 subpath = "pixel"
 prefix = "apps"
 

@@ -2,15 +2,14 @@
 // Flow editor — configure trigger, steps, delays, and email content.
 
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import {
-  Badge, BlockStack, Button, Card, Checkbox, Divider,
-  InlineStack, Modal, Page, Select, Text, TextField,
+  Badge, Banner, BlockStack, Button, Card, Divider,
+  InlineStack, Page, Text, TextField,
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
-import { EMAIL_TEMPLATES } from "~/data/emailTemplates";
 
 // ─── Loader ───────────────────────────────────────────────────────────────────
 
@@ -41,12 +40,22 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
 // ─── Action ───────────────────────────────────────────────────────────────────
 
 export async function action({ params, request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
   const body = await request.json().catch(() => ({}));
 
   if (body.intent === "update_flow") {
+    if (body.enabled) {
+      const steps = await anyDb.automationStep.findMany({ where: { flowId: params.id } });
+      const emptySteps = steps.filter((s: any) => !s.htmlContent);
+      if (emptySteps.length > 0) {
+        return json({
+          ok: false,
+          error: `${emptySteps.length} email step${emptySteps.length !== 1 ? "s are" : " is"} missing content. Add email content to every step before activating.`,
+        });
+      }
+    }
     await anyDb.automationFlow.updateMany({
       where: { id: params.id, shop },
       data: { name: body.name, description: body.description, enabled: !!body.enabled },
@@ -54,23 +63,31 @@ export async function action({ params, request }: ActionFunctionArgs) {
     return json({ ok: true });
   }
 
-  if (body.intent === "upsert_step") {
-    if (body.stepId) {
-      await anyDb.automationStep.update({
-        where: { id: body.stepId },
-        data: { delayDays: Number(body.delayDays ?? 0), delayHours: Number(body.delayHours ?? 0), subject: body.subject ?? "", htmlContent: body.htmlContent ?? null },
-      });
-    } else {
-      const existing = await anyDb.automationStep.count({ where: { flowId: params.id } });
-      await anyDb.automationStep.create({
-        data: { flowId: params.id!, position: existing, delayDays: Number(body.delayDays ?? 1), delayHours: 0, subject: body.subject ?? "New email", htmlContent: body.htmlContent ?? null },
-      });
-    }
-    return json({ ok: true });
+  if (body.intent === "add_step") {
+    const flow = await anyDb.automationFlow.findFirst({ where: { id: params.id, shop } });
+    if (!flow) return json({ ok: false, error: "Flow not found" }, { status: 404 });
+    const { getStoreBrand } = await import("~/email/brand.server");
+    const { findTemplate } = await import("~/email/templates");
+    const { renderEmail } = await import("~/email/blocks");
+    const template = findTemplate(flow.trigger === "subscriber_created" ? "welcome" : "blank");
+    const doc = template.build(await getStoreBrand(shop, admin));
+    const position = await anyDb.automationStep.count({ where: { flowId: params.id } });
+    const step = await anyDb.automationStep.create({
+      data: {
+        flowId: params.id!,
+        position,
+        delayDays: position === 0 ? 0 : 1,
+        delayHours: 0,
+        subject: template.subject,
+        designJson: doc,
+        htmlContent: renderEmail(doc),
+      },
+    });
+    return json({ ok: true, stepId: step.id });
   }
 
   if (body.intent === "delete_step") {
-    await anyDb.automationStep.delete({ where: { id: body.stepId } });
+    await anyDb.automationStep.deleteMany({ where: { id: body.stepId, flowId: params.id, flow: { shop } } });
     // Re-number remaining steps
     const remaining = await anyDb.automationStep.findMany({ where: { flowId: params.id }, orderBy: { position: "asc" } });
     for (let i = 0; i < remaining.length; i++) {
@@ -109,87 +126,44 @@ export default function FlowEditor() {
 
   const [name, setName] = useState(flow.name);
   const [enabled, setEnabled] = useState(flow.enabled);
-  const [editingStep, setEditingStep] = useState<any>(null);
-  const [showTemplates, setShowTemplates] = useState(false);
 
-  // Step editor state
-  const [stepDelayDays, setStepDelayDays] = useState("0");
-  const [stepDelayHours, setStepDelayHours] = useState("0");
-  const [stepSubject, setStepSubject] = useState("");
-  const [unlayerReady, setUnlayerReady] = useState(false);
-
+  const navigate = useNavigate();
   const isSaving = fetcher.state !== "idle";
+  const [flowError, setFlowError] = useState<string | null>(null);
 
-  // Load Unlayer script once on mount
   useEffect(() => {
-    if ((window as any).unlayer) { setUnlayerReady(true); return; }
-    const script = document.createElement("script");
-    script.src = "https://editor.unlayer.com/embed.js";
-    script.async = true;
-    script.onload = () => setUnlayerReady(true);
-    document.head.appendChild(script);
-  }, []);
-
-  // Init/reload Unlayer each time a step is opened for editing
-  useEffect(() => {
-    if (!editingStep || !unlayerReady) return;
-    const t = setTimeout(() => {
-      const el = document.getElementById("flow-unlayer-editor");
-      if (!el || !(window as any).unlayer) return;
-      (window as any).unlayer.init({
-        id: "flow-unlayer-editor",
-        displayMode: "email",
-        locale: "en-US",
-        appearance: { theme: "modern_light" },
-      });
-      if (editingStep.htmlContent) {
-        (window as any).unlayer.loadDesign({ html: editingStep.htmlContent, classic: true });
+    if (fetcher.data && !fetcher.data.ok) {
+      if (fetcher.data.error) {
+        setFlowError(fetcher.data.error);
+        setEnabled(flow.enabled); // revert optimistic toggle
       }
-    }, 150);
-    return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingStep?.id, unlayerReady]);
+    } else if (fetcher.data?.ok) {
+      setFlowError(null);
+    }
+  }, [fetcher.data]);
+
+  // A newly added step opens straight in the email editor.
+  useEffect(() => {
+    if (fetcher.data?.stepId) navigate(`/app/newsletter/flows/${flow.id}/steps/${fetcher.data.stepId}`);
+  }, [fetcher.data?.stepId]);
 
   function saveFlow() {
     fetcher.submit({ intent: "update_flow", name, enabled }, { method: "post", encType: "application/json" });
   }
 
-  function openEditStep(step: any | null) {
-    setEditingStep(step ?? { isNew: true });
-    setStepDelayDays(String(step?.delayDays ?? 1));
-    setStepDelayHours(String(step?.delayHours ?? 0));
-    setStepSubject(step?.subject ?? "");
+  function toggleEnabled() {
+    const next = !enabled;
+    setEnabled(next);
+    fetcher.submit({ intent: "update_flow", name, enabled: next }, { method: "post", encType: "application/json" });
   }
 
-  function saveStep() {
-    const doSubmit = (htmlContent: string | null) => {
-      fetcher.submit({
-        intent: "upsert_step",
-        stepId: editingStep?.id ?? null,
-        delayDays: Number(stepDelayDays),
-        delayHours: Number(stepDelayHours),
-        subject: stepSubject,
-        htmlContent,
-      }, { method: "post", encType: "application/json" });
-      setEditingStep(null);
-    };
-    if ((window as any).unlayer && unlayerReady) {
-      (window as any).unlayer.exportHtml((data: { html: string }) => doSubmit(data.html || null));
-    } else {
-      doSubmit(null);
-    }
+  function openEditStep(step: any | null) {
+    if (step) navigate(`/app/newsletter/flows/${flow.id}/steps/${step.id}`);
+    else fetcher.submit({ intent: "add_step" }, { method: "post", encType: "application/json" });
   }
 
   function deleteStep(stepId: string) {
     fetcher.submit({ intent: "delete_step", stepId }, { method: "post", encType: "application/json" });
-  }
-
-  function applyTemplate(html: string, subject: string) {
-    if (!stepSubject) setStepSubject(subject);
-    setShowTemplates(false);
-    if ((window as any).unlayer && unlayerReady) {
-      setTimeout(() => (window as any).unlayer.loadDesign({ html, classic: true }), 50);
-    }
   }
 
   const triggerLabel = TRIGGER_OPTIONS.find(t => t.value === flow.trigger)?.label ?? flow.trigger;
@@ -199,9 +173,15 @@ export default function FlowEditor() {
       title={flow.name}
       backAction={{ content: "Flows", url: "/app/newsletter/flows" }}
       primaryAction={{ content: isSaving ? "Saving…" : "Save", onAction: saveFlow, loading: isSaving }}
-      secondaryActions={[{ content: enabled ? "Pause flow" : "Activate flow", onAction: () => { setEnabled(!enabled); setTimeout(saveFlow, 50); } }]}
+      secondaryActions={[{ content: enabled ? "Pause flow" : "Activate flow", onAction: toggleEnabled }]}
     >
       <BlockStack gap="500">
+
+        {flowError && (
+          <Banner tone="warning" onDismiss={() => setFlowError(null)}>
+            {flowError}
+          </Banner>
+        )}
 
         {/* Flow settings */}
         <Card>
@@ -306,85 +286,6 @@ export default function FlowEditor() {
 
       </BlockStack>
 
-      {/* Step editor modal */}
-      <Modal
-        open={!!editingStep}
-        onClose={() => setEditingStep(null)}
-        title={editingStep?.id ? "Edit step" : "Add step"}
-        size="large"
-        primaryAction={{ content: "Save step", onAction: saveStep }}
-        secondaryActions={[
-          { content: showTemplates ? "Close templates" : "Pick template", onAction: () => setShowTemplates(!showTemplates) },
-          { content: "Cancel", onAction: () => setEditingStep(null) },
-        ]}
-      >
-        <Modal.Section>
-          <BlockStack gap="400">
-            <InlineStack gap="300">
-              <div style={{ width: 120 }}>
-                <TextField label="Delay (days)" type="number" value={stepDelayDays} onChange={setStepDelayDays} autoComplete="off" min="0" />
-              </div>
-              <div style={{ width: 120 }}>
-                <TextField label="Delay (hours)" type="number" value={stepDelayHours} onChange={setStepDelayHours} autoComplete="off" min="0" max="23" />
-              </div>
-              <div style={{ flex: 1 }}>
-                <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">Timing</Text>
-                <div style={{ marginTop: 8 }}>
-                  <Badge>{delayLabel(Number(stepDelayDays), Number(stepDelayHours))}</Badge>
-                </div>
-              </div>
-            </InlineStack>
-            <TextField label="Subject line" value={stepSubject} onChange={setStepSubject} autoComplete="off" placeholder="e.g. Welcome to {shop}, {name}!" helpText="Variables: {name} · {shop}" />
-          </BlockStack>
-        </Modal.Section>
-
-        {/* Template picker */}
-        {showTemplates && (
-          <Modal.Section>
-            <BlockStack gap="300">
-              <Text as="h3" variant="headingSm">Choose a template</Text>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px,1fr))", gap: 12 }}>
-                {EMAIL_TEMPLATES.map((t: any) => (
-                  <button key={t.id} onClick={() => applyTemplate(t.html, t.name)}
-                    style={{ textAlign: "left", border: "1.5px solid #e1e3e5", borderRadius: 8, padding: 0, background: "#fff", cursor: "pointer", overflow: "hidden" }}>
-                    <div style={{ height: CARD_H, overflow: "hidden", pointerEvents: "none", background: "#f6f6f7", position: "relative" }}>
-                      <iframe srcDoc={t.html} title={t.name} scrolling="no" style={{ width: IFRAME_W, height: IFRAME_H, border: "none", transform: `scale(${SCALE})`, transformOrigin: "top left", pointerEvents: "none" }} />
-                    </div>
-                    <div style={{ padding: "8px 10px", borderTop: "2px solid " + (t.primaryColor || "#4f46e5") }}>
-                      <Text as="p" variant="bodySm" fontWeight="semibold">{t.name}</Text>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </BlockStack>
-          </Modal.Section>
-        )}
-
-        {/* Email body — Unlayer drag-and-drop editor */}
-        <Modal.Section>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingSm">Email body</Text>
-            {!unlayerReady && (
-              <Text as="p" variant="bodySm" tone="subdued">Loading email editor…</Text>
-            )}
-            <style dangerouslySetInnerHTML={{ __html: `
-              #flow-unlayer-editor { overflow: hidden !important; }
-              #flow-unlayer-editor iframe { border: none !important; }
-              #flow-unlayer-editor > div > div:last-child { display: none !important; }
-            `}} />
-            <div
-              id="flow-unlayer-editor"
-              style={{
-                height: 500,
-                border: "1px solid #E5E7EB",
-                borderRadius: 8,
-                overflow: "hidden",
-                background: "#f9fafb",
-              }}
-            />
-          </BlockStack>
-        </Modal.Section>
-      </Modal>
     </Page>
   );
 }

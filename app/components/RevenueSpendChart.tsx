@@ -2,6 +2,7 @@
 // Shared Revenue vs Spend bar chart used on Analytics, Meta Ads, and Google Ads pages.
 
 import { useState } from "react";
+import { formatRoas } from "~/utils/roas";
 
 export type ChartDay = { label: string; revenue: number; spend: number };
 
@@ -66,7 +67,7 @@ export function RevenueSpendChart({
         <div>
           <span style={{ fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 600 }}>ROAS</span>
           <div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.2, color: roas === null ? "#9ca3af" : roas >= 2 ? "#16a34a" : roas >= 1 ? "#d97706" : "#dc2626" }}>
-            {roas !== null ? roas.toFixed(1) + "×" : "—"}
+            {formatRoas(roas)}
           </div>
         </div>
         {insightText && (
@@ -105,7 +106,7 @@ export function RevenueSpendChart({
             <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.12)", display: "flex", justifyContent: "space-between", gap: 16 }}>
               <span style={{ color: "#9ca3af" }}>ROAS</span>
               <span style={{ fontWeight: 700, color: (tooltip.revenue / tooltip.spend) >= 2 ? "#4ade80" : (tooltip.revenue / tooltip.spend) >= 1 ? "#fbbf24" : "#f87171" }}>
-                {(tooltip.revenue / tooltip.spend).toFixed(1)}×
+                {formatRoas(tooltip.revenue / tooltip.spend)}
               </span>
             </div>
           )}
@@ -158,7 +159,7 @@ export function RevenueSpendChart({
               <div style={{ height: 18, display: "flex", alignItems: "center", justifyContent: "center", width: "100%" }}>
                 {showRoasLabels && dayRoas !== null && row.revenue > 0 && (
                   <span style={{ fontSize: 13, fontWeight: 800, lineHeight: 1, color: dayRoas >= 2 ? "#16a34a" : dayRoas >= 1 ? "#d97706" : "#dc2626" }}>
-                    {dayRoas.toFixed(1)}×
+                    {formatRoas(dayRoas)}
                   </span>
                 )}
               </div>

@@ -87,7 +87,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const feedToken = createHmac("sha256", process.env.SHOPIFY_API_SECRET ?? "attribix-feed-fallback").update(shop).digest("hex").slice(0, 32);
   const feedUrl = `${APP_URL}/api/reviews/feed?shop=${shop}&token=${feedToken}`;
 
+  const { appEmbedUrl } = await import("~/services/themeEditor.server");
   return json({
+    embedUrl: appEmbedUrl(shop),
     shop,
     products,
     reviews: reviews ?? [],
@@ -256,7 +258,7 @@ function WidgetPreview({ primaryColor, starColor, backgroundColor, borderColor, 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function ReviewsIndex() {
-  const { reviews, statusCounts, reviewSettings, widgetSettings, products, shop, feedUrl } = useLoaderData<typeof loader>();
+  const { reviews, statusCounts, reviewSettings, widgetSettings, products, shop, feedUrl, embedUrl } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const settingsFetcher = useFetcher<any>();
   const widgetFetcher = useFetcher<any>();
@@ -375,6 +377,7 @@ export default function ReviewsIndex() {
   return (
     <Page fullWidth title="Reviews" subtitle="Collect and manage product reviews from your customers"
       primaryAction={{ content: "+ Add review", onAction: () => setAddModalOpen(true) }}
+      secondaryActions={[{ content: "Show reviews on store", url: embedUrl, target: "_blank" }]}
     >
       {/* Add Review Modal */}
       <Modal

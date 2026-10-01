@@ -3,8 +3,15 @@
 
 import db from "~/db.server";
 import { sendEmail } from "~/services/resend.server";
+import {
+  ensureUnsubscribeFooter,
+  listUnsubscribeHeaders,
+  personalize,
+  senderFor,
+  unsubscribeUrlFor,
+  verifiedSendingDomain,
+} from "~/services/newsletter.server";
 
-const APP_URL = (process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev").replace(/\/$/, "");
 let processorStarted = false;
 
 // ─── Enroll ───────────────────────────────────────────────────────────────────
@@ -58,6 +65,14 @@ export async function processAutomationQueue() {
     });
 
     for (const enrollment of due) {
+      // Claim the send: with several server machines running this queue, only
+      // the one that flips nextSendAt first sends the email.
+      const claim = await anyDb.automationEnrollment.updateMany({
+        where: { id: enrollment.id, status: "active", nextSendAt: enrollment.nextSendAt },
+        data: { nextSendAt: null },
+      });
+      if (claim.count === 0) continue;
+
       const steps = enrollment.flow?.steps ?? [];
       const step = steps[enrollment.currentStep];
       if (!step) {
@@ -65,27 +80,51 @@ export async function processAutomationQueue() {
         continue;
       }
 
-      // Get sender settings
+      // Never email someone who has unsubscribed, bounced or complained.
+      const subscriber = await anyDb.newsletterSubscriber
+        .findUnique({ where: { shop_email: { shop: enrollment.shop, email: enrollment.email.toLowerCase() } }, select: { status: true, createdAt: true } })
+        .catch(() => null);
+      if (subscriber?.status === "pending") {
+        // Waiting for double opt-in: check again in an hour, give up after 14 days.
+        const expired = Date.now() - new Date(subscriber.createdAt).getTime() > 14 * 24 * 60 * 60 * 1000;
+        await anyDb.automationEnrollment.update({
+          where: { id: enrollment.id },
+          data: expired ? { status: "cancelled" } : { nextSendAt: new Date(Date.now() + 60 * 60 * 1000) },
+        });
+        continue;
+      }
+      if (subscriber && subscriber.status !== "subscribed") {
+        await anyDb.automationEnrollment.update({ where: { id: enrollment.id }, data: { status: "cancelled" } });
+        continue;
+      }
+
       const settings = await anyDb.newsletterSettings?.findUnique?.({ where: { shop: enrollment.shop } }).catch(() => null);
-      const fromName = settings?.fromName || enrollment.shop.replace(".myshopify.com", "");
-      const fromEmail = settings?.fromEmail || process.env.SMTP_FROM_EMAIL || "hello@attribix.com";
+      const sender = senderFor({
+        fromName: settings?.fromName,
+        merchantEmail: settings?.fromEmail,
+        replyTo: settings?.replyTo,
+        verifiedDomain: await verifiedSendingDomain(enrollment.shop),
+        shop: enrollment.shop,
+      });
 
-      // Build email
-      const shopDisplay = enrollment.shop.replace(".myshopify.com", "");
-      const subject = (step.subject || "")
-        .replace(/\{name\}/g, enrollment.firstName || "there")
-        .replace(/\{shop\}/g, shopDisplay);
+      const unsubUrl = unsubscribeUrlFor(enrollment.shop, enrollment.email);
+      const vars = { shop: enrollment.shop, email: enrollment.email, firstName: enrollment.firstName, unsubscribeUrl: unsubUrl };
+      const subject = personalize(step.subject || "", vars);
+      const baseHtml = step.htmlContent
+        ? ensureUnsubscribeFooter(step.htmlContent, settings?.footerText)
+        : ensureUnsubscribeFooter(buildFallbackHtml({ subject, shopDisplay: enrollment.shop.replace(".myshopify.com", ""), firstName: enrollment.firstName || "there" }));
+      const html = personalize(baseHtml, vars);
 
-      const html = step.htmlContent
-        ? step.htmlContent
-            .replace(/\{name\}/g, enrollment.firstName || "there")
-            .replace(/\{shop\}/g, shopDisplay)
-        : buildFallbackHtml({ subject, shopDisplay, firstName: enrollment.firstName || "there" });
-
-      const unsubUrl = `${APP_URL}/newsletter/unsubscribe?email=${encodeURIComponent(enrollment.email)}&shop=${encodeURIComponent(enrollment.shop)}`;
-      const htmlWithFooter = html.replace("</body>", `<div style="text-align:center;padding:16px;font-family:sans-serif;font-size:12px;color:#9ca3af;"><a href="${unsubUrl}" style="color:#9ca3af;">Unsubscribe</a></div></body>`);
-
-      await sendEmail({ from: `${fromName} <${fromEmail}>`, to: enrollment.email, subject, html: htmlWithFooter }).catch(() => null);
+      const result = await sendEmail({
+        from: sender.from,
+        replyTo: sender.replyTo,
+        to: enrollment.email,
+        subject,
+        html,
+        headers: listUnsubscribeHeaders(unsubUrl),
+        tags: [{ name: "shop", value: enrollment.shop }, { name: "flow_id", value: enrollment.flowId }],
+      }).catch((e: any) => ({ ok: false as const, error: e?.message ?? "send failed" }));
+      if (!result.ok) console.error("[automation] send failed:", enrollment.id, (result as any).error);
 
       // Advance to next step
       const nextStepIdx = enrollment.currentStep + 1;

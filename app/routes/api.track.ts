@@ -1,10 +1,14 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { db } from "~/db.server";
-import { sendServerConversions } from "~/services/serverConversions.server";
+import {
+  claimPurchaseConversion,
+  releasePurchaseConversion,
+  sendServerConversions,
+} from "~/services/serverConversions.server";
 import { normalizeTrackedEvent } from "~/services/trackingNormalizer.server";
 import { touchTrackingHealth } from "~/models/trackingSettings.server";
-import { upsertTouchpoint } from "~/services/touchpoints.server";
+import { buildJourneyCredits, upsertTouchpoint } from "~/services/touchpoints.server";
 
 function corsify(request: Request, res: Response) {
   const origin = request.headers.get("origin");
@@ -169,10 +173,12 @@ function getShopFromOriginOrUrl(origin: string | null, url: string | null): stri
   return null;
 }
 
+// Numeric order id, the same format the orders/create webhook stores, so both
+// paths share one Purchase row (and one conversion claim).
 function normalizeOrderId(value: unknown): string | null {
-  const s = pickFirstString(value);
+  const s = pickFirstString(value) ?? (typeof value === "number" ? String(value) : null);
   if (!s) return null;
-  return s;
+  return s.replace(/^gid:\/\/shopify\/Order\//i, "");
 }
 
 function isUniqueConstraintError(err: any) {
@@ -510,6 +516,83 @@ async function findLatestBrowserContext(input: {
   return scored[0]?.row || null;
 }
 
+// Shopify web-pixel event → Meta standard event. Purchase is handled separately
+// (it needs order enrichment + dedup with the orders/create webhook).
+const META_FUNNEL_EVENTS: Record<string, string> = {
+  product_viewed: "ViewContent",
+  search_submitted: "Search",
+  product_added_to_cart: "AddToCart",
+  checkout_started: "InitiateCheckout",
+  payment_info_submitted: "AddPaymentInfo",
+};
+
+function shopifyGidToId(value: unknown): string | null {
+  const s = pickFirstString(value) ?? (typeof value === "number" ? String(value) : null);
+  if (!s) return null;
+  return s.replace(/^gid:\/\/shopify\/\w+\//i, "");
+}
+
+/**
+ * Pull content_ids / value / currency out of the Shopify web-pixel payload.
+ * Uses variant IDs, which is what Shopify's own Meta channel sends, so catalog
+ * matching keeps working.
+ */
+function extractFunnelData(event: any): {
+  contentIds: string[] | null;
+  numItems: number | null;
+  value: number | null;
+  currency: string | null;
+  searchString: string | null;
+} {
+  const d = event?.data ?? {};
+
+  // product_viewed
+  const variant = d?.productVariant;
+  if (variant) {
+    const id = shopifyGidToId(variant?.id);
+    return {
+      contentIds: id ? [id] : null,
+      numItems: null,
+      value: pickNumber(variant?.price?.amount),
+      currency: pickFirstString(variant?.price?.currencyCode),
+      searchString: null,
+    };
+  }
+
+  // product_added_to_cart
+  const line = d?.cartLine;
+  if (line) {
+    const id = shopifyGidToId(line?.merchandise?.id);
+    return {
+      contentIds: id ? [id] : null,
+      numItems: pickNumber(line?.quantity),
+      value: pickNumber(line?.cost?.totalAmount?.amount),
+      currency: pickFirstString(line?.cost?.totalAmount?.currencyCode),
+      searchString: null,
+    };
+  }
+
+  // checkout_started / payment_info_submitted
+  const checkout = d?.checkout;
+  if (checkout) {
+    const items: any[] = Array.isArray(checkout?.lineItems) ? checkout.lineItems : [];
+    const ids = items.map((li) => shopifyGidToId(li?.variant?.id)).filter(Boolean) as string[];
+    const qty = items.reduce((sum, li) => sum + (pickNumber(li?.quantity) ?? 0), 0);
+    return {
+      contentIds: ids.length ? ids : null,
+      numItems: items.length ? qty : null,
+      value: pickNumber(checkout?.totalPrice?.amount),
+      currency:
+        pickFirstString(checkout?.totalPrice?.currencyCode) ?? pickFirstString(checkout?.currencyCode),
+      searchString: null,
+    };
+  }
+
+  // search_submitted
+  const query = pickFirstString(d?.searchResult?.query);
+  return { contentIds: null, numItems: null, value: null, currency: null, searchString: query };
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   if (request.method === "OPTIONS") {
     return corsify(request, new Response(null, { status: 204 }));
@@ -757,6 +840,9 @@ export async function action({ request }: ActionFunctionArgs) {
       fbc = buildFbcFromFbclid(fbclid);
     }
 
+    // The same event can arrive twice (beacon retries, duplicate subscriptions).
+    // It's stored once and must only be forwarded to ad platforms once.
+    let duplicateEvent = false;
     try {
       await db.trackedEvent.create({
         data: {
@@ -788,6 +874,7 @@ export async function action({ request }: ActionFunctionArgs) {
     } catch (trackedEventError: any) {
       if (eventId && isUniqueConstraintError(trackedEventError)) {
         console.log("[/api/track] duplicate eventId ignored", { eventId });
+        duplicateEvent = true;
       } else {
         throw trackedEventError;
       }
@@ -808,7 +895,12 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // ── Upsert touchpoint for multi-touch attribution journey ──
+    // Click ids only count when this page carries them: the theme embed resends
+    // 30-day cookie copies on every page view, which would label a later direct
+    // or organic visit as another ad click.
     if (resolvedShop && visitorId && sessionId) {
+      const fresh = (key: "fbclid" | "gclid" | "ttclid" | "msclkid") =>
+        pickFirstString(clickIds?.[key]) || urlAttribution[key] || referrerAttribution[key] || null;
       upsertTouchpoint({
         shop:        resolvedShop,
         visitorId,
@@ -816,10 +908,10 @@ export async function action({ request }: ActionFunctionArgs) {
         utmSource,
         utmMedium,
         utmCampaign,
-        fbclid,
-        gclid,
-        ttclid,
-        msclkid,
+        fbclid:      fresh("fbclid"),
+        gclid:       fresh("gclid"),
+        ttclid:      fresh("ttclid"),
+        msclkid:     fresh("msclkid"),
         referrer,
         landingPage: url,
       }).catch(() => null); // fire-and-forget, non-fatal
@@ -870,6 +962,17 @@ export async function action({ request }: ActionFunctionArgs) {
       pickFirstString(event?.data?.checkout?.phone) ||
       null;
 
+    // Name/address match keys (from checkout addresses or the logged-in customer)
+    // lift EMQ on InitiateCheckout / AddPaymentInfo / Purchase.
+    const matchKeys = {
+      firstName: pickFirstString(eventSnapshot?.firstName) ?? undefined,
+      lastName: pickFirstString(eventSnapshot?.lastName) ?? undefined,
+      city: pickFirstString(eventSnapshot?.city) ?? undefined,
+      zip: pickFirstString(eventSnapshot?.zip) ?? undefined,
+      state: pickFirstString(eventSnapshot?.state) ?? undefined,
+      country: pickFirstString(eventSnapshot?.country) ?? undefined,
+    };
+
     const isPurchaseLike =
       ["purchase", "checkout_completed", "order_completed", "payment_completed"].includes(
         (eventName || "").toLowerCase(),
@@ -878,56 +981,38 @@ export async function action({ request }: ActionFunctionArgs) {
         (type || "").toLowerCase(),
       );
 
-    // ── InitiateCheckout server-side CAPI ────────────────────────────────
-    // checkout_started events carry the customer's email — forward to Meta CAPI
-    // so that the InitiateCheckout EMQ benefits from the same server-side match
-    // quality as Purchase (where we already have email from the order).
-    const isCheckoutStart =
-      ["checkout_started", "checkout_start", "initiate_checkout"].includes((eventName || "").toLowerCase()) ||
-      ["checkout_started", "checkout_start", "initiate_checkout"].includes((type || "").toLowerCase());
+    // ── Funnel events → Meta CAPI ───────────────────────────────────────
+    // Opt-in per shop (TrackingSettings.metaFunnelEvents). Shopify's Facebook &
+    // Instagram channel already sends these events server-side with its own
+    // event ids, so a second copy from us is counted twice by Meta. Only shops
+    // without Shopify's Conversions API should turn this on.
+    const capiEventName = META_FUNNEL_EVENTS[(type || "").toLowerCase()] ?? null;
 
-    if (isCheckoutStart && possibleEmail) {
+    if (capiEventName && resolvedShop && matchedSettings?.metaFunnelEvents && !duplicateEvent) {
+      const funnel = extractFunnelData(event);
+      // Dedup key: Shopify's own customer-event id (e.g. "sh-…"), which browser
+      // Meta pixels on Shopify pass as eventID. Our random per-post eventId never
+      // matched anything, so Meta counted the browser and CAPI copies twice.
+      const funnelEventId = pickFirstString(event?.id) ?? eventId ?? undefined;
       try {
         await sendServerConversions({
-          eventName: "InitiateCheckout",
+          eventName: capiEventName,
           eventTime: Math.floor(Date.now() / 1000),
-          eventId: eventId || `checkout_start_${sessionId}`,
-          value: possibleTotal ?? undefined,
-          currency: possibleCurrency ?? "USD",
-          url: url || undefined,
-          sourceUrl: url || undefined,
-          actionSource: "website",
-          shop: resolvedShop,
-          ip,
-          userAgent: ua,
-          email: possibleEmail,
-          phone: possiblePhone ?? undefined,
-          fbclid,
-          fbp,
-          fbc,
-          externalId: visitorId,
-          shopPixelId: matchedSettings?.fbPixelId,
-          shopToken: matchedSettings?.fbToken,
-        });
-      } catch (e: any) {
-        console.error("[/api/track] InitiateCheckout CAPI error:", e?.message);
-      }
-    }
-
-    // ── ViewContent CAPI for product pages ──────────────────────────────────
-    const isProductView = type === "product_viewed" || eventName === "product_viewed";
-    if (isProductView && resolvedShop) {
-      try {
-        await sendServerConversions({
-          eventName: "ViewContent",
-          eventTime: Math.floor(Date.now() / 1000),
-          eventId: eventId || undefined,
+          eventId: funnelEventId,
+          value: funnel.value ?? possibleTotal ?? undefined,
+          currency: funnel.currency ?? possibleCurrency ?? undefined,
+          contentIds: funnel.contentIds,
+          numItems: funnel.numItems,
+          searchString: funnel.searchString,
           url,
           sourceUrl: url,
           actionSource: "website",
           shop: resolvedShop,
           ip,
           userAgent: ua,
+          email: possibleEmail ?? undefined,
+          phone: possiblePhone ?? undefined,
+          ...matchKeys,
           fbclid,
           fbp,
           fbc,
@@ -936,11 +1021,11 @@ export async function action({ request }: ActionFunctionArgs) {
           shopToken: matchedSettings?.fbToken,
         });
       } catch (e: any) {
-        console.error("[/api/track] ViewContent CAPI error:", e?.message);
+        console.error(`[/api/track] ${capiEventName} CAPI error:`, e?.message);
       }
     }
 
-    if (possibleOrderId && isPurchaseLike) {
+    if (possibleOrderId && isPurchaseLike && !duplicateEvent) {
       const fallbackContext = await findLatestBrowserContext({
         shop: resolvedShop,
         visitorId,
@@ -1144,43 +1229,76 @@ export async function action({ request }: ActionFunctionArgs) {
         },
       });
 
-      try {
-        // Normalize GID (gid://shopify/Order/12345 → 12345) so event_id matches
-        // the webhook's shopify_order_${numericId} format, enabling Meta dedup.
-        const numericOrderId = possibleOrderId?.replace(/^gid:\/\/shopify\/Order\//i, "") ?? possibleOrderId;
-        const purchaseEventId = numericOrderId ? `shopify_order_${numericOrderId}` : (eventId ?? undefined);
-
-        const conversionResult = await sendServerConversions({
-          eventName: "Purchase",
-          eventTime: Math.floor(Date.now() / 1000),
-          eventId: purchaseEventId,
-          orderId: possibleOrderId,
-          value: possibleTotal ?? 0,
-          currency: possibleCurrency ?? "USD",
-          url: safeLandingPage,
-          sourceUrl: safeLandingPage,
-          actionSource: "website",
-          shop: resolvedShop,
-          ip,
-          userAgent: ua,
-          email: possibleEmail,
-          phone: possiblePhone,
+      // The orders webhook usually builds the journey without a visitor id; now
+      // that the thank-you page reported the order we know the visitor and its
+      // attribution, so rebuild it (idempotent: replaces the webhook's version).
+      buildJourneyCredits({
+        shop: resolvedShop!,
+        orderId: possibleOrderId,
+        visitorId: visitorId ?? null,
+        revenue: possibleTotal ?? 0,
+        currency: possibleCurrency ?? "USD",
+        purchaseTime: new Date(),
+        fallback: {
+          utmSource: finalUtmSource,
+          utmMedium: finalUtmMedium,
+          utmCampaign: finalUtmCampaign,
           fbclid,
-          fbp,
-          fbc,
           gclid,
           ttclid,
-          externalId: visitorId,
-          shopPixelId: matchedSettings?.fbPixelId,
-          shopToken: matchedSettings?.fbToken,
-        });
+          msclkid,
+        },
+      }).catch((e: any) => console.error("[/api/track] buildJourneyCredits error:", e?.message));
 
-        console.log("[/api/track] server conversions", conversionResult);
-      } catch (conversionError: any) {
-        console.error(
-          "[/api/track] server conversion error:",
-          conversionError?.message || conversionError,
-        );
+      // One Purchase per order across this path, the orders webhook and retries.
+      // This path has the browser context (fbp/fbc, IP, user agent), so it
+      // claims first; the webhook waits a little and only sends if nobody did.
+      const claimed = await claimPurchaseConversion(possibleOrderId).catch(() => false);
+      if (claimed) {
+        try {
+          // Shopify's browser Meta pixel uses the checkout_completed customer-event
+          // id ("sh-…") as its Purchase eventID, so reuse it for dedup. The webhook
+          // fallback only fires when this page never reported, so it can't collide.
+          const purchaseEventId = pickFirstString(event?.id) ?? `shopify_order_${possibleOrderId}`;
+          const purchaseItems = extractFunnelData(event);
+
+          const conversionResult = await sendServerConversions({
+            eventName: "Purchase",
+            eventTime: Math.floor(Date.now() / 1000),
+            eventId: purchaseEventId,
+            orderId: possibleOrderId,
+            value: possibleTotal ?? 0,
+            currency: possibleCurrency ?? "USD",
+            contentIds: purchaseItems.contentIds,
+            numItems: purchaseItems.numItems,
+            url: safeLandingPage,
+            // The page the purchase happened on (thank-you page), not the landing page.
+            sourceUrl: url ?? safeLandingPage,
+            actionSource: "website",
+            shop: resolvedShop,
+            ip,
+            userAgent: ua,
+            email: possibleEmail,
+            phone: possiblePhone,
+            ...matchKeys,
+            fbclid,
+            fbp,
+            fbc,
+            gclid,
+            ttclid,
+            externalId: visitorId,
+            shopPixelId: matchedSettings?.fbPixelId,
+            shopToken: matchedSettings?.fbToken,
+          });
+
+          console.log("[/api/track] purchase sent", { orderId: possibleOrderId, eventId: purchaseEventId, hasFbp: Boolean(fbp), hasFbc: Boolean(fbc), contentIds: purchaseItems.contentIds, meta: conversionResult.meta });
+        } catch (conversionError: any) {
+          await releasePurchaseConversion(possibleOrderId);
+          console.error(
+            "[/api/track] server conversion error:",
+            conversionError?.message || conversionError,
+          );
+        }
       }
     }
 

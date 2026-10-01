@@ -1,5 +1,4 @@
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
-import { authenticate } from "~/shopify.server";
 
 function base64UrlEncode(input: string) {
   return Buffer.from(input, "utf8").toString("base64url");
@@ -17,13 +16,6 @@ function getHostFromReferer(request: Request): string {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  // Best-effort Shopify auth (same pattern as your Meta start)
-  try {
-    await authenticate.admin(request);
-  } catch {
-    // continue anyway
-  }
-
   const url = new URL(request.url);
 
   const shop = url.searchParams.get("shop") || "";

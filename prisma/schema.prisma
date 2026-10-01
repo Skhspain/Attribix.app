@@ -98,9 +98,14 @@ model Purchase {
   fbc         String?
   referrer    String?
   landingPage String?
+  // Shopify source_name: "web", "shopify_draft_order", "pos", an app id, …
+  salesChannel String?
   country     String?
   city        String?
   customerName String?
+  // Set when the Purchase conversion was sent to Meta/Google/TikTok, so the
+  // thank-you page, the orders webhook and its retries send it only once.
+  capiSentAt   DateTime?
 
   @@index([createdAt])
   @@index([shop])
@@ -219,6 +224,15 @@ model TrackingSettings {
   // Onboarding
   onboardingCompletedAt DateTime?
 
+  // Consent mode (Google Consent Mode v2)
+  consentModeEnabled   Boolean  @default(false)
+  consentModeDefault   String   @default("denied")
+
+  // Forward ViewContent/Search/AddToCart/InitiateCheckout/AddPaymentInfo to
+  // Meta CAPI. Off by default: Shopify's Facebook & Instagram channel already
+  // sends these server-side, and a second copy is counted twice by Meta.
+  metaFunnelEvents     Boolean  @default(false)
+
   // Notification settings
   storeCurrency        String?
   notifyEmail          String?
@@ -302,6 +316,11 @@ model GoogleConnection {
   expiresAt     DateTime?
   adCustomerId  String?
   lastSyncedAt  DateTime?
+  // Sync diagnostics: last attempt and why it failed (null after a success),
+  // so the UI can tell "no spend" apart from "sync not working".
+  lastSyncAttemptAt DateTime?
+  lastSyncError     String?
+  currencyCode      String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -317,6 +336,15 @@ model NewsletterSettings {
   replyTo           String  @default("")
   footerText        String  @default("")
   monthlyEmailLimit Int     @default(2500)
+  // New signups must confirm by email before they receive newsletters.
+  doubleOptIn       Boolean @default(false)
+
+  // Resend domain verification
+  resendDomainId      String?
+  resendDomainStatus  String?  // "pending" | "verified" | "failed"
+  // The registered domain ("example.com"); From may only use addresses on it.
+  resendDomainName    String?
+  resendDomainRecords Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -330,7 +358,7 @@ model NewsletterSubscriber {
   email       String
   firstName   String?
   lastName    String?
-  status      String   @default("subscribed") // subscribed | unsubscribed
+  status      String   @default("subscribed") // pending (awaiting double opt-in) | subscribed | unsubscribed | bounced | complained
   source      String?  // "post_purchase" | "popup" | "manual" | "import"
 
   // Attribution at time of subscribe
@@ -340,6 +368,10 @@ model NewsletterSubscriber {
   gclid       String?
   fbclid      String?
 
+  // Consent evidence (GDPR / PECR): when and from where the signup was confirmed.
+  confirmedAt    DateTime?
+  consentIp      String?
+  confirmSentAt  DateTime?
   unsubscribedAt DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -348,6 +380,31 @@ model NewsletterSubscriber {
   @@index([shop, status])
   @@index([shop, createdAt])
   @@index([email])
+}
+
+// One row per recipient of a campaign: the send queue, delivery status and
+// per-person opens/clicks (see services/newsletterQueue.server.ts).
+model NewsletterSend {
+  id          String    @id @default(cuid())
+  campaignId  String
+  shop        String
+  email       String
+  firstName   String?
+  status      String    @default("queued") // queued | sending | sent | failed | bounced | complained
+  claimedBy   String?
+  claimedAt   DateTime?
+  providerId  String?
+  error       String?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  openedAt    DateTime?
+  clickedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([campaignId, email])
+  @@index([campaignId, status])
+  @@index([status, claimedAt])
+  @@index([providerId])
 }
 
 model NewsletterCampaign {
@@ -510,6 +567,8 @@ model AutomationStep {
   delayHours  Int      @default(0)
   subject     String   @default("")
   htmlContent String?
+  // Block-editor document (app/email/blocks.ts); htmlContent is rendered from it.
+  designJson  Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

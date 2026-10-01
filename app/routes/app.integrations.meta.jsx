@@ -1,7 +1,7 @@
 // app/routes/app.integrations.meta.jsx
 import React, { useState, useEffect } from "react";
 import { json } from "@remix-run/node";
-import { useLoaderData, useRevalidator, useNavigate, Form, Link } from "@remix-run/react";
+import { useLoaderData, useRevalidator, useNavigate, useFetcher, Form, Link } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -15,10 +15,12 @@ import {
   Select,
   Divider,
   Spinner,
+  Checkbox,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
+import { formatDateTime, formatDate } from "~/utils/formatDate";
 
 function isResponseLike(x) {
   return (
@@ -55,6 +57,17 @@ export async function action({ request }) {
     const { db } = await import("../db.server");
     await db.metaConnection.delete({ where: { shop } }).catch(() => null);
     return json({ ok: true, disconnected: true });
+  }
+
+  if (intent === "funnel-events") {
+    const { db } = await import("../db.server");
+    const metaFunnelEvents = form.get("enabled") === "true";
+    await db.trackingSettings.upsert({
+      where: { shop },
+      create: { shop, metaFunnelEvents },
+      update: { metaFunnelEvents },
+    });
+    return json({ ok: true, metaFunnelEvents });
   }
 
   return json({ ok: false });
@@ -129,6 +142,7 @@ export async function loader({ request }) {
     connectedAssets,
     fbPixelId: trackingSettings?.fbPixelId || "",
     fbToken: trackingSettings?.fbToken || "",
+    metaFunnelEvents: !!trackingSettings?.metaFunnelEvents,
     fromOnboarding,
   });
 }
@@ -160,6 +174,8 @@ function MetaIntegrationsInner({ data }) {
   const [pixelSaved, setPixelSaved] = useState(false);
   const [availablePixels, setAvailablePixels] = useState([]);
   const [pixelsLoading, setPixelsLoading] = useState(false);
+  const [pixelsError, setPixelsError] = useState(false);
+  const [pixelsRetryKey, setPixelsRetryKey] = useState(0);
   const [pixelInputMode, setPixelInputMode] = useState("auto"); // "auto" or "manual"
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showPixelSelector, setShowPixelSelector] = useState(false);
@@ -193,18 +209,36 @@ function MetaIntegrationsInner({ data }) {
   // Auto-fetch pixels from Meta
   useEffect(() => {
     if (!connected || !data.adAccountId) return;
+    let cancelled = false;
     setPixelsLoading(true);
-    authFetch("/api/meta/pixels")
+    setPixelsError(false);
+
+    const timeoutMs = 15000;
+    const timeout = new Promise(function(_, reject) {
+      setTimeout(function() { reject(new Error("Timed out loading pixels")); }, timeoutMs);
+    });
+
+    Promise.race([authFetch("/api/meta/pixels"), timeout])
       .then(function(r) { return r.json(); })
       .then(function(result) {
+        if (cancelled) return;
         if (result.ok && result.pixels && result.pixels.length > 0) {
           setAvailablePixels(result.pixels);
           if (!pixelId && result.pixels[0]) setPixelId(result.pixels[0].id);
+        } else if (!result.ok) {
+          setPixelsError(true);
         }
       })
-      .catch(function(e) { console.error(e); })
-      .finally(function() { setPixelsLoading(false); });
-  }, [connected, data.adAccountId]);
+      .catch(function(e) {
+        console.error(e);
+        if (!cancelled) setPixelsError(true);
+      })
+      .finally(function() {
+        if (!cancelled) setPixelsLoading(false);
+      });
+
+    return function() { cancelled = true; };
+  }, [connected, data.adAccountId, pixelsRetryKey]);
 
   async function fetchAdAccounts() {
     try {
@@ -376,7 +410,7 @@ function MetaIntegrationsInner({ data }) {
 
               {connected && data.expiresAt && !data.businessLoginActive && (
                 <Text as="p" tone="subdued" variant="bodySm">
-                  Token expires: {new Date(data.expiresAt).toLocaleDateString()}
+                  Token expires: {formatDate(data.expiresAt)}
                 </Text>
               )}
 
@@ -447,7 +481,7 @@ function MetaIntegrationsInner({ data }) {
                             {data.connectedAssets.pixel.name} <code style={{ background: "#fff", padding: "1px 6px", borderRadius: 3, fontSize: 11 }}>{data.connectedAssets.pixel.id}</code>
                           </div>
                           {data.connectedAssets.pixel.lastFired && (
-                            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>Last fired: {new Date(data.connectedAssets.pixel.lastFired).toLocaleString()}</div>
+                            <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>Last fired: {formatDateTime(data.connectedAssets.pixel.lastFired)}</div>
                           )}
                         </>
                       ) : (
@@ -457,6 +491,16 @@ function MetaIntegrationsInner({ data }) {
                         <InlineStack gap="200" blockAlign="center">
                           <Spinner size="small" />
                           <Text as="p" variant="bodySm" tone="subdued">Loading pixels…</Text>
+                        </InlineStack>
+                      ) : pixelsError ? (
+                        <InlineStack gap="200" blockAlign="center">
+                          <Text as="p" variant="bodySm" tone="critical">Couldn't load pixels from Meta.</Text>
+                          <button
+                            onClick={() => setPixelsRetryKey((k) => k + 1)}
+                            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
+                          >
+                            Retry
+                          </button>
                         </InlineStack>
                       ) : !showPixelSelector ? (
                         <button
@@ -567,7 +611,7 @@ function MetaIntegrationsInner({ data }) {
           <Layout.Section>
             <Banner tone="info">
               <Text as="p">
-                ✓ Ad data syncs automatically every 24 hours. To sync manually or view campaign performance, go to{" "}
+                ✓ Ad data syncs automatically every hour. To sync manually or view campaign performance, go to{" "}
                 <Link to="/app/meta-ads" style={{ color: "#2563eb", fontWeight: 600 }}>Meta Ads →</Link>
               </Text>
             </Banner>
@@ -609,6 +653,18 @@ function MetaIntegrationsInner({ data }) {
                   <InlineStack gap="200" blockAlign="center">
                     <Spinner size="small" />
                     <Text as="p" variant="bodySm" tone="subdued">Loading pixels from Meta...</Text>
+                  </InlineStack>
+                )}
+
+                {pixelsError && !pixelsLoading && (
+                  <InlineStack gap="200" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="critical">Couldn't load pixels from Meta.</Text>
+                    <button
+                      onClick={() => setPixelsRetryKey((k) => k + 1)}
+                      style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "#2563eb", fontSize: 12, textDecoration: "underline" }}
+                    >
+                      Retry
+                    </button>
                   </InlineStack>
                 )}
 
@@ -666,6 +722,10 @@ function MetaIntegrationsInner({ data }) {
         </Layout.Section>
         )}
 
+        <Layout.Section>
+          <FunnelEventsCard enabled={data.metaFunnelEvents} />
+        </Layout.Section>
+
         {/* Not connected info */}
         {!connected && (
           <Layout.Section>
@@ -683,6 +743,35 @@ function MetaIntegrationsInner({ data }) {
 
       </Layout>
     </Page>
+  );
+}
+
+// Opt-in for sending browse/cart/checkout events to Meta CAPI. Purchases are
+// always sent; see TrackingSettings.metaFunnelEvents for why this defaults off.
+function FunnelEventsCard({ enabled }) {
+  const fetcher = useFetcher();
+  const pending = fetcher.formData?.get("enabled");
+  const checked = pending != null ? pending === "true" : enabled;
+
+  return (
+    <Card>
+      <BlockStack gap="300">
+        <Text as="h2" variant="headingMd">Funnel events</Text>
+        <Text as="p" tone="subdued" variant="bodySm">
+          Attribix always sends one Purchase per order to Meta. It can also send ViewContent,
+          Search, AddToCart, InitiateCheckout and AddPaymentInfo.
+        </Text>
+        <Checkbox
+          label="Send funnel events to Meta Conversions API"
+          helpText="Leave this off if you use Shopify's Facebook & Instagram app with Maximum data sharing — it already sends these events, and a second copy makes Meta count them twice."
+          checked={checked}
+          disabled={fetcher.state !== "idle"}
+          onChange={(value) =>
+            fetcher.submit({ intent: "funnel-events", enabled: String(value) }, { method: "post" })
+          }
+        />
+      </BlockStack>
+    </Card>
   );
 }
 

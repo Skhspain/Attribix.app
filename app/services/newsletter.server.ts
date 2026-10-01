@@ -4,16 +4,31 @@
 
 import crypto from "node:crypto";
 import db from "~/db.server";
-import { sendEmailBatch, buildUnsubscribeFooter, type BatchEmailItem } from "~/services/resend.server";
+import { buildUnsubscribeFooter, type BatchEmailItem } from "~/services/resend.server";
 
 // ─── Unsubscribe token ────────────────────────────────────────────────────────
 
-const UNSUB_SECRET = process.env.NEWSLETTER_UNSUB_SECRET || "attribix-unsub-secret-change-me";
+// New links are signed with a real secret. Links already sent were signed with
+// the old hard-coded default; those keep working until LEGACY_UNSUB_UNTIL so
+// nobody who received an older email loses their unsubscribe link.
+const UNSUB_SECRET =
+  process.env.NEWSLETTER_UNSUB_SECRET || process.env.SHOPIFY_API_SECRET || "attribix-unsub-secret-change-me";
+const LEGACY_UNSUB_SECRET = "attribix-unsub-secret-change-me";
+const LEGACY_UNSUB_UNTIL = new Date("2027-03-31T00:00:00Z");
+
+function unsubSig(secret: string, payload: string) {
+  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+function safeEqual(a: string, b: string) {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
 
 export function generateUnsubscribeToken(shop: string, email: string): string {
-  const payload = `${shop}:${email}`;
-  const sig = crypto.createHmac("sha256", UNSUB_SECRET).update(payload).digest("hex");
-  return Buffer.from(`${payload}:${sig}`).toString("base64url");
+  const payload = `${shop}:${email.toLowerCase().trim()}`;
+  return Buffer.from(`${payload}:${unsubSig(UNSUB_SECRET, payload)}`).toString("base64url");
 }
 
 export function verifyUnsubscribeToken(token: string): { shop: string; email: string } | null {
@@ -24,9 +39,10 @@ export function verifyUnsubscribeToken(token: string): { shop: string; email: st
 
     const payload = decoded.slice(0, lastColon);
     const sig = decoded.slice(lastColon + 1);
-    const expected = crypto.createHmac("sha256", UNSUB_SECRET).update(payload).digest("hex");
-
-    if (sig !== expected) return null;
+    const valid =
+      safeEqual(sig, unsubSig(UNSUB_SECRET, payload)) ||
+      (Date.now() < LEGACY_UNSUB_UNTIL.getTime() && safeEqual(sig, unsubSig(LEGACY_UNSUB_SECRET, payload)));
+    if (!valid) return null;
 
     const firstColon = payload.indexOf(":");
     if (firstColon < 0) return null;
@@ -37,6 +53,139 @@ export function verifyUnsubscribeToken(token: string): { shop: string; email: st
   } catch {
     return null;
   }
+}
+
+// ─── Shared email preparation (campaigns + flows) ───────────────────────────────
+
+const PUBLIC_URL = (process.env.SHOPIFY_APP_URL || "https://api.attribix.app").replace(/\/$/, "");
+
+export function unsubscribeUrlFor(shop: string, email: string) {
+  return `${PUBLIC_URL}/newsletter/unsubscribe?token=${generateUnsubscribeToken(shop, email)}`;
+}
+
+/**
+ * Gmail and Yahoo require one-click unsubscribe headers (RFC 8058) on bulk mail.
+ * Mail clients POST "List-Unsubscribe=One-Click" to this URL.
+ */
+export function listUnsubscribeHeaders(unsubUrl: string): Record<string, string> {
+  return {
+    "List-Unsubscribe": `<${unsubUrl}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
+}
+
+/** Fills merge tags. Supports the block editor's {{tags}} and the old {name}/{shop} ones. */
+export function personalize(html: string, v: { shop: string; email: string; firstName?: string | null; unsubscribeUrl: string }) {
+  const shopName = v.shop.replace(".myshopify.com", "");
+  const first = v.firstName?.trim() || "";
+  const year = String(new Date().getFullYear());
+  return html
+    .replace(/\{\{\s*first_name\s*\}\}/gi, first || "there")
+    .replace(/\{\{\s*name\s*\}\}/gi, first || "there")
+    .replace(/\{\{\s*email\s*\}\}/gi, v.email)
+    .replace(/\{\{\s*shop_url\s*\}\}/gi, `https://${v.shop}`)
+    .replace(/\{\{\s*shop\s*\}\}/gi, shopName)
+    .replace(/\{\{\s*unsubscribe_url\s*\}\}/gi, v.unsubscribeUrl)
+    .replace(/\{year\}\}/g, year)
+    .replace(/\{\{\s*year\s*\}\}/gi, year)
+    .replace(/\{year\}/gi, year)
+    .replace(/\{name\}/g, first || "there")
+    .replace(/\{shop\}/g, shopName);
+}
+
+/** Adds an unsubscribe footer only if the design doesn't already contain one. */
+export function ensureUnsubscribeFooter(html: string, footerText?: string) {
+  if (/\{\{\s*unsubscribe_url\s*\}\}/i.test(html)) return html;
+  const footer = buildUnsubscribeFooter("{{unsubscribe_url}}", footerText);
+  return html.includes("</body>") ? html.replace("</body>", `${footer}</body>`) : html + footer;
+}
+
+/** The domain part of an email address, lowercased; null if it isn't one. */
+export function emailDomain(email?: string | null): string | null {
+  const m = /^[^\s@]+@([^\s@]+\.[^\s@]+)$/.exec((email ?? "").trim());
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Sender for marketing mail. The merchant's own address is only used as From
+ * when it's on their verified domain (otherwise DMARC fails); any other
+ * address sends from the shared domain with replies routed to the merchant.
+ */
+export function senderFor(opts: {
+  fromName?: string | null;
+  merchantEmail?: string | null;
+  replyTo?: string | null;
+  /** The shop's verified sending domain, or null if none is verified. */
+  verifiedDomain: string | null;
+  shop: string;
+}) {
+  const name = (opts.fromName || opts.shop.replace(".myshopify.com", "")).replace(/[<>"]/g, "");
+  const shared = process.env.SMTP_FROM_EMAIL || "newsletters@attribix.email";
+  const onVerifiedDomain = !!opts.verifiedDomain && emailDomain(opts.merchantEmail) === opts.verifiedDomain.toLowerCase();
+  const fromEmail = onVerifiedDomain ? opts.merchantEmail!.trim() : shared;
+  const replyTo = opts.replyTo || (fromEmail === shared ? opts.merchantEmail : undefined) || undefined;
+  return { from: `${name} <${fromEmail}>`, replyTo };
+}
+
+/**
+ * The shop's verified sending domain, or null. Domains verified before the
+ * name was stored are looked up once from Resend and saved.
+ */
+export async function verifiedSendingDomain(shop: string): Promise<string | null> {
+  const anyDb = db as any;
+  const settings = await anyDb.newsletterSettings
+    ?.findUnique?.({ where: { shop }, select: { resendDomainId: true, resendDomainStatus: true, resendDomainName: true } })
+    .catch(() => null);
+  if (settings?.resendDomainStatus !== "verified") return null;
+  if (settings.resendDomainName) return String(settings.resendDomainName).toLowerCase();
+  if (!settings.resendDomainId) return null;
+
+  const { getResendDomain } = await import("~/services/resend-api.server");
+  const res = await getResendDomain(settings.resendDomainId).catch(() => null);
+  const name = res && res.ok ? res.domain.name?.toLowerCase() ?? null : null;
+  if (name) {
+    await anyDb.newsletterSettings?.update?.({ where: { shop }, data: { resendDomainName: name } }).catch(() => null);
+  }
+  return name;
+}
+
+// Click tracking: links are signed so /api/newsletter/track can't be used as an
+// open redirect to arbitrary sites.
+const CLICK_SECRET = process.env.SHOPIFY_API_SECRET || UNSUB_SECRET;
+
+export function clickSignature(campaignId: string, url: string) {
+  return crypto.createHmac("sha256", CLICK_SECRET).update(`${campaignId}|${url}`).digest("base64url").slice(0, 22);
+}
+
+export function verifyClickSignature(campaignId: string, url: string, sig: string) {
+  return !!sig && safeEqual(sig, clickSignature(campaignId, url));
+}
+
+/**
+ * Tags a link so the resulting visit (and any order) is attributed to this
+ * campaign: utm_medium=email feeds the email revenue totals and
+ * utm_campaign=<campaign id> gives per-campaign revenue.
+ */
+export function withEmailUtm(url: string, campaignId: string) {
+  try {
+    const u = new URL(url);
+    if (u.searchParams.has("utm_source")) return url;
+    u.searchParams.set("utm_source", "attribix");
+    u.searchParams.set("utm_medium", "email");
+    u.searchParams.set("utm_campaign", campaignId);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+export function trackLinks(html: string, campaignId: string) {
+  return html.replace(/href="(https?:\/\/[^"]+)"/g, (match, rawUrl: string) => {
+    if (rawUrl.includes("/newsletter/unsubscribe")) return match;
+    const url = withEmailUtm(rawUrl.replace(/&amp;/g, "&"), campaignId);
+    const tracked = `${PUBLIC_URL}/api/newsletter/track?type=click&cid=${encodeURIComponent(campaignId)}&sid={{send_id}}&url=${encodeURIComponent(url)}&sig=${clickSignature(campaignId, url)}`;
+    return `href="${tracked.replace(/&/g, "&amp;")}"`;
+  });
 }
 
 // ─── Subscribers ─────────────────────────────────────────────────────────────
@@ -52,7 +201,11 @@ export async function subscribeEmail(args: {
   utmCampaign?: string;
   gclid?: string;
   fbclid?: string;
-}): Promise<{ ok: boolean; created: boolean; message?: string }> {
+  /** Signup IP, kept as consent evidence. */
+  ip?: string | null;
+  /** Merchant-added contacts (import, manual) skip double opt-in. */
+  skipConfirmation?: boolean;
+}): Promise<{ ok: boolean; created: boolean; pending?: boolean; message?: string }> {
   const email = args.email.toLowerCase().trim();
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -60,42 +213,140 @@ export async function subscribeEmail(args: {
   }
 
   try {
+    const settings = await (db as any).newsletterSettings
+      ?.findUnique?.({ where: { shop: args.shop }, select: { doubleOptIn: true } })
+      .catch(() => null);
+    const needsConfirm = !!settings?.doubleOptIn && !args.skipConfirmation;
+    const status = needsConfirm ? "pending" : "subscribed";
+    const confirmedAt = needsConfirm ? null : new Date();
+
     const existing = await db.newsletterSubscriber.findUnique({
       where: { shop_email: { shop: args.shop, email } },
     });
 
-    if (existing) {
-      if (existing.status === "unsubscribed") {
-        // Re-subscribe
-        await db.newsletterSubscriber.update({
-          where: { shop_email: { shop: args.shop, email } },
-          data: { status: "subscribed", unsubscribedAt: null },
-        });
-        return { ok: true, created: false, message: "Re-subscribed" };
-      }
+    if (existing?.status === "subscribed") {
+      return { ok: true, created: false, message: "Already subscribed" };
+    }
+    // Someone who marked us as spam stays suppressed.
+    if (existing?.status === "complained") {
       return { ok: true, created: false, message: "Already subscribed" };
     }
 
-    await db.newsletterSubscriber.create({
-      data: {
-        shop: args.shop,
-        email,
-        firstName: args.firstName ?? null,
-        lastName: args.lastName ?? null,
-        status: "subscribed",
-        source: args.source ?? "manual",
-        utmSource: args.utmSource ?? null,
-        utmMedium: args.utmMedium ?? null,
-        utmCampaign: args.utmCampaign ?? null,
-        gclid: args.gclid ?? null,
-        fbclid: args.fbclid ?? null,
-      },
-    });
+    if (existing) {
+      // Re-subscribe (or re-send the confirmation for a pending signup).
+      await db.newsletterSubscriber.update({
+        where: { shop_email: { shop: args.shop, email } },
+        data: { status, unsubscribedAt: null, confirmedAt, consentIp: args.ip ?? existing.consentIp ?? null } as any,
+      });
+    } else {
+      await db.newsletterSubscriber.create({
+        data: {
+          shop: args.shop,
+          email,
+          firstName: args.firstName ?? null,
+          lastName: args.lastName ?? null,
+          status,
+          source: args.source ?? "manual",
+          utmSource: args.utmSource ?? null,
+          utmMedium: args.utmMedium ?? null,
+          utmCampaign: args.utmCampaign ?? null,
+          gclid: args.gclid ?? null,
+          fbclid: args.fbclid ?? null,
+          confirmedAt,
+          consentIp: args.ip ?? null,
+        } as any,
+      });
+    }
 
-    return { ok: true, created: true };
+    if (needsConfirm) {
+      await sendConfirmationEmail(args.shop, email, args.firstName).catch((e: any) =>
+        console.error("[newsletter] confirmation email error:", e?.message),
+      );
+      return { ok: true, created: !existing, pending: true, message: "Check your inbox to confirm your subscription." };
+    }
+    await startWelcomeFlows(args.shop, email, args.firstName ?? existing?.firstName);
+    return { ok: true, created: !existing, message: existing ? "Re-subscribed" : undefined };
   } catch (err: any) {
     console.error(`[newsletter] subscribeEmail error: ${err?.message}`);
     return { ok: false, created: false, message: err?.message };
+  }
+}
+
+// ─── Double opt-in ────────────────────────────────────────────────────────────
+
+const CONFIRM_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+export function confirmUrlFor(shop: string, email: string) {
+  const payload = `confirm:${shop}:${email}:${Date.now()}`;
+  const token = Buffer.from(`${payload}:${unsubSig(UNSUB_SECRET, payload)}`).toString("base64url");
+  return `${PUBLIC_URL}/newsletter/confirm?token=${token}`;
+}
+
+export function verifyConfirmToken(token: string): { shop: string; email: string } | null {
+  try {
+    const decoded = Buffer.from(token, "base64url").toString("utf8");
+    const lastColon = decoded.lastIndexOf(":");
+    const payload = decoded.slice(0, lastColon);
+    if (!safeEqual(decoded.slice(lastColon + 1), unsubSig(UNSUB_SECRET, payload))) return null;
+    const [kind, shop, ...rest] = payload.split(":");
+    const issuedAt = Number(rest.pop());
+    if (kind !== "confirm" || !shop || !Number.isFinite(issuedAt) || Date.now() - issuedAt > CONFIRM_TTL_MS) return null;
+    return { shop, email: rest.join(":") };
+  } catch {
+    return null;
+  }
+}
+
+export async function confirmSubscription(shop: string, email: string, ip: string | null) {
+  const pending = await db.newsletterSubscriber.findFirst({ where: { shop, email, status: "pending" } });
+  const res = await db.newsletterSubscriber.updateMany({
+    where: { shop, email, status: { in: ["pending", "subscribed"] } },
+    data: { status: "subscribed", confirmedAt: new Date(), consentIp: ip } as any,
+  });
+  if (pending) await startWelcomeFlows(shop, email, pending.firstName);
+  return res.count > 0;
+}
+
+/** "New subscriber" flows start once someone is actually subscribed (after confirming, with double opt-in). */
+async function startWelcomeFlows(shop: string, email: string, firstName?: string | null) {
+  const { enrollInFlows } = await import("~/services/automationEngine.server");
+  await enrollInFlows({ shop, trigger: "subscriber_created", email, firstName: firstName ?? undefined }).catch(() => null);
+}
+
+async function sendConfirmationEmail(shop: string, email: string, firstName?: string) {
+  const { renderEmail, createBlock, EMAIL_DOC_FORMAT, DEFAULT_THEME } = await import("~/email/blocks");
+  const { sendEmail } = await import("~/services/resend.server");
+  const anyDb = db as any;
+  const settings = await anyDb.newsletterSettings?.findUnique?.({ where: { shop } }).catch(() => null);
+  const storeName = settings?.fromName || shop.replace(".myshopify.com", "");
+  const url = confirmUrlFor(shop, email);
+
+  const heading = { ...createBlock("heading"), text: "Please confirm your subscription" } as any;
+  const text = {
+    ...createBlock("text"),
+    text: `${firstName ? `Hi ${firstName}, t` : "T"}hanks for signing up to ${storeName}. Click the button below to confirm — you'll only get our emails once you do.`,
+  } as any;
+  const button = { ...createBlock("button"), label: "Yes, subscribe me", href: url } as any;
+  const footer = { ...createBlock("footer"), text: "If you didn't sign up, just ignore this email — you won't hear from us again.", address: "" } as any;
+  const html = renderEmail(
+    {
+      format: EMAIL_DOC_FORMAT,
+      theme: { ...DEFAULT_THEME },
+      blocks: [{ ...createBlock("header"), storeName } as any, heading, text, button, footer],
+    },
+    { unsubscribeUrl: unsubscribeUrlFor(shop, email) },
+  );
+
+  const sender = senderFor({
+    fromName: storeName,
+    merchantEmail: settings?.fromEmail,
+    replyTo: settings?.replyTo,
+    verifiedDomain: await verifiedSendingDomain(shop),
+    shop,
+  });
+  const result = await sendEmail({ from: sender.from, replyTo: sender.replyTo, to: email, subject: `Confirm your subscription to ${storeName}`, html, tags: [{ name: "shop", value: shop }, { name: "kind", value: "confirm" }] });
+  if (result.ok) {
+    await db.newsletterSubscriber.updateMany({ where: { shop, email }, data: { confirmSentAt: new Date() } as any });
   }
 }
 
@@ -120,206 +371,97 @@ export type SegmentFilter = {
   utmMedium?: string;
   utmCampaign?: string;
   source?: string;
-  createdAfter?: Date;
-  createdBefore?: Date;
+  /** Only people who subscribed in the last N days (evaluated at send time). */
+  joinedWithinDays?: number;
+  createdAfter?: Date | string;
+  createdBefore?: Date | string;
 };
 
-export async function getSubscribersForSegment(
-  shop: string,
-  filter?: SegmentFilter
-): Promise<Array<{ email: string; firstName: string | null; lastName: string | null }>> {
+function segmentWhere(shop: string, filter?: SegmentFilter | null) {
   const where: any = { shop, status: "subscribed" };
-
   if (filter?.utmSource) where.utmSource = filter.utmSource;
   if (filter?.utmMedium) where.utmMedium = filter.utmMedium;
   if (filter?.utmCampaign) where.utmCampaign = filter.utmCampaign;
   if (filter?.source) where.source = filter.source;
-  if (filter?.createdAfter || filter?.createdBefore) {
+  const after = filter?.joinedWithinDays
+    ? new Date(Date.now() - Number(filter.joinedWithinDays) * 24 * 60 * 60 * 1000)
+    : filter?.createdAfter
+      ? new Date(filter.createdAfter)
+      : null;
+  if (after || filter?.createdBefore) {
     where.createdAt = {};
-    if (filter.createdAfter) where.createdAt.gte = filter.createdAfter;
-    if (filter.createdBefore) where.createdAt.lte = filter.createdBefore;
+    if (after) where.createdAt.gte = after;
+    if (filter?.createdBefore) where.createdAt.lte = new Date(filter.createdBefore);
   }
+  return where;
+}
 
+export async function getSubscribersForSegment(
+  shop: string,
+  filter?: SegmentFilter | null
+): Promise<Array<{ email: string; firstName: string | null; lastName: string | null }>> {
   return db.newsletterSubscriber.findMany({
-    where,
+    where: segmentWhere(shop, filter),
     select: { email: true, firstName: true, lastName: true },
     orderBy: { createdAt: "desc" },
   });
 }
 
-export async function countSubscribersForSegment(
-  shop: string,
-  filter?: SegmentFilter
-): Promise<number> {
-  const where: any = { shop, status: "subscribed" };
-  if (filter?.utmSource) where.utmSource = filter.utmSource;
-  if (filter?.utmMedium) where.utmMedium = filter.utmMedium;
-  if (filter?.utmCampaign) where.utmCampaign = filter.utmCampaign;
-  if (filter?.source) where.source = filter.source;
-
-  return db.newsletterSubscriber.count({ where });
+export async function countSubscribersForSegment(shop: string, filter?: SegmentFilter | null): Promise<number> {
+  return db.newsletterSubscriber.count({ where: segmentWhere(shop, filter) });
 }
 
 // ─── Campaign sending ─────────────────────────────────────────────────────────
+// The queue (services/newsletterQueue.server.ts) does the actual sending; these
+// helpers turn a campaign into one email per recipient.
 
-const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
+export type PreparedCampaign = {
+  id: string;
+  shop: string;
+  subject: string;
+  from: string;
+  replyTo?: string;
+  template: string;
+};
 
-export async function sendCampaign(campaignId: string): Promise<{
-  ok: boolean;
-  sent: number;
-  failed: number;
-  errors: string[];
-  message?: string;
-}> {
-  const anyDb = db as any;
-
-  const campaign = await anyDb.newsletterCampaign.findUnique({
-    where: { id: campaignId },
+export async function prepareCampaign(campaign: any): Promise<PreparedCampaign> {
+  const settings = await (db as any).newsletterSettings
+    ?.findUnique?.({ where: { shop: campaign.shop }, select: { footerText: true, resendDomainStatus: true } })
+    .catch(() => null);
+  const sender = senderFor({
+    fromName: campaign.fromName,
+    merchantEmail: campaign.fromEmail,
+    replyTo: campaign.replyTo,
+    verifiedDomain: await verifiedSendingDomain(campaign.shop),
+    shop: campaign.shop,
   });
 
-  if (!campaign) return { ok: false, sent: 0, failed: 0, errors: ["Campaign not found"] };
-  if (!campaign.htmlContent) return { ok: false, sent: 0, failed: 0, errors: ["Campaign has no HTML content — save the design first"] };
-  if (campaign.status === "sent") return { ok: false, sent: 0, failed: 0, errors: ["Campaign already sent"] };
+  // Tracking and footer are identical for everyone; {{send_id}} is filled per
+  // recipient so opens and clicks are counted per person.
+  const openPixel = `<img src="${PUBLIC_URL}/api/newsletter/track?type=open&amp;cid=${encodeURIComponent(campaign.id)}&amp;sid={{send_id}}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;padding:0;margin:0;">`;
+  let template = trackLinks(ensureUnsubscribeFooter(campaign.htmlContent ?? "", (settings?.footerText ?? "").trim()), campaign.id);
+  template = template.includes("</body>") ? template.replace("</body>", `${openPixel}</body>`) : template + openPixel;
 
-  // ── Monthly send limit check ──────────────────────────────────────────────
-  {
-    const settings = await anyDb.newsletterSettings?.findUnique?.({
-      where: { shop: campaign.shop },
-    }).catch(() => null);
-    const limit: number = settings?.monthlyEmailLimit ?? 2500;
+  return { id: campaign.id, shop: campaign.shop, subject: campaign.subject, from: sender.from, replyTo: sender.replyTo, template };
+}
 
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-
-    const sentCampaigns = await anyDb.newsletterCampaign.findMany({
-      where: {
-        shop: campaign.shop,
-        status: "sent",
-        sentAt: { gte: monthStart, lt: monthEnd },
-      },
-      select: { recipientCount: true },
-    }).catch(() => [] as Array<{ recipientCount: number }>);
-
-    const emailsSentThisMonth: number = sentCampaigns.reduce(
-      (sum: number, c: { recipientCount: number }) => sum + (c.recipientCount ?? 0),
-      0
-    );
-
-    // Count how many subscribers this campaign would send to
-    const segmentFilter: SegmentFilter = campaign.segmentFilter ?? {};
-    const plannedCount = await countSubscribersForSegment(campaign.shop, segmentFilter);
-
-    if (emailsSentThisMonth + plannedCount > limit) {
-      // Revert status back to draft so it can be retried
-      await anyDb.newsletterCampaign.update({
-        where: { id: campaignId },
-        data: { status: "draft" },
-      }).catch(() => null);
-      return {
-        ok: false,
-        sent: 0,
-        failed: 0,
-        errors: [
-          `Monthly email limit reached (${limit} emails/month). Upgrade your plan for more sends.`,
-        ],
-      };
-    }
-  }
-
-  // Fetch newsletter settings for footer text (separate from monthly-limit check above)
-  const nlSettings = await anyDb.newsletterSettings?.findUnique?.({
-    where: { shop: campaign.shop },
-    select: { footerText: true },
-  }).catch(() => null);
-  const footerText: string = (nlSettings?.footerText ?? "").trim();
-
-  // Mark as sending
-  await anyDb.newsletterCampaign.update({
-    where: { id: campaignId },
-    data: { status: "sending" },
-  });
-
-  const segmentFilter: SegmentFilter = campaign.segmentFilter ?? {};
-  const subscribers = await getSubscribersForSegment(campaign.shop, segmentFilter);
-
-  if (subscribers.length === 0) {
-    await anyDb.newsletterCampaign.update({
-      where: { id: campaignId },
-      data: { status: "sent", sentAt: new Date(), recipientCount: 0 },
-    });
-    return { ok: true, sent: 0, failed: 0, errors: [], message: "No subscribers matched the segment" };
-  }
-
-  const fromName = campaign.fromName || "Newsletter";
-  const fromEmail = campaign.fromEmail || process.env.SMTP_FROM_EMAIL || "newsletters@attribix.email";
-  const from = `${fromName} <${fromEmail}>`;
-
-  const emails: BatchEmailItem[] = subscribers.map((sub) => {
-    const token = generateUnsubscribeToken(campaign.shop, sub.email);
-    const unsubUrl = `${APP_URL}/newsletter/unsubscribe?token=${token}`;
-    const footer = buildUnsubscribeFooter(unsubUrl, footerText);
-
-    // Personalise: replace all template placeholders
-    const firstName = sub.firstName || "";
-    const shopDomain = campaign.shop.replace(".myshopify.com", "");
-    const shopUrl = `https://${campaign.shop.includes(".") ? campaign.shop : campaign.shop + ".myshopify.com"}`;
-
-    const currentYear = new Date().getFullYear().toString();
-    let html = campaign.htmlContent
-      .replace(/\{\{first_name\}\}/gi, firstName)
-      .replace(/\{\{name\}\}/gi, firstName)
-      .replace(/\{\{email\}\}/gi, sub.email)
-      .replace(/\{\{shop_url\}\}/gi, shopUrl)
-      .replace(/\{\{shop\}\}/gi, shopDomain)
-      .replace(/\{\{unsubscribe_url\}\}/gi, `${APP_URL}/newsletter/unsubscribe?token=${generateUnsubscribeToken(campaign.shop, sub.email)}`)
-      // Replace {year} / {{year}} and the common typo {year}} with the actual year
-      .replace(/\{year\}\}/g, currentYear) // catches {year}} typo first
-      .replace(/\{\{year\}\}/gi, currentYear)
-      .replace(/\{year\}/gi, currentYear);
-
-    // Wrap all http(s) links with click-tracking redirect (skip mailto: and #)
-    html = html.replace(
-      /href="(https?:\/\/[^"]+)"/g,
-      (_, url) =>
-        `href="${APP_URL}/api/newsletter/track?type=click&cid=${campaignId}&url=${encodeURIComponent(url)}"`
-    );
-
-    // Open-tracking pixel
-    const openPixel = `<img src="${APP_URL}/api/newsletter/track?type=open&cid=${campaignId}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;padding:0;margin:0;">`;
-
-    // Inject unsubscribe footer and open pixel before </body> if present, otherwise append
-    if (html.includes("</body>")) {
-      html = html.replace("</body>", `${footer}${openPixel}</body>`);
-    } else {
-      html += footer + openPixel;
-    }
-
-    return {
-      from,
-      to: sub.email,
-      subject: campaign.subject,
-      html,
-      replyTo: campaign.replyTo || undefined,
-      tags: [
-        { name: "campaign_id", value: campaignId },
-        { name: "shop", value: campaign.shop },
-      ],
-    };
-  });
-
-  const { sent, failed, errors } = await sendEmailBatch(emails);
-
-  await anyDb.newsletterCampaign.update({
-    where: { id: campaignId },
-    data: {
-      status: failed === emails.length ? "failed" : "sent",
-      sentAt: new Date(),
-      recipientCount: subscribers.length,
-      deliveredCount: sent,
-    },
-  });
-
-  console.log(`[newsletter] Campaign ${campaignId} sent: ${sent} delivered, ${failed} failed`);
-  return { ok: true, sent, failed, errors };
+export function buildCampaignEmail(
+  c: PreparedCampaign,
+  recipient: { email: string; firstName?: string | null; sendId: string },
+): BatchEmailItem {
+  const unsubUrl = unsubscribeUrlFor(c.shop, recipient.email);
+  const html = personalize(c.template, { shop: c.shop, email: recipient.email, firstName: recipient.firstName, unsubscribeUrl: unsubUrl })
+    .split("{{send_id}}").join(encodeURIComponent(recipient.sendId));
+  return {
+    from: c.from,
+    to: recipient.email,
+    subject: personalize(c.subject, { shop: c.shop, email: recipient.email, firstName: recipient.firstName, unsubscribeUrl: unsubUrl }),
+    html,
+    replyTo: c.replyTo,
+    headers: listUnsubscribeHeaders(unsubUrl),
+    tags: [
+      { name: "campaign_id", value: c.id },
+      { name: "send_id", value: recipient.sendId },
+    ],
+  };
 }

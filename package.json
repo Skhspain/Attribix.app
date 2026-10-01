@@ -4,13 +4,14 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.18 <21"
+    "node": ">=22.0.0 <23"
   },
   "scripts": {
     "dev": "remix vite:dev",
     "build": "remix vite:build",
     "start": "node ./node_modules/@remix-run/serve/dist/cli.js ./build/server/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "prisma:gen:dev": "prisma generate --schema=prisma/schema.prisma",
     "prisma:migrate:dev": "prisma migrate dev --schema=prisma/schema.prisma --name init",
     "prisma:gen:prod": "prisma generate --schema=prisma/schema.postgres.prisma",
@@ -28,10 +29,11 @@
     "@shopify/app-bridge-react": "^3.7.11",
     "@shopify/app-bridge-utils": "^3.5.1",
     "@shopify/polaris": "^13.9.5",
-    "@shopify/shopify-api": "^11.14.1",
-    "@shopify/shopify-app-remix": "^3.8.5",
-    "@shopify/shopify-app-session-storage-memory": "^4.0.20",
-    "@shopify/shopify-app-session-storage-prisma": "^6.0.9",
+    "@shopify/polaris-icons": "^9.3.1",
+    "@shopify/shopify-api": "^14.0.0",
+    "@shopify/shopify-app-remix": "^5.0.0",
+    "@shopify/shopify-app-session-storage-memory": "^7.0.0",
+    "@shopify/shopify-app-session-storage-prisma": "^10.0.0",
     "@shopify/web-pixels-extension": "^2.18.0",
     "@types/nodemailer": "^7.0.11",
     "cookie": "^0.6.0",
@@ -52,6 +54,7 @@
     "prisma": "^6.19.2",
     "typescript": "^5.9.3",
     "vite": "^6.3.5",
-    "vite-tsconfig-paths": "^5.1.4"
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.2.7"
   }
 }

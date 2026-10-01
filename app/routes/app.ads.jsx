@@ -199,7 +199,7 @@ export default function IntegrationsHub() {
                   </div>
                   <BlockStack gap="025">
                     <Text as="p" variant="bodyMd" fontWeight="semibold">Google Ads</Text>
-                    <Text as="p" variant="bodySm" tone="subdued">Sync ad spend and upload offline conversions.</Text>
+                    <Text as="p" variant="bodySm" tone="subdued">Sync ad spend and campaign results.</Text>
                   </BlockStack>
                 </InlineStack>
                 <ConnBadge ok={google.complete} incomplete={google.connected && !google.adCustomerId} />
@@ -210,7 +210,6 @@ export default function IntegrationsHub() {
                   <div style={{ background: "#F9FAFB", borderRadius: 8, padding: "12px 16px" }}>
                     <EnabledRow label="Google Ads account" value={google.adCustomerId || "—"} />
                     <EnabledRow label="Ad spend sync" />
-                    <EnabledRow label="Offline conversions" />
                     <EnabledRow label="Last sync" value={fmtSync(google.lastSyncedAt)} />
                   </div>
                   {!google.adCustomerId && (
@@ -235,7 +234,7 @@ export default function IntegrationsHub() {
                 </>
               ) : (
                 <>
-                  <Text as="p" variant="bodySm" tone="subdued">Connect your Google Ads account to sync daily spend and upload offline conversions for attributed orders.</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">Connect your Google Ads account to sync daily spend and campaign results.</Text>
                   {!google.developerTokenConfigured && (
                     <Text as="p" tone="critical" variant="bodySm">Developer token not configured — contact support.</Text>
                   )}

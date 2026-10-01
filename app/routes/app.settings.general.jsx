@@ -1,160 +1,73 @@
 // app/routes/app.settings.general.jsx
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
-import { useState } from "react";
 import {
   BlockStack, Button, Card, Divider, InlineStack,
-  Page, Select, Text, Banner,
+  Page, Text, Banner,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import { SettingsNav } from "~/components/SettingsNav";
 import db from "~/db.server";
 
 export async function loader({ request }) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
-  const anyDb = db;
-  const settings = await anyDb.trackingSettings?.findUnique?.({ where: { shop } }).catch(() => null);
+  const settings = await db.trackingSettings.findUnique({ where: { shop } }).catch(() => null);
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+
   return json({
     shop,
-    attributionWindow: settings?.attributionWindowDays ?? 30,
+    // Edited on "Tracking & Attribution" only; shown here for reference.
+    // Defaults match the database defaults (7 days, last touch).
+    attributionWindow: settings?.attributionWindowDays ?? 7,
     attributionModel: settings?.attributionModel ?? "last_touch",
-    storeCurrency: settings?.storeCurrency ?? "USD",
+    storeCurrency: await getReportingCurrency(shop, admin),
   });
 }
 
-export async function action({ request }) {
-  const { session } = await authenticate.admin(request);
-  const shop = session.shop;
-  const anyDb = db;
-
-  const form = await request.formData();
-  const attributionWindow = Number(form.get("attributionWindow") ?? 30);
-  const attributionModel = String(form.get("attributionModel") ?? "last_touch");
-  const storeCurrency = String(form.get("storeCurrency") ?? "USD");
-
-  await anyDb.trackingSettings?.upsert?.({
-    where: { shop },
-    create: { shop, attributionWindowDays: attributionWindow, attributionModel, storeCurrency },
-    update: { attributionWindowDays: attributionWindow, attributionModel, storeCurrency },
-  }).catch(() => null);
-
-  return json({ ok: true });
-}
+const MODEL_LABELS = {
+  last_touch: "Last touch",
+  first_touch: "First touch",
+  linear: "Linear (equal split)",
+  time_decay: "Time decay",
+};
 
 export default function GeneralSettings() {
   const data = useLoaderData();
-  const fetcher = useFetcher();
-
-  const [attributionWindow, setAttributionWindow] = useState(String(data.attributionWindow ?? 30));
-  const [attributionModel, setAttributionModel] = useState(data.attributionModel ?? "last_touch");
-  const [storeCurrency, setStoreCurrency] = useState(data.storeCurrency ?? "USD");
   const backfillFetcher = useFetcher();
-
-  const saving = fetcher.state !== "idle";
-  const saved = fetcher.data?.ok && !saving;
-
-  function save() {
-    const fd = new FormData();
-    fd.set("attributionWindow", attributionWindow);
-    fd.set("attributionModel", attributionModel);
-    fd.set("storeCurrency", storeCurrency);
-    fetcher.submit(fd, { method: "post" });
-  }
 
   return (
     <Page fullWidth>
-      <div style={{ display: "flex", alignItems: "flex-start" }}>
+      <div className="ax-settings-layout">
         <SettingsNav />
         <div style={{ flex: 1, minWidth: 0 }}>
           <BlockStack gap="100">
             <Text as="h1" variant="headingXl">General</Text>
-            <Text as="p" variant="bodySm" tone="subdued">Core settings for how Attribix attributes and reports on your store's performance.</Text>
+            <Text as="p" variant="bodySm" tone="subdued">Store-wide settings and data imports.</Text>
           </BlockStack>
 
           <div style={{ marginTop: 24 }}>
             <BlockStack gap="500">
 
               <Card>
-                <BlockStack gap="400">
+                <BlockStack gap="300">
                   <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="050">
-                      <Text as="h2" variant="headingMd">Attribution</Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        Configure how Attribix assigns credit for conversions.
-                      </Text>
-                    </BlockStack>
-                    <Button variant="primary" onClick={save} loading={saving}>
-                      {saved ? "Saved ✓" : "Save"}
-                    </Button>
+                    <Text as="h2" variant="headingMd">Attribution</Text>
+                    <Button url="/app/settings">Change on Tracking &amp; Attribution</Button>
                   </InlineStack>
-
-                  <Divider />
-
-                  <InlineStack gap="400" wrap>
-                    <div style={{ minWidth: 220, flex: 1 }}>
-                      <Select
-                        label="Attribution window"
-                        helpText="How far back to look for ad interactions before a conversion."
-                        value={attributionWindow}
-                        onChange={setAttributionWindow}
-                        options={[
-                          { label: "7 days", value: "7" },
-                          { label: "14 days", value: "14" },
-                          { label: "30 days", value: "30" },
-                          { label: "60 days", value: "60" },
-                          { label: "90 days", value: "90" },
-                        ]}
-                      />
-                    </div>
-                    <div style={{ minWidth: 220, flex: 1 }}>
-                      <Select
-                        label="Attribution model"
-                        helpText="Determines which touchpoint gets credit for a sale."
-                        value={attributionModel}
-                        onChange={setAttributionModel}
-                        options={[
-                          { label: "Last touch", value: "last_touch" },
-                          { label: "First touch", value: "first_touch" },
-                          { label: "Linear (equal split)", value: "linear" },
-                        ]}
-                      />
-                    </div>
-                  </InlineStack>
+                  <Text as="p">
+                    {`${MODEL_LABELS[data.attributionModel] ?? data.attributionModel} · ${data.attributionWindow}-day window`}
+                  </Text>
                 </BlockStack>
               </Card>
 
               <Card>
-                <BlockStack gap="400">
-                  <InlineStack align="space-between" blockAlign="center">
-                    <BlockStack gap="050">
-                      <Text as="h2" variant="headingMd">Display</Text>
-                      <Text as="p" variant="bodySm" tone="subdued">
-                        How numbers and dates are shown across the dashboard.
-                      </Text>
-                    </BlockStack>
-                  </InlineStack>
-
-                  <Divider />
-
-                  <div style={{ maxWidth: 240 }}>
-                    <Select
-                      label="Currency"
-                      helpText="Used when displaying revenue figures in Attribix reports."
-                      value={storeCurrency}
-                      onChange={setStoreCurrency}
-                      options={[
-                        { label: "USD — US Dollar", value: "USD" },
-                        { label: "EUR — Euro", value: "EUR" },
-                        { label: "GBP — British Pound", value: "GBP" },
-                        { label: "NOK — Norwegian Krone", value: "NOK" },
-                        { label: "SEK — Swedish Krona", value: "SEK" },
-                        { label: "DKK — Danish Krone", value: "DKK" },
-                        { label: "AUD — Australian Dollar", value: "AUD" },
-                        { label: "CAD — Canadian Dollar", value: "CAD" },
-                      ]}
-                    />
-                  </div>
+                <BlockStack gap="200">
+                  <Text as="h2" variant="headingMd">Currency</Text>
+                  <Text as="p">{`Reports are shown in ${data.storeCurrency}, your Shopify store currency.`}</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Order values come from Shopify in this currency and aren't converted. Ad spend from ad accounts in other currencies is converted into it at the current exchange rate.
+                  </Text>
                 </BlockStack>
               </Card>
 
@@ -163,7 +76,7 @@ export default function GeneralSettings() {
                   <BlockStack gap="050">
                     <Text as="h2" variant="headingMd">Historical order backfill</Text>
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Import the last 90 days of Shopify orders into Attribix so attribution data covers orders placed before the app was installed.
+                      Import the last 90 days of Shopify orders into Attribix so attribution data covers orders placed before the app was installed, and rebuild customer journeys from the visits Attribix has tracked.
                     </Text>
                   </BlockStack>
 
@@ -172,6 +85,7 @@ export default function GeneralSettings() {
                   {backfillFetcher.data?.ok && (
                     <Banner tone="success">
                       Backfill complete — {backfillFetcher.data.created} orders imported, {backfillFetcher.data.skipped} already tracked.
+                      {backfillFetcher.data.journeys && ` Journeys rebuilt: ${backfillFetcher.data.journeys.captured} of ${backfillFetcher.data.journeys.orders} orders now have captured touchpoints.`}
                     </Banner>
                   )}
                   {backfillFetcher.data?.error && (

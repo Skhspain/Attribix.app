@@ -19,6 +19,7 @@ import {
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
+import { formatDateTime, formatDate } from "~/utils/formatDate";
 
 function isResponseLike(x) {
   return (
@@ -100,6 +101,9 @@ export async function loader({ request }) {
     connected,
     expiresAt,
     adCustomerId,
+    lastSyncedAt: conn?.lastSyncedAt ?? null,
+    lastSyncAttemptAt: conn?.lastSyncAttemptAt ?? null,
+    lastSyncError: conn?.lastSyncError ?? null,
     developerTokenConfigured,
     fromOnboarding,
   });
@@ -136,11 +140,19 @@ function GoogleIntegrationsInner({ data }) {
     }
   }, [data.connected, data.fromOnboarding]);
 
+  // Coming back from Google OAuth with no ad account chosen yet — load the
+  // account list straight away so the merchant can pick one.
+  useEffect(() => {
+    if (data.connected && !data.adCustomerId && !data.fromOnboarding) {
+      loadAdAccounts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.connected, data.adCustomerId]);
+
   function startGoogleOAuth() {
     const fromParam = data.fromOnboarding ? "?from=onboarding" : "";
     const returnTo = `/app/integrations/google${fromParam}`;
-    // Route through www.attribix.app to avoid Chrome lookalike warning on attribix-app.fly.dev
-    const startUrl = `https://www.attribix.app/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(returnTo)}`;
+    const startUrl = `https://attribix-app.fly.dev/api/google/oauth/start?shop=${encodeURIComponent(data.shop)}&returnTo=${encodeURIComponent(returnTo)}`;
 
     // App Bridge-compatible top-level redirect (works when third-party cookies are blocked)
     window.open(startUrl, "_top");
@@ -256,18 +268,23 @@ function GoogleIntegrationsInner({ data }) {
     }
   }
 
+  // Until the account list is loaded, still show the saved account as the
+  // selected value (before, a saved ID sat next to a blank "Select…" field).
   const customerOptions = useMemo(() => {
     const opts = customers.map((c) => ({
       label: c.name ? `${c.name} (${c.id})` : c.id,
       value: c.id,
     }));
+    if (data.adCustomerId && !opts.some((o) => o.value === data.adCustomerId)) {
+      opts.unshift({ label: `${formatCustomerId(data.adCustomerId)} (saved)`, value: data.adCustomerId });
+    }
     return [{ label: "Select an ad account…", value: "" }, ...opts];
-  }, [customers]);
+  }, [customers, data.adCustomerId]);
 
   return (
     <Page
       title="Google Ads"
-      subtitle="Connect Google Ads to sync daily spend and upload offline conversions."
+      subtitle="Connect Google Ads to sync daily spend and campaign results."
       backAction={{ content: "Integrations", url: "/app/ads" }}
     >
       <Layout>
@@ -302,7 +319,7 @@ function GoogleIntegrationsInner({ data }) {
 
               {data.connected && data.expiresAt && (
                 <Text as="p" tone="subdued" variant="bodySm">
-                  Token expires: {new Date(data.expiresAt).toLocaleDateString()}
+                  Token expires: {formatDate(data.expiresAt)}
                 </Text>
               )}
 
@@ -346,12 +363,21 @@ function GoogleIntegrationsInner({ data }) {
                 </Text>
 
                 {data.adCustomerId && (
-                  <Text as="p" tone="subdued" variant="bodySm">
-                    Current selection:{" "}
-                    <Text as="span" fontWeight="semibold">
-                      {data.adCustomerId}
+                  <BlockStack gap="100">
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      Selected account:{" "}
+                      <Text as="span" fontWeight="semibold">{formatCustomerId(data.adCustomerId)}</Text>
                     </Text>
-                  </Text>
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      {`Last successful sync: ${data.lastSyncedAt ? formatDateTime(data.lastSyncedAt) : "never"}`}
+                      {data.lastSyncAttemptAt ? ` · last attempt: ${formatDateTime(data.lastSyncAttemptAt)}` : ""}
+                    </Text>
+                  </BlockStack>
+                )}
+                {data.adCustomerId && data.lastSyncError && (
+                  <Banner tone="critical" title="Spend isn't syncing">
+                    <Text as="p">{data.lastSyncError}</Text>
+                  </Banner>
                 )}
 
                 <Divider />
@@ -371,7 +397,8 @@ function GoogleIntegrationsInner({ data }) {
                       options={customerOptions}
                       value={selectedCustomerId}
                       onChange={setSelectedCustomerId}
-                      disabled={customers.length === 0}
+                      disabled={customerOptions.length <= 1}
+                      helpText={customers.length === 0 ? "Click “Refresh ad accounts” to choose a different account." : undefined}
                     />
                   </div>
 
@@ -388,7 +415,7 @@ function GoogleIntegrationsInner({ data }) {
 
                 <Banner tone="info">
                   <Text as="p">
-                    ✓ Ad data syncs automatically every 24 hours. To sync manually or view campaign performance, go to{" "}
+                    Spend syncs automatically about once an hour. To view campaign performance or sync now, go to{" "}
                     <a href="/app/google-ads">Google Ads →</a>
                   </Text>
                 </Banner>
@@ -432,10 +459,9 @@ function GoogleIntegrationsInner({ data }) {
           <Layout.Section>
             <Banner tone="info" title="How it works">
               <Text as="p">
-                After connecting, Attribix will pull daily spend from Google Ads and report ROAS on
-                your Attribution dashboard. When an order is attributed to a Google click (gclid),
-                an offline conversion is automatically uploaded to Google Ads — improving your
-                Smart Bidding signals without relying on browser pixels.
+                After connecting, Attribix pulls daily spend and campaign results from Google Ads and
+                compares them with the orders it tracked from Google clicks. It doesn't send
+                conversions to Google Ads: keep your existing Google conversion tracking in place.
               </Text>
             </Banner>
           </Layout.Section>
@@ -469,4 +495,9 @@ export default function GoogleIntegrationsPage() {
   }
 
   return <GoogleIntegrationsInner data={data} />;
+}
+
+function formatCustomerId(id) {
+  const d = String(id ?? "").replace(/\D/g, "");
+  return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : id;
 }

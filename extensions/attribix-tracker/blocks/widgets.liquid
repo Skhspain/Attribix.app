@@ -1,0 +1,52 @@
+{% comment %}
+  Attribix Widgets — App Embed Block
+  Enable once in Online Store → Themes → Customize → App embeds.
+  Loads the storefront widgets that were previously injected via ScriptTag:
+    - Reviews widget on product pages (skipped if the Attribix Reviews app block is placed)
+    - Newsletter sign-up forms (shown only when enabled in the Attribix admin)
+{% endcomment %}
+
+{%- assign app_url = 'https://api.attribix.app' -%}
+
+{%- comment -%} Lets the Attribix admin detect that this embed is live (see isWidgetsEmbedLive). {%- endcomment -%}
+<span hidden data-attribix-widgets-embed></span>
+
+{%- if block.settings.show_reviews and request.page_type == 'product' -%}
+  <script>
+    (function () {
+      // The Attribix Reviews app block renders its own widget — don't double up.
+      if (document.querySelector('[data-attribix-reviews-block]')) return;
+      var s = document.createElement('script');
+      s.src = '{{ app_url }}/reviews/widget.js';
+      s.async = true;
+      s.setAttribute('data-shop', {{ shop.permanent_domain | json }});
+      document.body.appendChild(s);
+    })();
+  </script>
+{%- endif -%}
+
+{%- if block.settings.show_newsletter -%}
+  <script src="{{ app_url }}/scripts/newsletter-widget.js" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "Attribix Widgets",
+  "target": "body",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "show_reviews",
+      "label": "Show product reviews on product pages",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_newsletter",
+      "label": "Show newsletter sign-up forms",
+      "info": "Forms only appear when enabled in Attribix → Newsletter → Sign up forms.",
+      "default": true
+    }
+  ]
+}
+{% endschema %}

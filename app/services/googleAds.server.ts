@@ -268,10 +268,10 @@ export async function syncGoogleSpendDaily(args: {
           shop: args.shop,
           platform: "google",
           date,
-          campaign: campaignName,
-          spend,
+          campaign: agg.campaignName,
+          spend: agg.spend,
           adset: null,
-          ad: campaignId,
+          ad: agg.campaignId,
         },
       });
       upserted++;
@@ -398,6 +398,23 @@ export async function syncGoogleCampaignInsights(args: {
     } catch (upsertErr: any) {
       // Skip individual row errors (e.g. unique constraint race conditions)
     }
+  }
+
+  // Daily totals for the reports (Overview, Analytics), which read
+  // AdSpendDaily. One row per shop/platform/day, replaced on each sync.
+  const spendByDay = new Map<string, number>();
+  for (const row of rows) {
+    const dateStr = row.segments?.date;
+    if (!dateStr) continue;
+    spendByDay.set(dateStr, (spendByDay.get(dateStr) ?? 0) + Number(row.metrics?.costMicros ?? 0) / 1_000_000);
+  }
+  for (const [dateStr, spend] of spendByDay) {
+    const date = new Date(dateStr + "T00:00:00Z");
+    await anyDb.adSpendDaily.upsert({
+      where: { shop_platform_date: { shop: args.shop, platform: "google", date } },
+      update: { spend },
+      create: { shop: args.shop, platform: "google", date, spend, campaign: null, adset: null, ad: null },
+    }).catch((e: any) => console.error("[googleAds] daily spend upsert failed:", e?.message));
   }
 
   return { ok: true, shop: args.shop, upserted, total: rows.length };

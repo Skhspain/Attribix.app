@@ -5,13 +5,13 @@ import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
-import { Card, Text, BlockStack, InlineStack, Button, Badge } from "@shopify/polaris";
+import { Box, Card, Text, BlockStack, InlineStack, Button, Badge } from "@shopify/polaris";
 import { useState } from "react";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -100,12 +100,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const startLabel = days30Ago.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
   const endLabel = now.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-  // Top campaigns: approximate revenue = (openRate * emailRev30 / opens30) if opens > 0
+  // Per-campaign revenue: orders whose visit came from a link in that campaign
+  // (every link carries utm_campaign=<campaign id>, see trackLinks()).
+  const campaignRevenue = new Map<string, number>();
+  if (topCampaigns5.length) {
+    const rows = await db.purchase.groupBy({
+      by: ["utmCampaign"],
+      where: { shop, utmMedium: "email", utmCampaign: { in: topCampaigns5.map((c: any) => c.id) } },
+      _sum: { totalValue: true },
+    }).catch(() => [] as any[]);
+    for (const r of rows as any[]) campaignRevenue.set(r.utmCampaign, Number(r._sum?.totalValue ?? 0));
+  }
+
   const topCampaigns = topCampaigns5.map((c: any) => {
     const delivered = c.deliveredCount || c.recipientCount || 0;
     const openRate = delivered > 0 ? (c.openCount || 0) / delivered * 100 : 0;
     const clickRate = delivered > 0 ? (c.clickCount || 0) / delivered * 100 : 0;
-    const revFraction = opens30 > 0 ? (c.openCount || 0) / opens30 : 0;
     return {
       id: c.id,
       name: c.name || "Campaign",
@@ -113,7 +123,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       sent: (c.recipientCount || 0).toLocaleString(),
       openRate: `${openRate.toFixed(1)}%`,
       clickRate: `${clickRate.toFixed(1)}%`,
-      revenue: emailRev30 * revFraction,
+      revenue: campaignRevenue.get(c.id) ?? 0,
     };
   });
 
@@ -129,18 +139,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
     manual: "Manual",
   };
 
-  // Setup checklist
-  const hasSignupForm = (sourceCounts as any[]).some((s: any) => s.source && ["popup", "embedded", "inline", "checkout"].includes(s.source));
-  const hasWelcomeFlow = (activeFlows as any[]).some((f: any) => String(f.name || "").toLowerCase().includes("welcome") || f.enabled);
+  // Setup checklist, in the order things have to happen: you can't usefully
+  // send a newsletter before there's a sender and someone to send it to.
+  const [nlSettings, suppressedTotal] = await Promise.all([
+    anyDb.newsletterSettings?.findUnique?.({ where: { shop }, select: { fromName: true, fromEmail: true, resendDomainStatus: true } }).catch(() => null),
+    db.newsletterSubscriber.count({ where: { shop, status: { in: ["bounced", "complained"] } } }).catch(() => 0),
+  ]);
+  const hasWelcomeFlow = (activeFlows as any[]).some((f: any) => f.enabled);
   const setupSteps = [
-    { label: "Connect your store", done: true },
-    { label: "Create your first campaign", done: totalCampaignsSent > 0 },
-    { label: "Add a sign up form", done: totalSubscribers > 0 || hasSignupForm },
-    { label: "Send a test email", done: totalCampaignsSent > 0 },
-    { label: "Create a flow", done: hasWelcomeFlow },
+    { key: "sender", label: "Set your sender name and email", done: !!(nlSettings?.fromName && nlSettings?.fromEmail), url: "/app/newsletter/settings", cta: "Set up sender" },
+    { key: "domain", label: "Verify your sending domain (recommended)", done: nlSettings?.resendDomainStatus === "verified", url: "/app/newsletter/settings", cta: "Verify domain" },
+    { key: "subscribers", label: "Collect subscribers with a sign-up form", done: totalSubscribers > 0, url: "/app/newsletter/widget", cta: "Set up sign-up form" },
+    { key: "flow", label: "Turn on a welcome flow", done: hasWelcomeFlow, url: "/app/newsletter/flows", cta: "Create a flow" },
+    { key: "send", label: "Send your first newsletter", done: totalCampaignsSent > 0, url: "/app/newsletter/campaigns/new", cta: "Create a newsletter" },
   ];
 
+  const { getReportingCurrency } = await import("~/services/reportingCurrency.server");
+  const currency = await getReportingCurrency(shop, admin);
+
   return json({
+    currency,
     totalSubscribers, newSubs30, unsubSubs30, unsubscribedTotal, emailsSent30, openRate30, clickRate30, emailRev30,
     attributedOrders30, delivered30, opens30, clicks30, unsubs30,
     subsDelta: pct(newSubs30, newSubsPrev),
@@ -152,6 +170,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     topCampaigns,
     sourceCounts: (sourceCounts as any[]).map((s: any) => ({ source: s.source, count: s._count.source, label: sourceLabels[s.source ?? ""] ?? s.source ?? "Other" })),
     setupSteps,
+    suppressedTotal,
     hasWelcomeFlow,
     totalCampaignsSent,
   });
@@ -227,9 +246,9 @@ function Delta({ val, sub }: { val: number | null; sub?: string }) {
   );
 }
 
-function fmt(v: number) {
-  try { return new Intl.NumberFormat("en-US", { style: "currency", currency: "NOK", maximumFractionDigits: 0 }).format(v); }
-  catch { return `NOK ${Math.round(v)}`; }
+function fmt(v: number, currency: string) {
+  try { return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(v); }
+  catch { return `${currency} ${Math.round(v)}`; }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -245,14 +264,75 @@ export default function NewsletterOverview() {
   const activeCount = d.totalSubscribers;
   const unsubPct = d.unsubscribedTotal > 0 && (d.totalSubscribers + d.unsubscribedTotal) > 0
     ? ((d.unsubscribedTotal / (d.totalSubscribers + d.unsubscribedTotal)) * 100).toFixed(1) : "0";
-  const listScore = d.unsubscribedTotal / Math.max(1, d.totalSubscribers + d.unsubscribedTotal);
-  const listHealth = listScore < 0.05 ? "Excellent" : listScore < 0.15 ? "Good" : "Needs attention";
-  const listHealthColor = listScore < 0.05 ? "#16A34A" : listScore < 0.15 ? "#F59E0B" : "#DC2626";
+  // Rates on a tiny list mean nothing; don't grade them.
+  const everSubscribed = d.totalSubscribers + d.unsubscribedTotal + d.suppressedTotal;
+  const listScore = (d.unsubscribedTotal + d.suppressedTotal) / Math.max(1, everSubscribed);
+  const enoughForHealth = everSubscribed >= 20;
+  const listHealth = !enoughForHealth ? "Not enough data" : listScore < 0.05 ? "Healthy" : listScore < 0.15 ? "OK" : "Needs attention";
+  const listHealthColor = !enoughForHealth ? "#6B7280" : listScore < 0.05 ? "#16A34A" : listScore < 0.15 ? "#B45309" : "#DC2626";
+  const nextStep = d.setupSteps.find((st: any) => !st.done && st.key !== "domain") ?? d.setupSteps.find((st: any) => !st.done);
 
   const totalSourceSubs = d.sourceCounts.reduce((s: number, x: any) => s + x.count, 0);
 
+  // Before there's anyone to email or anything sent, the charts are all
+  // zeros. Show just the steps to get started instead.
+  const isNew = d.totalSubscribers === 0 && d.totalCampaignsSent === 0;
+  if (isNew) {
+    const STEP_HELP: Record<string, string> = {
+      sender: "The name and address subscribers see, and where replies go.",
+      domain: "Lets emails come from your own address and keeps them out of spam. Optional to start.",
+      subscribers: "Add a sign-up form to your store so visitors can join your list.",
+      flow: "Automatically welcome new subscribers, often with a discount code.",
+      send: "Design and send a newsletter once you have subscribers.",
+    };
+    return (
+      <Box maxWidth="720px">
+        <BlockStack gap="400">
+          <BlockStack gap="100">
+            <Text as="h1" variant="headingXl" fontWeight="bold">Newsletter</Text>
+            <Text as="p" tone="subdued">
+              Set up these steps to start collecting subscribers and sending emails. Results and charts appear here once you have subscribers.
+            </Text>
+          </BlockStack>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h2" variant="headingMd">Get started</Text>
+                <Text as="p" variant="bodySm" tone="subdued">{setupDone} of {d.setupSteps.length} done</Text>
+              </InlineStack>
+              <div style={{ background: "#F3F4F6", borderRadius: 4, height: 6, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${(setupDone / d.setupSteps.length) * 100}%`, background: "#16A34A" }} />
+              </div>
+              {d.setupSteps.map((step: any, i: number) => (
+                <div key={step.key} style={{ display: "grid", gridTemplateColumns: "28px minmax(0, 1fr) auto", gap: 12, alignItems: "center" }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                    background: step.done ? "#16A34A" : "#F3F4F6", color: step.done ? "#fff" : "#6B7280", fontSize: 13, fontWeight: 700,
+                  }}>
+                    {step.done ? "✓" : i + 1}
+                  </div>
+                  <BlockStack gap="025">
+                    <Text as="p" fontWeight="semibold" tone={step.done ? "subdued" : undefined}>{step.label}</Text>
+                    {!step.done && <Text as="p" variant="bodySm" tone="subdued">{STEP_HELP[step.key]}</Text>}
+                  </BlockStack>
+                  {step.done
+                    ? <Badge tone="success">Done</Badge>
+                    : <Button variant={step === nextStep ? "primary" : "secondary"} onClick={() => navigate(step.url)}>{step.cta}</Button>}
+                </div>
+              ))}
+            </BlockStack>
+          </Card>
+        </BlockStack>
+      </Box>
+    );
+  }
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 280px", gap: 20, alignItems: "start" }}>
+    <div className="ax-nl-overview">
+      <style>{`
+        .ax-nl-overview { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; }
+        @media (max-width: 900px) { .ax-nl-overview { grid-template-columns: minmax(0, 1fr); } }
+      `}</style>
 
       {/* ── MAIN CONTENT ──────────────────────────────────────── */}
       <BlockStack gap="400">
@@ -262,15 +342,8 @@ export default function NewsletterOverview() {
           <Text as="h1" variant="headingXl" fontWeight="bold">Newsletter overview</Text>
           <Text as="p" variant="bodySm" tone="subdued">Grow your audience, engage your subscribers and drive more revenue.</Text>
           <div style={{ marginTop: 10 }}>
-            <button style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              padding: "6px 14px", border: "1px solid #E5E7EB", borderRadius: 8,
-              background: "#fff", cursor: "default", fontSize: 13, color: "#374151",
-            }}>
-              <span>📅</span>
-              <span>{d.startLabel} – {d.endLabel}</span>
-              <span style={{ color: "#9CA3AF" }}>▾</span>
-            </button>
+            {/* A label, not a picker: this page always shows the last 30 days. */}
+            <Text as="p" variant="bodySm" tone="subdued">Last 30 days · {d.startLabel} – {d.endLabel}</Text>
           </div>
         </div>
 
@@ -279,9 +352,10 @@ export default function NewsletterOverview() {
           {[
             { icon: "👥", label: "Total subscribers", value: d.totalSubscribers.toLocaleString(), delta: d.subsDelta },
             { icon: "📧", label: "Emails sent", value: d.emailsSent30.toLocaleString(), delta: d.sentDelta },
-            { icon: "📬", label: "Open rate", value: `${d.openRate30.toFixed(1)}%`, delta: d.openDelta },
-            { icon: "🖱️", label: "Click rate", value: `${d.clickRate30.toFixed(1)}%`, delta: d.clickDelta },
-            { icon: "💰", label: "Revenue from email", value: fmt(d.emailRev30), delta: d.revDelta },
+            // A rate over zero delivered emails is meaningless — say so instead of "0.0%".
+            { icon: "📬", label: "Open rate", value: d.delivered30 > 0 ? `${d.openRate30.toFixed(1)}%` : "No data yet", delta: d.delivered30 > 0 ? d.openDelta : null },
+            { icon: "🖱️", label: "Click rate", value: d.delivered30 > 0 ? `${d.clickRate30.toFixed(1)}%` : "No data yet", delta: d.delivered30 > 0 ? d.clickDelta : null },
+            { icon: "💰", label: "Revenue from email", value: fmt(d.emailRev30, d.currency), delta: d.revDelta },
           ].map(card => (
             <Card key={card.label}>
               <BlockStack gap="100">
@@ -321,10 +395,10 @@ export default function NewsletterOverview() {
               {/* Revenue metrics row */}
               <div style={{ borderTop: "1px solid #F0F0F0", paddingTop: 12, display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
                 {[
-                  { label: "Revenue", value: fmt(d.emailRev30), delta: d.revDelta },
+                  { label: "Revenue", value: fmt(d.emailRev30, d.currency), delta: d.revDelta },
                   { label: "Attributed orders", value: String(d.attributedOrders30), delta: d.revDelta },
-                  { label: "Average order value", value: d.attributedOrders30 > 0 ? fmt(d.emailRev30 / d.attributedOrders30) : "—", delta: null },
-                  { label: "Revenue / email sent", value: d.emailsSent30 > 0 ? fmt(d.emailRev30 / d.emailsSent30) : "—", delta: null },
+                  { label: "Average order value", value: d.attributedOrders30 > 0 ? fmt(d.emailRev30 / d.attributedOrders30, d.currency) : "—", delta: null },
+                  { label: "Revenue / email sent", value: d.emailsSent30 > 0 ? fmt(d.emailRev30 / d.emailsSent30, d.currency) : "—", delta: null },
                 ].map(m => (
                   <BlockStack key={m.label} gap="025">
                     <Text as="p" variant="bodySm" tone="subdued">{m.label}</Text>
@@ -348,7 +422,9 @@ export default function NewsletterOverview() {
                 <div style={{ padding: "24px 0", textAlign: "center" }}>
                   <Text as="p" variant="bodySm" tone="subdued">No campaigns sent yet.</Text>
                   <div style={{ marginTop: 10 }}>
-                    <Button size="slim" onClick={() => navigate("/app/newsletter/campaigns/new")}>Create campaign</Button>
+                    {nextStep && nextStep.key !== "send"
+                      ? <Button size="slim" onClick={() => navigate(nextStep.url)}>{nextStep.cta}</Button>
+                      : <Button size="slim" onClick={() => navigate("/app/newsletter/campaigns/new")}>Create newsletter</Button>}
                   </div>
                 </div>
               ) : (
@@ -372,7 +448,7 @@ export default function NewsletterOverview() {
                         <Text as="p" variant="bodySm">{c.sent}</Text>
                         <Text as="p" variant="bodySm">{c.openRate}</Text>
                         <Text as="p" variant="bodySm">{c.clickRate}</Text>
-                        <Text as="p" variant="bodySm" tone="success">{c.revenue > 0 ? fmt(c.revenue) : "—"}</Text>
+                        <Text as="p" variant="bodySm" tone="success">{c.revenue > 0 ? fmt(c.revenue, d.currency) : "—"}</Text>
                       </div>
                     </div>
                   ))}
@@ -504,11 +580,7 @@ export default function NewsletterOverview() {
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0" }}>
           <span style={{ fontSize: 13, color: "#9CA3AF" }}>ℹ</span>
           <Text as="p" variant="bodySm" tone="subdued">
-            Revenue attribution is based on orders placed within 7 days of email interaction.{" "}
-            <span style={{ color: "#008060", cursor: "pointer", textDecoration: "underline" }}
-              onClick={() => navigate("/app/newsletter/settings")}>
-              Manage attribution settings
-            </span>
+            Email revenue counts orders from visits that started with a click on a link in one of your emails.
           </Text>
         </div>
 
@@ -522,9 +594,10 @@ export default function NewsletterOverview() {
           <BlockStack gap="200">
             <Text as="h3" variant="headingSm" fontWeight="semibold">Quick actions</Text>
             {[
-              { icon: "📧", label: "Create campaign", url: "/app/newsletter/campaigns/new" },
+              ...(d.totalSubscribers === 0 ? [{ icon: "📋", label: "Set up sign-up form", url: "/app/newsletter/widget" }] : []),
+              { icon: "📧", label: "Create newsletter", url: "/app/newsletter/campaigns/new" },
               { icon: "⚡", label: "Create flow", url: "/app/newsletter/flows" },
-              { icon: "📋", label: "Create sign up form", url: "/app/newsletter/widget" },
+              ...(d.totalSubscribers > 0 ? [{ icon: "📋", label: "Set up sign-up form", url: "/app/newsletter/widget" }] : []),
               { icon: "⭐", label: "Create review request", url: "/app/newsletter/review-requests" },
               { icon: "👥", label: "Add subscribers", url: "/app/newsletter/subscribers" },
             ].map(action => (
@@ -554,13 +627,13 @@ export default function NewsletterOverview() {
               <DonutChart size={80} segments={[
                 { value: activeCount, color: "#16A34A" },
                 { value: d.unsubscribedTotal, color: "#F59E0B" },
-                { value: 0, color: "#DC2626" },
+                { value: d.suppressedTotal, color: "#DC2626" },
               ]} />
               <BlockStack gap="100">
                 {[
                   { label: "Active", value: activeCount, color: "#16A34A" },
                   { label: "Unsubscribed", value: d.unsubscribedTotal, color: "#F59E0B" },
-                  { label: "Bounced", value: 0, color: "#DC2626" },
+                  { label: "Bounced / spam", value: d.suppressedTotal, color: "#DC2626" },
                 ].map(row => (
                   <InlineStack key={row.label} gap="100" blockAlign="center">
                     <div style={{ width: 8, height: 8, borderRadius: "50%", background: row.color, flexShrink: 0 }} />
@@ -609,17 +682,19 @@ export default function NewsletterOverview() {
             </div>
             <BlockStack gap="100">
               {d.setupSteps.map((step: any) => (
-                <InlineStack key={step.label} gap="150" blockAlign="center">
-                  <span style={{ fontSize: 14, flexShrink: 0 }}>{step.done ? "✅" : "⭕"}</span>
-                  <Text as="p" variant="bodySm" tone={step.done ? "subdued" : undefined}>
-                    {step.label}
-                  </Text>
+                <InlineStack key={step.label} gap="150" blockAlign="center" wrap={false}>
+                  <Badge tone={step.done ? "success" : undefined}>{step.done ? "Done" : "To do"}</Badge>
+                  {step.done ? (
+                    <Text as="p" variant="bodySm" tone="subdued">{step.label}</Text>
+                  ) : (
+                    <Button variant="plain" onClick={() => navigate(step.url)}>{step.label}</Button>
+                  )}
                 </InlineStack>
               ))}
             </BlockStack>
-            <Button size="slim" variant="plain" onClick={() => navigate("/app/newsletter/analytics")}>
-              View all guide steps
-            </Button>
+            {nextStep && (
+              <Button variant="primary" onClick={() => navigate(nextStep.url)}>{nextStep.cta}</Button>
+            )}
           </BlockStack>
         </Card>
 

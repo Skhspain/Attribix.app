@@ -8,6 +8,7 @@ import {
   Page, Card, Text, BlockStack, InlineStack, Badge, Banner, Select, Button,
 } from "@shopify/polaris";
 import { useState, useCallback, useEffect } from "react";
+import { formatRoas } from "~/utils/roas";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -122,7 +123,7 @@ export default function TikTokAdsPage() {
     );
   }
 
-  const roas = totals.spend > 0 ? (totals.conversionValue / totals.spend).toFixed(2) : "0.00";
+  const roas = totals.spend > 0 ? formatRoas(totals.conversionValue / totals.spend) : "—";
   const ctr = totals.impressions > 0 ? ((totals.clicks / totals.impressions) * 100).toFixed(2) : "0.00";
 
   return (
@@ -155,7 +156,7 @@ export default function TikTokAdsPage() {
           <KpiCard label="CTR" value={`${ctr}%`} />
           <KpiCard label="Conversions" value={totals.conversions.toLocaleString()} />
           <KpiCard label="Revenue" value={`$${totals.conversionValue.toFixed(2)}`} />
-          <KpiCard label="ROAS" value={`${roas}x`} />
+          <KpiCard label="ROAS" value={roas} />
         </div>
 
         {/* View toggle */}
@@ -193,7 +194,7 @@ export default function TikTokAdsPage() {
                       <td style={{ padding: "10px 14px" }}>{c.ctr}%</td>
                       <td style={{ padding: "10px 14px" }}>{c.conversions}</td>
                       <td style={{ padding: "10px 14px" }}>${c.conversionValue.toFixed(2)}</td>
-                      <td style={{ padding: "10px 14px", fontWeight: 600, color: parseFloat(c.roas) >= 1 ? "#16a34a" : "#dc2626" }}>{c.roas}x</td>
+                      <td style={{ padding: "10px 14px", fontWeight: 600, color: parseFloat(c.roas) >= 1 ? "#16a34a" : "#dc2626" }}>{formatRoas(parseFloat(c.roas))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -221,7 +222,7 @@ export default function TikTokAdsPage() {
                       <td style={{ padding: "10px 14px" }}>{a.ctr}%</td>
                       <td style={{ padding: "10px 14px" }}>{a.conversions}</td>
                       <td style={{ padding: "10px 14px" }}>${a.conversionValue.toFixed(2)}</td>
-                      <td style={{ padding: "10px 14px", fontWeight: 600, color: parseFloat(a.roas) >= 1 ? "#16a34a" : "#dc2626" }}>{a.roas}x</td>
+                      <td style={{ padding: "10px 14px", fontWeight: 600, color: parseFloat(a.roas) >= 1 ? "#16a34a" : "#dc2626" }}>{formatRoas(parseFloat(a.roas))}</td>
                     </tr>
                   ))}
                 </tbody>

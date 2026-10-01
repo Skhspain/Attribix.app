@@ -10,6 +10,7 @@ import {
 import { useLoaderData, useFetcher } from "@remix-run/react";
 import { authenticate } from "~/shopify.server";
 import db from "~/db.server";
+import { appBlockUrl, BUY_NOW_BLOCK } from "~/services/themeEditor.server";
 import { useAuthenticatedFetch } from "~/utils/useAuthenticatedFetch";
 import {
   Page,
@@ -44,7 +45,7 @@ function isDark(hex: string): boolean {
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session, admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -56,41 +57,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
       take: 100,
     }).catch(() => []) ?? [],
   ]);
-
-  // Check if ScriptTag is installed — and auto-install if settings say enabled
-  let scriptTagInstalled = false;
-  const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
-  const scriptUrl = `${APP_URL}/scripts/buy-now.js`;
-  try {
-    const tagsRes = await admin.graphql(`
-      query { scriptTags(first: 20) { edges { node { id src } } } }
-    `);
-    const tagsJson = await tagsRes.json();
-    const tags = tagsJson?.data?.scriptTags?.edges ?? [];
-    scriptTagInstalled = tags.some((e: any) => e.node?.src === scriptUrl);
-
-    // Auto-install if button is enabled but ScriptTag is missing
-    const isEnabled = settings?.enabled ?? true;
-    if (isEnabled && !scriptTagInstalled) {
-      const createRes = await admin.graphql(`
-        mutation {
-          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ONLINE_STORE }) {
-            scriptTag { id src }
-            userErrors { field message }
-          }
-        }
-      `);
-      const createJson = await createRes.json();
-      const userErrors = createJson?.data?.scriptTagCreate?.userErrors ?? [];
-      if (userErrors.length === 0 && createJson?.data?.scriptTagCreate?.scriptTag) {
-        scriptTagInstalled = true;
-      } else if (userErrors.length > 0) {
-        console.error("[buy-now] scriptTagCreate userErrors:", userErrors);
-      }
-    }
-  } catch (e) {
-    console.error("[buy-now] loader ScriptTag error:", e);
-  }
 
   // Aggregate stats
   const totalClicks = clickStats.length;
@@ -119,7 +85,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       size: "medium",
       action: "checkout",
     },
-    scriptTagInstalled,
+    addBlockUrl: appBlockUrl(shop, BUY_NOW_BLOCK),
     totalClicks,
     conversions,
     conversionRate,
@@ -133,7 +99,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // ─── Action ──────────────────────────────────────────────────────────────────
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session, admin } = await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
   const shop = session.shop;
   const anyDb = db as any;
 
@@ -146,56 +112,13 @@ export async function action({ request }: ActionFunctionArgs) {
     update: body,
   });
 
-  // Manage ScriptTag automatically
-  try {
-    const APP_URL = process.env.SHOPIFY_APP_URL || "https://attribix-app.fly.dev";
-    const scriptUrl = `${APP_URL}/scripts/buy-now.js`;
-
-    // Find existing tag
-    const tagsRes = await admin.graphql(`
-      query { scriptTags(first: 20) { edges { node { id src } } } }
-    `);
-    const tagsJson = await tagsRes.json();
-    const tags = tagsJson?.data?.scriptTags?.edges ?? [];
-    const existing = tags.find((e: any) => e.node?.src === scriptUrl);
-
-    if (body.enabled && !existing) {
-      // Create the ScriptTag
-      const createRes = await admin.graphql(`
-        mutation {
-          scriptTagCreate(input: { src: "${scriptUrl}", displayScope: ONLINE_STORE }) {
-            scriptTag { id src }
-            userErrors { field message }
-          }
-        }
-      `);
-      const createJson = await createRes.json();
-      const createErrors = createJson?.data?.scriptTagCreate?.userErrors ?? [];
-      if (createErrors.length > 0) {
-        console.error("[buy-now] action scriptTagCreate userErrors:", createErrors);
-      }
-    } else if (!body.enabled && existing) {
-      // Remove the ScriptTag
-      await admin.graphql(`
-        mutation {
-          scriptTagDelete(id: "${existing.node.id}") {
-            deletedScriptTagId
-            userErrors { field message }
-          }
-        }
-      `);
-    }
-  } catch (e) {
-    console.error("[buy-now] ScriptTag management error:", e);
-  }
-
   return json({ ok: true });
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function BuyNowDashboard() {
-  const { settings, scriptTagInstalled, shop } = useLoaderData<typeof loader>();
+  const { settings, addBlockUrl, shop } = useLoaderData<typeof loader>();
 
   const fetcher = useFetcher<any>();
   const authFetch = useAuthenticatedFetch();
@@ -214,17 +137,17 @@ export default function BuyNowDashboard() {
 
   const update = (key: string, value: any) => setS((prev: any) => ({ ...prev, [key]: value }));
 
-  const isActive = s.enabled && scriptTagInstalled;
-  const needsAttention = s.enabled && !scriptTagInstalled;
+  const isActive = s.enabled;
 
-  // Enable + immediately save so the ScriptTag gets created right away
+  // Enable + save, then send the merchant to the theme editor to place the block
   const handleEnable = useCallback(() => {
     const next = { ...s, enabled: true };
     setS(next);
     fetcher.submit(next, { method: "POST", encType: "application/json" });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  }, [s, fetcher]);
+    window.open(addBlockUrl, "_blank");
+  }, [s, fetcher, addBlockUrl]);
 
   const handleScan = useCallback(async () => {
     setScanning(true); setScanError(null); setSuggestion(null);
@@ -256,7 +179,7 @@ export default function BuyNowDashboard() {
   return (
     <Page
       title="Buy Now Button"
-      subtitle="Add a direct checkout button to your product pages. No theme editing required."
+      subtitle="Add a direct checkout button to your product pages."
       primaryAction={{ content: saved ? "Saved ✓" : "Save settings", onAction: handleSave }}
       secondaryActions={[{
         content: "Preview on store",
@@ -272,22 +195,11 @@ export default function BuyNowDashboard() {
             <InlineStack gap="300" blockAlign="center">
               <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>✓</div>
               <BlockStack gap="025">
-                <Text as="p" variant="headingSm" fontWeight="semibold">Buy Now Button is active on your store</Text>
-                <Text as="p" variant="bodySm" tone="subdued">The button is automatically added to product pages and works with your current theme.</Text>
+                <Text as="p" variant="headingSm" fontWeight="semibold">Buy Now Button is enabled</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Make sure the Attribix Buy Now block is added to your product page template in the theme editor.</Text>
               </BlockStack>
             </InlineStack>
-            <Button size="slim" url={`https://${shop}`} external>Preview on store</Button>
-          </div>
-        ) : needsAttention ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", gap: 16 }}>
-            <InlineStack gap="300" blockAlign="center">
-              <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#D97706", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>!</div>
-              <BlockStack gap="025">
-                <Text as="p" variant="headingSm" fontWeight="semibold">Buy Now Button needs attention</Text>
-                <Text as="p" variant="bodySm" tone="subdued">The button is enabled, but Attribix could not confirm it is live on your store.</Text>
-              </BlockStack>
-            </InlineStack>
-            <Button size="slim" onClick={handleSave}>Check installation</Button>
+            <Button size="slim" url={addBlockUrl} target="_blank">Add to product page</Button>
           </div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", gap: 16 }}>
@@ -295,7 +207,7 @@ export default function BuyNowDashboard() {
               <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#3B82F6", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>i</div>
               <BlockStack gap="025">
                 <Text as="p" variant="headingSm" fontWeight="semibold">Buy Now Button is ready to set up</Text>
-                <Text as="p" variant="bodySm" tone="subdued">Customise the button below, then enable it when you are ready to add it to your product pages.</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Customise the button below, then enable it and add the Attribix Buy Now block to your product page.</Text>
               </BlockStack>
             </InlineStack>
             <Button size="slim" variant="primary" onClick={handleEnable}>Enable & publish</Button>
@@ -415,7 +327,7 @@ export default function BuyNowDashboard() {
                         value={s.position} onChange={(v) => update("position", v)} />
                     </Grid.Cell>
                   </Grid>
-                  <Text as="p" variant="bodySm" tone="subdued">Settings are applied automatically. No theme editing required.</Text>
+                  <Text as="p" variant="bodySm" tone="subdued">Placement is set in the theme editor: drag the Attribix Buy Now block above or below your Add to cart button.</Text>
                 </BlockStack>
               </Card>
 
@@ -480,16 +392,16 @@ export default function BuyNowDashboard() {
           <BlockStack gap="400">
             <BlockStack gap="025">
               <Text as="h2" variant="headingMd">How installation works</Text>
-              <Text as="p" variant="bodySm" tone="subdued">Attribix automatically installs the Buy Now button across your store.</Text>
+              <Text as="p" variant="bodySm" tone="subdued">The Buy Now button is a theme app block you place once on your product page template.</Text>
             </BlockStack>
             <Divider />
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr auto 1fr", gap: 12, alignItems: "center" }}>
               {[
                 { icon: "✓", label: "1. Enable the button", desc: "Turn on the button and configure its content and design.", done: s.enabled },
                 null,
-                { icon: "↑", label: "2. Auto-install", desc: "We automatically add the button to your product pages.", done: scriptTagInstalled },
+                { icon: "↑", label: "2. Add to theme", desc: "Add the Attribix Buy Now block to your product page in the theme editor, then save.", done: false },
                 null,
-                { icon: "🏪", label: "3. Live on store", desc: "Your Buy Now button is live and ready for customers to use.", done: isActive },
+                { icon: "🏪", label: "3. Live on store", desc: "Your Buy Now button is live and ready for customers to use.", done: false },
               ].map((item, i) => item === null ? (
                 <div key={i} style={{ textAlign: "center", color: "#D1D5DB", fontSize: 24 }}>→</div>
               ) : (
@@ -504,8 +416,11 @@ export default function BuyNowDashboard() {
             </div>
             <div style={{ padding: "10px 14px", background: "#F9FAFB", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 14 }}>🛡️</span>
-              <Text as="p" variant="bodySm" tone="subdued">No theme editing or code required. Works with Dawn, Debut, Craft, and most Shopify themes.</Text>
+              <Text as="p" variant="bodySm" tone="subdued">No code required. Works with any Online Store 2.0 theme, including Dawn and Craft.</Text>
             </div>
+            <InlineStack>
+              <Button url={addBlockUrl} target="_blank">Open theme editor</Button>
+            </InlineStack>
           </BlockStack>
         </Card>
 

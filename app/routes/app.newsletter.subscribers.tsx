@@ -76,7 +76,10 @@ export async function action({ request }: ActionFunctionArgs) {
     const lastName = (form.get("lastName") as string || "").trim();
     if (!email || !email.includes("@")) return json({ ok: false, intent, error: "Please enter a valid email address." });
     const existing = await db.newsletterSubscriber.findUnique({ where: { shop_email: { shop, email } } });
-    if (!existing || existing.status === "unsubscribed") {
+    if (existing?.status === "complained") {
+      return json({ ok: false, intent, error: "This person reported your emails as spam, so they can't be added again." });
+    }
+    if (!existing || existing.status !== "subscribed") {
       const { getShopPlan, checkSubscribersQuota } = await import("~/services/plan.server");
       const quota = await checkSubscribersQuota(shop, await getShopPlan(shop, admin));
       if (!quota.allowed) return json({ ok: false, intent, error: `Subscriber limit reached (${quota.used}/${quota.limit}). Upgrade your plan.` });
@@ -107,24 +110,25 @@ export async function action({ request }: ActionFunctionArgs) {
     const { getShopPlan, checkSubscribersQuota } = await import("~/services/plan.server");
     const quota = await checkSubscribersQuota(shop, await getShopPlan(shop, admin));
     const remaining = quota.limit === -1 ? Infinity : Math.max(0, quota.limit - quota.used);
-    let imported = 0, newlyAdded = 0, skipped = 0;
+    let imported = 0, newlyAdded = 0, skipped = 0, optedOut = 0;
     for (const line of dataLines) {
       const cols = line.split(sep).map(c => c.trim().replace(/^["']|["']$/g, ""));
       const email = (cols[emailIdx] || "").toLowerCase();
       if (!email || !email.includes("@")) { skipped++; continue; }
       const existing = await db.newsletterSubscriber.findUnique({ where: { shop_email: { shop, email } } });
-      const isNew = !existing || existing.status === "unsubscribed";
-      if (isNew && newlyAdded >= remaining) { skipped++; continue; }
+      // An import must never re-subscribe someone who unsubscribed, bounced or
+      // reported spam: their opt-out outranks an old list.
+      if (existing && existing.status !== "subscribed" && existing.status !== "pending") { optedOut++; continue; }
+      if (existing) { imported++; continue; }
+      if (newlyAdded >= remaining) { skipped++; continue; }
       try {
-        await db.newsletterSubscriber.upsert({
-          where: { shop_email: { shop, email } },
-          create: { shop, email, firstName: cols[firstIdx] || null, lastName: cols[lastIdx] || null, status: "subscribed", source: "import" },
-          update: { status: "subscribed" },
+        await db.newsletterSubscriber.create({
+          data: { shop, email, firstName: cols[firstIdx] || null, lastName: cols[lastIdx] || null, status: "subscribed", source: "import", confirmedAt: new Date() } as any,
         });
-        imported++; if (isNew) newlyAdded++;
+        imported++; newlyAdded++;
       } catch { skipped++; }
     }
-    return json({ ok: true, intent, imported, skipped });
+    return json({ ok: true, intent, imported, skipped: skipped + optedOut, optedOut });
   }
 
   if (intent === "delete-one") {
@@ -179,9 +183,12 @@ function StatusPill({ status }: { status: string }) {
     subscribed: { bg: "#DCFCE7", color: "#15803D", dot: "#16A34A" },
     unsubscribed: { bg: "#FEF3C7", color: "#92400E", dot: "#F59E0B" },
     bounced: { bg: "#FEE2E2", color: "#991B1B", dot: "#EF4444" },
+    complained: { bg: "#FEE2E2", color: "#991B1B", dot: "#EF4444" },
+    pending: { bg: "#E0F2FE", color: "#075985", dot: "#0EA5E9" },
   };
   const style = map[status] ?? { bg: "#F3F4F6", color: "#374151", dot: "#9CA3AF" };
-  const label = status === "subscribed" ? "Active" : status.charAt(0).toUpperCase() + status.slice(1);
+  const labels: Record<string, string> = { subscribed: "Active", pending: "Awaiting confirmation", complained: "Reported spam", bounced: "Bounced", unsubscribed: "Unsubscribed" };
+  const label = labels[status] ?? status.charAt(0).toUpperCase() + status.slice(1);
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, background: style.bg, color: style.color, fontSize: 12, fontWeight: 600 }}>
       <span style={{ width: 6, height: 6, borderRadius: "50%", background: style.dot, flexShrink: 0 }} />
@@ -213,8 +220,11 @@ function getTagsForSubscriber(sub: any): Array<{ label: string; color: string; t
 }
 
 function getLastActivity(sub: any): { text: string; color: string } {
-  if (sub.status === "unsubscribed") return { text: "Unsubscribed", color: "#F59E0B" };
-  return { text: "Opened email", color: "#16A34A" };
+  const date = (d: any) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  if (sub.status === "unsubscribed" && sub.unsubscribedAt) return { text: `Unsubscribed ${date(sub.unsubscribedAt)}`, color: "#92400E" };
+  if (sub.status === "pending") return { text: "Hasn't confirmed yet", color: "#075985" };
+  if (sub.status === "bounced" || sub.status === "complained") return { text: sub.status === "bounced" ? "Email bounced" : "Reported spam", color: "#991B1B" };
+  return { text: `Joined ${date(sub.createdAt)}`, color: "#6B7280" };
 }
 
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
@@ -383,7 +393,10 @@ export default function SubscriberList() {
                 style={{ padding: "8px 12px", border: "1px solid #E5E7EB", borderRadius: 8, fontSize: 13, color: "#374151", background: "#fff", cursor: "pointer" }}>
                 <option value="">All status</option>
                 <option value="subscribed">Active</option>
+                <option value="pending">Awaiting confirmation</option>
                 <option value="unsubscribed">Unsubscribed</option>
+                <option value="bounced">Bounced</option>
+                <option value="complained">Reported spam</option>
               </select>
 
               {/* Source filter */}
@@ -591,7 +604,7 @@ export default function SubscriberList() {
         {/* Bottom helper cards */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
           {[
-            { icon: "👥", iconBg: "#DCFCE7", title: "Grow your list", desc: "Create more signup forms to grow your audience.", btn: "Create sign up form", url: "/app/newsletter/widget" },
+            { icon: "👥", iconBg: "#DCFCE7", title: "Grow your list", desc: "Add sign-up forms to grow your audience.", btn: "Set up sign-up form", url: "/app/newsletter/widget" },
             { icon: "🛡️", iconBg: "#DBEAFE", title: "Keep your list healthy", desc: "Remove inactive or invalid contacts regularly.", btn: "View list health", url: "/app/newsletter/subscribers?status=unsubscribed" },
             { icon: "📖", iconBg: "#F3E8FF", title: "Need help?", desc: "Learn how to manage your subscribers.", btn: "View guide", url: "/app/newsletter/subscribers" },
           ].map(card => (

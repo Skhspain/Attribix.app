@@ -5,7 +5,7 @@ import { useLocation, Link } from "@remix-run/react";
 const ITEMS = [
   { label: "General",                href: "/app/settings/general",       match: "prefix" },
   { label: "Tracking & Attribution", href: "/app/settings",               match: "exact"  },
-  { label: "Integrations",           href: "/app/integrations/meta",      match: "prefix" },
+  { label: "Integrations",           href: "/app/integrations",           match: "prefix" },
   { label: "Notifications",          href: "/app/settings/notifications",  match: "prefix" },
   { label: "Billing",                href: "/app/billing",                match: "prefix" },
 ];
@@ -14,12 +14,19 @@ export function SettingsNav() {
   const { pathname } = useLocation();
 
   return (
-    <nav style={{
-      width: 192,
-      flexShrink: 0,
-      marginRight: 32,
-      paddingTop: 2,
-    }}>
+    <nav className="ax-settings-nav" aria-label="Settings">
+      {/* Side column on desktop; a scrollable row above the content on phones. */}
+      <style>{`
+        .ax-settings-layout { display: flex; align-items: flex-start; }
+        .ax-settings-layout > :last-child { flex: 1; min-width: 0; }
+        .ax-settings-nav { width: 192px; flex-shrink: 0; margin-right: 32px; padding-top: 2px; }
+        @media (max-width: 720px) {
+          .ax-settings-layout { flex-direction: column; align-items: stretch; }
+          .ax-settings-nav { width: auto; margin: 0 0 16px; display: flex; gap: 4px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+          .ax-settings-nav > p { display: none; }
+          .ax-settings-nav > a { flex: none; white-space: nowrap; }
+        }
+      `}</style>
       <p style={{
         margin: "0 0 8px 0",
         padding: "0 10px",

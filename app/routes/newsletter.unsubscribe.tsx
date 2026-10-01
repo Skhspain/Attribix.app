@@ -4,7 +4,7 @@
 
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, Form } from "@remix-run/react";
+import { useActionData, useLoaderData, Form } from "@remix-run/react";
 import { verifyUnsubscribeToken, unsubscribeEmail } from "~/services/newsletter.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -21,20 +21,30 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const form = await request.formData();
-  const token = form.get("token") as string;
+  // Two callers: the confirm button on this page (token in the form), and mail
+  // clients doing RFC 8058 one-click unsubscribe (token in the URL, body
+  // "List-Unsubscribe=One-Click"), which expect a plain 200 and no page.
+  const url = new URL(request.url);
+  const form = await request.formData().catch(() => null);
+  const oneClick = form?.get("List-Unsubscribe") === "One-Click";
+  const token = String(form?.get("token") || url.searchParams.get("token") || "");
 
   const parsed = verifyUnsubscribeToken(token);
   if (!parsed) {
+    if (oneClick) return new Response("Invalid link", { status: 400 });
     return json({ valid: false, email: "", token, done: false });
   }
 
   await unsubscribeEmail(parsed.shop, parsed.email);
+  if (oneClick) return new Response("Unsubscribed", { status: 200 });
   return json({ valid: true, email: parsed.email, token, done: true });
 }
 
 export default function UnsubscribePage() {
-  const data = useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
+  // After confirming, show the action result (the loader alone never says "done").
+  const actionData = useActionData<typeof action>() as typeof loaderData | undefined;
+  const data = actionData ?? loaderData;
 
   if (!data.valid) {
     return (

@@ -208,11 +208,13 @@ export async function fetchAllPixels(args: {
 }): Promise<Array<{ id: string; name: string }>> {
   const all: Array<{ id: string; name: string }> = [];
   const seenIds = new Set<string>();
+  const PIXEL_FETCH_TIMEOUT_MS = 10_000;
 
   // Business-owned pixels first (de-duplicated)
   try {
     const bizRes = await fetch(
-      `https://graph.facebook.com/v20.0/me/businesses?fields=owned_pixels{id,name}&access_token=${args.accessToken}`
+      `https://graph.facebook.com/v20.0/me/businesses?fields=owned_pixels{id,name}&access_token=${args.accessToken}`,
+      { signal: AbortSignal.timeout(PIXEL_FETCH_TIMEOUT_MS) }
     );
     const bizData = await bizRes.json() as any;
     const bizPixels: Array<{ id: string; name: string }> = (bizData?.data || [])
@@ -229,7 +231,8 @@ export async function fetchAllPixels(args: {
   try {
     const actId = args.adAccountId.startsWith("act_") ? args.adAccountId : `act_${args.adAccountId}`;
     const pixRes = await fetch(
-      `https://graph.facebook.com/v20.0/${actId}/adspixels?fields=id,name&access_token=${args.accessToken}`
+      `https://graph.facebook.com/v20.0/${actId}/adspixels?fields=id,name&access_token=${args.accessToken}`,
+      { signal: AbortSignal.timeout(PIXEL_FETCH_TIMEOUT_MS) }
     );
     const pixData = await pixRes.json() as any;
     for (const p of (pixData?.data || [])) {

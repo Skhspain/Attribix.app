@@ -17,8 +17,10 @@ import {
   Page,
   Select,
   Text,
+  Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
+import { channelFromCampaign, orderSource, bucketLabel } from "~/utils/orderSource";
 import db from "~/db.server";
 
 export async function loader({ request }) {
@@ -29,43 +31,56 @@ export async function loader({ request }) {
   const plan = await getShopPlan(shop, admin);
   const historyCutoff = getHistoryCutoff(plan);
 
-  const purchases = await db.purchase.findMany({
-    where: { shop, createdAt: { gte: historyCutoff } },
-    orderBy: { createdAt: "desc" },
-    take: 250,
-    select: {
-      id: true,
-      orderId: true,
-      totalValue: true,
-      currency: true,
-      utmSource: true,
-      utmMedium: true,
-      utmCampaign: true,
-      fbclid: true,
-      gclid: true,
-      landingPage: true,
-      referrer: true,
-      createdAt: true,
-      customerName: true,
-    },
-  }).catch(() => []);
+  const [purchases, totalRevenue, attributedCount, totalCount, shopCurrencyRes] = await Promise.all([
+    db.purchase.findMany({
+      where: { shop, createdAt: { gte: historyCutoff } },
+      orderBy: { createdAt: "desc" },
+      take: 250,
+      select: {
+        id: true,
+        orderId: true,
+        totalValue: true,
+        currency: true,
+        utmSource: true,
+        utmMedium: true,
+        utmCampaign: true,
+        fbclid: true,
+        gclid: true,
+        ttclid: true,
+        msclkid: true,
+        salesChannel: true,
+        landingPage: true,
+        referrer: true,
+        createdAt: true,
+        customerName: true,
+        visitorId: true,
+        sessionId: true,
+      },
+    }).catch(() => []),
+    db.purchase.aggregate({
+      where: { shop, createdAt: { gte: historyCutoff } },
+      _sum: { totalValue: true },
+    }).catch(() => ({ _sum: { totalValue: 0 } })),
+    // Attributed = linked to a channel, same rule as every other report.
+    db.purchase.findMany({
+      where: { shop, createdAt: { gte: historyCutoff } },
+      select: { utmSource: true, utmMedium: true, fbclid: true, gclid: true, ttclid: true, msclkid: true, visitorId: true, sessionId: true, landingPage: true, referrer: true, salesChannel: true },
+    }).then((rows) => rows.filter((p) => !["direct", "untracked", "offline"].includes(orderSource(p))).length).catch(() => 0),
+    db.purchase.count({ where: { shop, createdAt: { gte: historyCutoff } } }).catch(() => 0),
+    admin.graphql(`{ shop { currencyCode } }`).then(r => r.json()).catch(() => null),
+  ]);
 
-  const totalRevenue = await db.purchase.aggregate({
-    where: { shop, createdAt: { gte: historyCutoff } },
-    _sum: { totalValue: true },
-  }).catch(() => ({ _sum: { totalValue: 0 } }));
+  const storeCurrency = shopCurrencyRes?.data?.shop?.currencyCode || "USD";
 
-  const attributedCount = await db.purchase.count({
-    where: { shop, createdAt: { gte: historyCutoff }, utmSource: { not: null } },
-  }).catch(() => 0);
-
-  const totalCount = await db.purchase.count({ where: { shop, createdAt: { gte: historyCutoff } } }).catch(() => 0);
+  const { labelOrders } = await import("~/services/campaignNames.server");
 
   return json({
-    purchases,
+    purchases: await labelOrders(shop, purchases),
     totalRevenue: totalRevenue._sum.totalValue ?? 0,
     attributedCount,
     totalCount,
+    storeCurrency,
+    historyDays: Math.round((Date.now() - historyCutoff.getTime()) / 864e5),
   });
 }
 
@@ -96,20 +111,9 @@ function formatDate(value) {
   }
 }
 
-function normalizeSource(purchase) {
-  const s = (purchase?.utmSource || "").toLowerCase();
-  if (s) {
-    if (s.includes("meta") || s.includes("facebook") || s.includes("instagram")) return "meta";
-    if (s.includes("google") || s.includes("adwords")) return "google";
-    if (s.includes("tiktok")) return "tiktok";
-    if (s.includes("email") || s.includes("klaviyo") || s.includes("mailchimp")) return "email";
-    if (s.includes("sms")) return "sms";
-    return s;
-  }
-  if (purchase?.fbclid) return "meta";
-  if (purchase?.gclid) return "google";
-  return null;
-}
+// Channel, direct/referral or not tracked: shared with Overview.
+const normalizeSource = channelFromCampaign;
+const sourceBucket = orderSource;
 
 function sourceBadgeTone(source) {
   if (!source) return "new";
@@ -133,7 +137,7 @@ function truncateUrl(url, maxLen = 45) {
 }
 
 export default function AppOrders() {
-  const { purchases, totalRevenue, attributedCount, totalCount } = useLoaderData();
+  const { purchases, totalRevenue, attributedCount, totalCount, storeCurrency, historyDays } = useLoaderData();
   const navigate = useNavigate();
   const backfillFetcher = useFetcher();
 
@@ -149,28 +153,21 @@ export default function AppOrders() {
 
   const sourceOptions = useMemo(() => {
     const sources = new Set();
-    for (const p of purchases) {
-      const s = normalizeSource(p);
-      if (s) sources.add(s);
-    }
+    for (const p of purchases) sources.add(sourceBucket(p));
     return [
       { label: "All sources", value: "all" },
-      { label: "Direct / unknown", value: "direct" },
-      ...Array.from(sources).map((s) => ({ label: s.charAt(0).toUpperCase() + s.slice(1), value: s })),
+      ...Array.from(sources).map((s) => ({ label: bucketLabel(s), value: s })),
     ];
   }, [purchases]);
 
   const filtered = useMemo(() => {
     return purchases.filter((p) => {
-      const source = normalizeSource(p);
-
-      if (sourceFilter === "direct" && source !== null) return false;
-      if (sourceFilter !== "all" && sourceFilter !== "direct" && source !== sourceFilter) return false;
+      if (sourceFilter !== "all" && sourceBucket(p) !== sourceFilter) return false;
 
       if (search.trim()) {
         const q = search.trim().toLowerCase();
         const matchOrder = (p.orderId || "").toLowerCase().includes(q);
-        const matchCampaign = (p.utmCampaign || "").toLowerCase().includes(q);
+        const matchCampaign = `${p.utmCampaign || ""} ${p.campaignLabel || ""}`.toLowerCase().includes(q);
         const matchSource = (source || "").toLowerCase().includes(q);
         if (!matchOrder && !matchCampaign && !matchSource) return false;
       }
@@ -185,15 +182,16 @@ export default function AppOrders() {
   const sourceBreakdown = useMemo(() => {
     const map = new Map();
     for (const p of purchases) {
-      const src = normalizeSource(p) || "direct";
+      const src = sourceBucket(p);
       const cur = map.get(src) || { orders: 0, revenue: 0 };
       cur.orders++;
       cur.revenue += Number(p.totalValue || 0);
       map.set(src, cur);
     }
     const totalRev = Array.from(map.values()).reduce((s, r) => s + r.revenue, 0);
+    // Untracked last so it can't read as the top source.
     return Array.from(map.entries())
-      .sort((a, b) => b[1].orders - a[1].orders)
+      .sort((a, b) => (a[0] === "untracked") - (b[0] === "untracked") || b[1].orders - a[1].orders)
       .map(([src, r]) => ({
         source: src,
         orders: r.orders,
@@ -209,9 +207,11 @@ export default function AppOrders() {
       <Text as="span" variant="bodySm" tone="subdued">{p.customerName || "—"}</Text>,
       <Text as="span" variant="bodySm">{formatMoney(p.totalValue, p.currency)}</Text>,
       source
-        ? <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
-        : <Text as="span" variant="bodySm" tone="subdued">direct</Text>,
-      <Text as="span" variant="bodySm" tone="subdued">{p.utmCampaign || "—"}</Text>,
+        ? <Badge tone={sourceBadgeTone(source)}>{bucketLabel(source)}</Badge>
+        : p.tracked
+          ? <Text as="span" variant="bodySm" tone="subdued">{p.referrer ? "referral" : "direct (no referrer)"}</Text>
+          : <Tooltip content="We didn't see this buyer's visit, so the source is unknown. Possible reasons include declined cookies, ad blockers or a different device. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>,
+      <Text as="span" variant="bodySm" tone="subdued">{p.campaignLabel || "—"}</Text>,
       <Text as="span" variant="bodySm" tone="subdued" title={p.landingPage || ""}>{truncateUrl(p.landingPage)}</Text>,
       <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,
     ];
@@ -220,7 +220,7 @@ export default function AppOrders() {
   return (
     <Page
       title="Orders"
-      subtitle={`${totalCount} total · ${attributedCount} attributed (${attributionRate}%)`}
+      subtitle={`Last ${historyDays} days · ${totalCount} orders · ${attributedCount} attributed (${attributionRate}%)`}
       secondaryActions={[
         {
           content: "View attribution",
@@ -238,7 +238,12 @@ export default function AppOrders() {
         {backfillResult && (
           <Banner tone={backfillResult.ok ? "success" : "critical"} title={backfillResult.ok ? "Shopify import complete" : "Import failed"} onDismiss={() => {}}>
             {backfillResult.ok
-              ? <Text as="p">{backfillResult.created} new orders added, {backfillResult.updated ?? 0} patched with names/source data{backfillResult.deduped > 0 ? `, ${backfillResult.deduped} duplicate rows removed` : ""}, {backfillResult.skipped} unchanged. Reload to see updated totals.</Text>
+              ? <Text as="p">{backfillResult.created > 0
+                  ? `Added ${backfillResult.created} order${backfillResult.created === 1 ? "" : "s"} Attribix was missing`
+                  : `Checked ${backfillResult.created + (backfillResult.updated ?? 0) + backfillResult.skipped} Shopify orders: Attribix already had all of them`}
+                  {(backfillResult.updated ?? 0) > 0 ? `, and filled in missing details on ${backfillResult.updated}` : ""}
+                  {backfillResult.deduped > 0 ? `, and removed ${backfillResult.deduped} duplicate${backfillResult.deduped === 1 ? "" : "s"}` : ""}.
+                  {backfillResult.created + (backfillResult.updated ?? 0) > 0 ? " Reload to see updated totals." : ""}</Text>
               : <Text as="p">{backfillResult.error}</Text>}
           </Banner>
         )}
@@ -247,13 +252,13 @@ export default function AppOrders() {
         <InlineStack gap="300">
           <Card>
             <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Total revenue</Text>
-              <Text as="p" variant="headingLg">{formatMoney(totalRevenue)}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Revenue · {historyDays} days</Text>
+              <Text as="p" variant="headingLg">{formatMoney(totalRevenue, storeCurrency)}</Text>
             </BlockStack>
           </Card>
           <Card>
             <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Total orders</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Orders · {historyDays} days</Text>
               <Text as="p" variant="headingLg">{totalCount}</Text>
             </BlockStack>
           </Card>
@@ -288,7 +293,7 @@ export default function AppOrders() {
             </InlineStack>
             <OrdersChart
               data={chartData}
-              currency={purchases[0]?.currency || "USD"}
+              currency={purchases[0]?.currency || storeCurrency || "USD"}
             />
           </BlockStack>
         </Card>
@@ -300,21 +305,21 @@ export default function AppOrders() {
             {sourceBreakdown.map(({ source, orders, revenue, share }) => (
               <div
                 key={source}
-                onClick={() => setSourceFilter(source === "direct" ? "direct" : source)}
+                onClick={() => setSourceFilter(source)}
                 style={{
                   cursor: "pointer",
-                  border: `2px solid ${sourceFilter === source || (sourceFilter === "direct" && source === "direct") ? "#303030" : "#e1e3e5"}`,
+                  border: `2px solid ${sourceFilter === source ? "#303030" : "#e1e3e5"}`,
                   borderRadius: 12,
                   padding: "12px 16px",
                   minWidth: 140,
-                  background: sourceFilter === source || (sourceFilter === "direct" && source === "direct") ? "#f6f6f7" : "#fff",
+                  background: sourceFilter === source ? "#f6f6f7" : "#fff",
                   transition: "border-color 0.15s",
                 }}
               >
                 <BlockStack gap="050">
                   <Text as="p" variant="headingXl" fontWeight="bold">{share}%</Text>
-                  <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
-                  <Text as="p" variant="bodySm" tone="subdued">{orders} orders · {formatMoney(revenue)}</Text>
+                  <Badge tone={sourceBadgeTone(source)}>{bucketLabel(source)}</Badge>
+                  <Text as="p" variant="bodySm" tone="subdued">{orders} orders · {formatMoney(revenue, storeCurrency)}</Text>
                 </BlockStack>
               </div>
             ))}

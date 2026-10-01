@@ -43,7 +43,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const channelMap: Record<string, ChannelAgg> = {};
 
   for (const pt of pts) {
-    const ch = pt.channel || "Direct / Unknown";
+    const ch = pt.channel || "Not tracked";
     if (!channelMap[ch]) {
       channelMap[ch] = {
         channel: ch,
@@ -150,6 +150,8 @@ const CHANNEL_COLORS: Record<string, string> = {
   "Organic Search":  "#10b981",
   "Organic Social":  "#8b5cf6",
   "Direct / Unknown": "#9ca3af",
+  "Direct": "#4b5563",
+  "Not tracked": "#c4c4c4",
 };
 
 function revenueForModel(row: any, model: Model): number {

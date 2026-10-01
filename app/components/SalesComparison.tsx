@@ -1,4 +1,6 @@
-// Reusable Shopify vs Ad Platform sales comparison card
+// Attribix-tracked orders from one ad platform vs what that platform reports.
+// shopifyRevenue/shopifyOrders are only the orders Attribix attributed to that
+// platform, not all Shopify sales.
 import { Card, BlockStack, Text } from "@shopify/polaris";
 
 function fmt(value: number, currency = "NOK") {
@@ -29,24 +31,21 @@ export function SalesComparison({ shopifyRevenue, shopifyOrders, platformName, p
   const sign = diff >= 0 ? "+" : "";
   const bigGap = Math.abs(pct) > 20;
 
-  const explanation = platformRevenue > shopifyRevenue
-    ? `${platformName} reports more (includes view-through conversions)`
-    : platformRevenue < shopifyRevenue
-    ? "Shopify has more revenue (includes organic/direct sales)"
-    : "Numbers match closely";
+  // We don't measure why the two differ, so offer possible reasons, not a cause.
+  const explanation = `Possible reasons: ${platformName}'s longer attribution window, view-through conversions, orders Attribix couldn't track, or conversions ${platformName} counts differently. Compare attribution windows and conversion definitions before relying on either.`;
 
   return (
     <Card>
       <BlockStack gap="300">
-        <Text as="h2" variant="headingSm">Shopify Sales vs {platformName} Reported ({period})</Text>
+        <Text as="h2" variant="headingSm">Attribix-attributed vs {platformName}-reported ({period})</Text>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "14px 16px" }}>
-            <Text as="p" variant="bodySm" tone="subdued">Shopify Revenue</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{platformName}-attributed Shopify revenue</Text>
             <Text as="p" variant="headingLg">{fmt(shopifyRevenue, currency)}</Text>
-            <Text as="p" variant="bodySm" tone="subdued">{shopifyOrders} orders</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{shopifyOrders} orders Attribix attributed to {platformName}</Text>
           </div>
           <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "14px 16px" }}>
-            <Text as="p" variant="bodySm" tone="subdued">{platformName} Reported</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{platformName}-reported conversion value</Text>
             <Text as="p" variant="headingLg">{fmt(platformRevenue, currency)}</Text>
           </div>
           <div style={{

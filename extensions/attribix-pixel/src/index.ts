@@ -51,6 +51,23 @@ type EventSnapshot = {
 
   email?: string | null;
   phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  city?: string | null;
+  zip?: string | null;
+  state?: string | null;
+  country?: string | null;
+  customerId?: string | null;
+};
+
+// Logged-in customer from the web pixel `init` payload. Lets pre-checkout events
+// (AddToCart, InitiateCheckout) carry email/phone/name when the shopper is signed in.
+type KnownCustomer = {
+  id?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
 };
 
 type TrackBody = {
@@ -113,13 +130,31 @@ function uuid(): string {
   return `ev_${Math.random().toString(16).slice(2)}_${Date.now()}`;
 }
 
-function getLocalStorage(): Storage | null {
+// The pixel runs in Shopify's strict sandbox (a web worker): there is no
+// document.cookie or window.localStorage. Cookies and storage are only reachable
+// through the async `browser` API passed to register().
+type BrowserApi = {
+  cookie?: { get(name: string): Promise<string> };
+  localStorage?: {
+    getItem(key: string): Promise<string | null>;
+    setItem(key: string, value: string): Promise<void>;
+  };
+};
+
+let browserApi: BrowserApi | null = null;
+
+async function storeGet(key: string): Promise<string | null> {
   try {
-    // @ts-ignore
-    return globalThis?.localStorage ?? null;
+    return safePickString(await browserApi?.localStorage?.getItem(key));
   } catch {
     return null;
   }
+}
+
+async function storeSet(key: string, value: string) {
+  try {
+    await browserApi?.localStorage?.setItem(key, value);
+  } catch {}
 }
 
 function safePickString(value: any): string | null {
@@ -140,59 +175,44 @@ function safePickNumber(value: any): number | null {
   return null;
 }
 
-function getOrCreateVisitorId(): string {
-  try {
-    const ls = getLocalStorage();
-    if (ls) {
-      const existing = ls.getItem(VISITOR_KEY);
-      if (existing && existing.length > 10) return existing;
+let visitorIdPromise: Promise<string | null> | null = null;
 
-      const created = `v_${uuid()}`;
-      ls.setItem(VISITOR_KEY, created);
-      return created;
-    }
-  } catch {}
-
-  return `v_${uuid()}`;
+/**
+ * Stable per-browser id, used as Meta external_id and for multi-touch journeys.
+ * Prefers the theme tracker's attribix_vid cookie so both scripts agree, then a
+ * stored id, then Shopify's own clientId. Only pixel_boot (no event, so no
+ * clientId) can end up with a throwaway id, and that one is never stored.
+ */
+async function getVisitorId(clientId: string | null): Promise<string> {
+  let id = await visitorIdPromise;
+  if (id) return id;
+  visitorIdPromise = (async () => {
+    const found =
+      (await safeGetCookie("attribix_vid")) ||
+      (await storeGet(VISITOR_KEY)) ||
+      (clientId ? `v_${clientId}` : null);
+    if (found) await storeSet(VISITOR_KEY, found);
+    return found;
+  })();
+  id = await visitorIdPromise;
+  return id ?? `v_${uuid()}`;
 }
 
-function getOrCreateSessionId(): string {
-  try {
-    const ls = getLocalStorage();
-    if (ls) {
-      const existingSessionId = ls.getItem(SESSION_KEY);
-      const existingTouchRaw = ls.getItem(SESSION_TOUCH_KEY);
-      const existingTouch = existingTouchRaw ? Number(existingTouchRaw) : 0;
-      const age = nowMs() - existingTouch;
-
-      if (
-        existingSessionId &&
-        existingSessionId.length > 10 &&
-        Number.isFinite(existingTouch) &&
-        age >= 0 &&
-        age < SESSION_TIMEOUT_MS
-      ) {
-        ls.setItem(SESSION_TOUCH_KEY, String(nowMs()));
-        return existingSessionId;
-      }
-
-      const created = `s_${uuid()}`;
-      ls.setItem(SESSION_KEY, created);
-      ls.setItem(SESSION_TOUCH_KEY, String(nowMs()));
-      return created;
-    }
-  } catch {}
-
-  return `s_${uuid()}`;
+async function getOrCreateSessionId(): Promise<string> {
+  const existing = await storeGet(SESSION_KEY);
+  const lastTouch = Number(await storeGet(SESSION_TOUCH_KEY));
+  const age = nowMs() - lastTouch;
+  const id =
+    existing && Number.isFinite(lastTouch) && age >= 0 && age < SESSION_TIMEOUT_MS
+      ? existing
+      : `s_${uuid()}`;
+  await touchSession(id);
+  return id;
 }
 
-function touchSession(sessionId: string) {
-  try {
-    const ls = getLocalStorage();
-    if (!ls) return;
-    ls.setItem(SESSION_KEY, sessionId);
-    ls.setItem(SESSION_TOUCH_KEY, String(nowMs()));
-  } catch {}
+async function touchSession(sessionId: string) {
+  await storeSet(SESSION_KEY, sessionId);
+  await storeSet(SESSION_TOUCH_KEY, String(nowMs()));
 }
 
 function safeGetUrlFromEventOrLocation(ev: any): string | null {
@@ -251,17 +271,10 @@ function safeGetReferrerFromEventOrDocument(ev: any): string | null {
   return null;
 }
 
-function safeGetCookie(name: string): string | null {
+async function safeGetCookie(name: string): Promise<string | null> {
   try {
-    // @ts-ignore
-    const cookie = globalThis?.document?.cookie;
-    if (!cookie || typeof cookie !== "string") return null;
-
-    const parts = cookie.split(";").map((p) => p.trim());
-    const found = parts.find((p) => p.startsWith(`${name}=`));
-    if (!found) return null;
-
-    return decodeURIComponent(found.slice(name.length + 1));
+    const value = safePickString(await browserApi?.cookie?.get(name));
+    return value ? decodeURIComponent(value) : null;
   } catch {
     return null;
   }
@@ -296,15 +309,29 @@ function buildFbcFromFbclid(fbclid?: string | null): string | null {
   return `fb.1.${Date.now()}.${fbclid}`;
 }
 
-function getFacebookBrowserIds(url: string | null) {
-  const clickIds = getClickIds(url);
-  const cookieFbp = safeGetCookie("_fbp");
-  const cookieFbc = safeGetCookie("_fbc");
+const FBC_KEY = "attribix_fbc";
 
-  return {
-    fbp: cookieFbp || null,
-    fbc: cookieFbc || buildFbcFromFbclid(clickIds.fbclid),
-  };
+/**
+ * _fbp / _fbc as set by Meta's browser pixel. Without an _fbc cookie, an fbclid
+ * in the URL is turned into an fbc once and stored, so its timestamp stays the
+ * same on later events (Meta flags fbc values whose creation time keeps changing).
+ */
+async function getFacebookBrowserIds(url: string | null) {
+  const fbp = await safeGetCookie("_fbp");
+  let fbc = await safeGetCookie("_fbc");
+
+  if (!fbc) {
+    const { fbclid } = getClickIds(url);
+    const stored = await storeGet(FBC_KEY);
+    if (fbclid && !stored?.endsWith(`.${fbclid}`)) {
+      fbc = buildFbcFromFbclid(fbclid);
+      if (fbc) await storeSet(FBC_KEY, fbc);
+    } else {
+      fbc = stored;
+    }
+  }
+
+  return { fbp, fbc };
 }
 
 function getCheckoutIdFromUrl(url: string | null): string | null {
@@ -345,8 +372,14 @@ function buildEventSnapshot(
   type: string,
   resolvedUrl: string | null,
   resolvedReferrer: string | null,
+  customer: KnownCustomer | null,
 ): EventSnapshot {
   const checkoutId = getBestCheckoutId(ev, resolvedUrl);
+  const checkout = ev?.data?.checkout;
+  const billing = checkout?.billingAddress;
+  const shipping = checkout?.shippingAddress;
+  const pickAddr = (key: string) =>
+    safePickString(billing?.[key]) || safePickString(shipping?.[key]) || null;
 
   return {
     id: safePickString(ev?.id) ?? safePickString(ev?.data?.id) ?? null,
@@ -400,25 +433,49 @@ function buildEventSnapshot(
       safePickString(ev?.data?.email) ||
       safePickString(ev?.data?.checkout?.email) ||
       safePickString(ev?.email) ||
+      safePickString(customer?.email) ||
       null,
 
     phone:
       safePickString(ev?.data?.phone) ||
       safePickString(ev?.data?.checkout?.phone) ||
       safePickString(ev?.phone) ||
+      pickAddr("phone") ||
+      safePickString(customer?.phone) ||
       null,
+
+    firstName: pickAddr("firstName") || safePickString(customer?.firstName) || null,
+    lastName: pickAddr("lastName") || safePickString(customer?.lastName) || null,
+    city: pickAddr("city"),
+    zip: pickAddr("zip"),
+    state: pickAddr("provinceCode") || pickAddr("province"),
+    country: pickAddr("countryCode") || pickAddr("country"),
+    customerId: safePickString(customer?.id),
   };
 }
 
-export default register(({ analytics, settings }) => {
+export default register(({ analytics, settings, init, browser }) => {
+  browserApi = (browser as BrowserApi) ?? null;
+
   const typedSettings = (settings as Settings) ?? {};
+
+  let customer: KnownCustomer | null = null;
+  try {
+    const c = (init as any)?.data?.customer;
+    if (c) {
+      customer = {
+        id: safePickString(c.id),
+        email: safePickString(c.email),
+        phone: safePickString(c.phone),
+        firstName: safePickString(c.firstName),
+        lastName: safePickString(c.lastName),
+      };
+    }
+  } catch {}
 
   const accountID = typedSettings.accountID ?? typedSettings.accountId;
   const trackingShop = typedSettings.trackingShop ?? typedSettings.shop ?? null;
   const trackingKey = typedSettings.trackingKey ?? null;
-
-  const visitorId = getOrCreateVisitorId();
-  let sessionId = getOrCreateSessionId();
 
   console.log("[attribix pixel] boot", {
     hasSettings: !!settings,
@@ -427,8 +484,6 @@ export default register(({ analytics, settings }) => {
     trackingShop,
     hasTrackingKey: Boolean(trackingKey),
     t: nowIso(),
-    visitorId,
-    sessionId,
   });
 
   async function post(type: string, ev?: any, meta?: Record<string, any>) {
@@ -436,14 +491,15 @@ export default register(({ analytics, settings }) => {
     const referrer = safeGetReferrerFromEventOrDocument(ev);
     const host = getHost(url);
     const clickIds = getClickIds(url);
-    const { fbp, fbc } = getFacebookBrowserIds(url);
+    const { fbp, fbc } = await getFacebookBrowserIds(url);
     const eventId = `e_${uuid()}`;
+    const visitorId = await getVisitorId(safePickString(ev?.clientId));
 
     const checkoutScopedSessionId = buildCheckoutScopedSessionId(type, ev, url);
-    sessionId = checkoutScopedSessionId || getOrCreateSessionId();
-    touchSession(sessionId);
+    const sessionId = checkoutScopedSessionId || (await getOrCreateSessionId());
+    if (checkoutScopedSessionId) await touchSession(sessionId);
 
-    const eventSnapshot = buildEventSnapshot(ev, type, url, referrer);
+    const eventSnapshot = buildEventSnapshot(ev, type, url, referrer, customer);
 
     const body: TrackBody = {
       type,
@@ -490,7 +546,9 @@ export default register(({ analytics, settings }) => {
       trackingShop,
       hasTrackingKey: Boolean(trackingKey),
       topLevelKeys: Object.keys(body),
-      eventSnapshot,
+      hasEmail: Boolean(eventSnapshot.email),
+      hasPhone: Boolean(eventSnapshot.phone),
+      hasAddress: Boolean(eventSnapshot.city || eventSnapshot.zip),
     });
 
     try {
@@ -562,7 +620,9 @@ export default register(({ analytics, settings }) => {
   sub("product_viewed");
   sub("collection_viewed");
   sub("search_submitted");
+  sub("product_added_to_cart");
   sub("checkout_started");
+  sub("payment_info_submitted");
   sub("checkout_completed");
 
   // Optional:

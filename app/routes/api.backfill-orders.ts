@@ -6,6 +6,7 @@
 import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import { db } from "~/db.server";
+import { rebuildJourneys } from "~/services/touchpoints.server";
 
 function pickString(x: unknown): string | null {
   return typeof x === "string" && x.trim().length ? x.trim() : null;
@@ -140,6 +141,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, error: err?.message ?? "backfill failed" }, { status: 500 });
   }
 
-  console.log(`[backfill] ${shop}: created=${created} skipped=${skipped}`);
-  return json({ ok: true, created, skipped });
+  // Imported and existing orders both get their journeys rebuilt from the
+  // visits we tracked, so orders from organic/direct visits stop being unknown.
+  const journeys = await rebuildJourneys(shop, new Date(since)).catch((e: any) => {
+    console.error(`[backfill] ${shop}: rebuildJourneys error:`, e?.message);
+    return null;
+  });
+
+  console.log(`[backfill] ${shop}: created=${created} skipped=${skipped} journeys=${JSON.stringify(journeys)}`);
+  return json({ ok: true, created, skipped, journeys });
 }

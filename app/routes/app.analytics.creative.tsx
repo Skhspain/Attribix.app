@@ -9,6 +9,8 @@ import {
   Page, Card, BlockStack, InlineStack, Text, Badge, Select, Grid, Button, Icon,
 } from "@shopify/polaris";
 import { useState } from "react";
+import { formatDateTime } from "~/utils/formatDate";
+import { formatRoas } from "~/utils/roas";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session, admin } = await authenticate.admin(request);
@@ -151,15 +153,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const googleConnected = !!(googleConn?.adCustomerId);
   const lastSync = metaConn?.lastSyncedAt ?? null;
 
-  // Fetch store currency from Shopify as the authoritative source;
-  // fall back to user-configured setting, then "USD"
-  let storeCurrency: string = (trackingSettings as any)?.storeCurrency ?? "USD";
+  let storeCurrency: string;
   try {
     const shopRes = await admin.graphql(`{ shop { currencyCode } }`);
     const shopData = await shopRes.json();
-    storeCurrency = shopData?.data?.shop?.currencyCode || storeCurrency;
+    storeCurrency = shopData?.data?.shop?.currencyCode
+      || (trackingSettings as any)?.storeCurrency
+      || "USD";
   } catch {
-    // non-fatal — use DB/fallback value
+    storeCurrency = (trackingSettings as any)?.storeCurrency || "USD";
   }
 
   return json({
@@ -183,7 +185,6 @@ function fmtK(n: number) {
   return String(n);
 }
 function pct(n: number) { return n.toFixed(2) + "%"; }
-function roasFmt(r: number) { return Math.round(r * 100) + "%"; }
 function roasColor(r: number) {
   if (r >= 4) return "#10b981";
   if (r >= 2) return "#f59e0b";
@@ -270,7 +271,7 @@ export default function CreativeAnalyticsPage() {
   const {
     adRows, campaignRows, dailyTrend,
     totalSpend, totalRevFromAds, totalImpressions, totalClicks, totalPurchases,
-    metaConnected, googleConnected, lastSync, days,
+    metaConnected, googleConnected, lastSync, days, storeCurrency,
   } = useLoaderData<typeof loader>();
 
   const [windowDays, setWindowDays] = useState(String(days));
@@ -279,7 +280,7 @@ export default function CreativeAnalyticsPage() {
   const overallRoas = totalSpend > 0 ? totalRevFromAds / totalSpend : 0;
   const overallCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
   const overallCpa = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
-  const currency = data.storeCurrency || "USD";
+  const currency = storeCurrency || "USD";
 
   const maxCampSpend = Math.max(...campaignRows.map(c => c.spend), 1);
   const maxAdSpend = Math.max(...adRows.map(a => a.spend), 1);
@@ -348,7 +349,7 @@ export default function CreativeAnalyticsPage() {
             </InlineStack>
             {lastSync && (
               <Text as="p" variant="bodySm" tone="subdued">
-                Last sync: {new Date(lastSync).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} {new Date(lastSync).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                Last sync: {formatDateTime(lastSync)}
               </Text>
             )}
           </InlineStack>
@@ -361,7 +362,7 @@ export default function CreativeAnalyticsPage() {
             { label: "Revenue from ads", value: fmt(totalRevFromAds, currency) },
             {
               label: "Overall ROAS",
-              value: overallRoas > 0 ? roasFmt(overallRoas) : "—",
+              value: overallRoas > 0 ? formatRoas(overallRoas) : "—",
               color: overallRoas > 0 ? roasColor(overallRoas) : undefined,
               bg: overallRoas > 0 ? roasBg(overallRoas) : undefined,
             },
@@ -455,7 +456,7 @@ export default function CreativeAnalyticsPage() {
                           <td style={{ padding: "10px 12px" }}>
                             {row.roas > 0 ? (
                               <span style={{ background: roasBg(row.roas), color: roasColor(row.roas), fontWeight: 700, padding: "2px 8px", borderRadius: 99, fontSize: 12 }}>
-                                {roasFmt(row.roas)}
+                                {formatRoas(row.roas)}
                               </span>
                             ) : "—"}
                           </td>
@@ -518,7 +519,7 @@ export default function CreativeAnalyticsPage() {
                             <td style={{ padding: "10px 12px" }}>
                               {roas > 0 ? (
                                 <span style={{ background: roasBg(roas), color: roasColor(roas), fontWeight: 700, padding: "2px 8px", borderRadius: 99, fontSize: 12 }}>
-                                  {roasFmt(roas)}
+                                  {formatRoas(roas)}
                                 </span>
                               ) : "—"}
                             </td>

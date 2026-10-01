@@ -1,41 +1,18 @@
 // app/routes/app.jsx
 import { json } from "@remix-run/node";
-import { Outlet, useLoaderData, useNavigation } from "@remix-run/react";
+import { Outlet, useFetcher, useLoaderData, useLocation, useNavigation } from "@remix-run/react";
+import { Banner, Button, InlineStack, Text } from "@shopify/polaris";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import shopify, { authenticate } from "~/shopify.server";
-
-const APP_BASE = (process.env.SHOPIFY_APP_URL || "https://api.attribix.app").replace(/\/$/, "");
-const WIDGET_SRC = `${APP_BASE}/reviews/widget.js`;
+import { useEffect, useState } from "react";
+import { rememberVisitedPath } from "~/components/overview/storage";
 
 // Meta Pixel browser-side tracking is handled by the attribix-pixel web pixel
-// extension (extensions/attribix-pixel), which forwards events to the backend
-// for server-side Meta CAPI delivery. We no longer register a browser ScriptTag
-// for the Meta pixel — that path was redundant with the web pixel extension.
-//
-// The reviews widget is still ScriptTag-based until migrated to a theme app
-// extension block. Once migrated, this function + the read_script_tags /
-// write_script_tags scopes can be removed entirely.
-async function ensureScriptTags(admin) {
-  try {
-    const existing = await admin.graphql(`
-      { scriptTags(first: 20) { edges { node { id src } } } }
-    `);
-    const body = await existing.json();
-    const tags = body?.data?.scriptTags?.edges ?? [];
-    const existingSrcs = tags.map((e) => e.node.src);
+// extension (extensions/attribix-pixel). Storefront widgets (reviews, newsletter,
+// buy now) ship via the attribix-tracker theme app extension — we no longer
+// create ScriptTags (Shopify blocks scriptTagCreate from Oct 1, 2026).
 
-    // Register reviews widget if missing
-    if (!existingSrcs.some((s) => s.includes("reviews/widget"))) {
-      await admin.graphql(`
-        mutation { scriptTagCreate(input: { src: "${WIDGET_SRC}", displayScope: ALL }) { scriptTag { id } userErrors { message } } }
-      `);
-    }
-  } catch (e) {
-    console.error("[app] scriptTag registration error:", e?.message ?? e);
-  }
-}
-
-// Throttle per-shop setup (webhook registration + script tags) so these
+// Throttle per-shop setup (webhook registration) so these
 // expensive Shopify API calls don't block every single page navigation.
 // One run per shop per hour per server process is more than enough.
 const lastSetupMs = new Map();
@@ -50,9 +27,6 @@ function runSetupFireAndForget(shop, session, admin) {
   // Fire-and-forget — never await; page response is not blocked
   shopify.registerWebhooks({ session }).catch((e) =>
     console.error("[app] webhook reg error:", e?.message)
-  );
-  ensureScriptTags(admin).catch((e) =>
-    console.error("[app] scriptTag error:", e?.message)
   );
 }
 
@@ -69,7 +43,7 @@ const PARTNER_SHOPS = new Set([
 
 export const loader = async ({ request }) => {
   const { session, admin } = await authenticate.admin(request);
-  // Run webhook registration + script tag setup at most once per hour.
+  // Run webhook registration at most once per hour.
   // Non-blocking — response is not delayed by these Shopify API calls.
   runSetupFireAndForget(session.shop, session, admin);
 
@@ -92,7 +66,13 @@ export const loader = async ({ request }) => {
     }
   }
 
+  // Hides the banner (and removes the old ScriptTags) once the embed is live.
+  const { needsEmbedMigration, appEmbedUrl } = await import("~/services/themeEditor.server");
+  const legacyScriptTags = await needsEmbedMigration(session.shop, admin);
+
   return json({
+    legacyScriptTags,
+    embedUrl: appEmbedUrl(session.shop),
     apiKey:
       process.env.SHOPIFY_API_KEY ||
       process.env.VITE_SHOPIFY_API_KEY ||
@@ -136,9 +116,15 @@ export function shouldRevalidate({
 }
 
 export default function AppRoute() {
-  const { apiKey } = useLoaderData();
+  const { apiKey, legacyScriptTags, embedUrl } = useLoaderData();
   const navigation = useNavigation();
+  const location = useLocation();
   const isNavigating = navigation.state !== "idle";
+  // Going to another page (not just submitting a form on this one): fade the
+  // current page so it isn't mistaken for the destination while it loads.
+  const changingPage = navigation.state === "loading" && !!navigation.location && navigation.location.pathname !== location.pathname;
+  // Lets Overview tell which tools the merchant has already opened.
+  useEffect(() => { rememberVisitedPath(location.pathname); }, [location.pathname]);
 
   return (
     <AppProvider apiKey={apiKey} isEmbeddedApp>
@@ -154,9 +140,12 @@ export default function AppRoute() {
       )}
       {/* ui-nav-menu is an App Bridge web component — renders the embedded app sidebar nav */}
       <ui-nav-menu>
+        {/* Shopify doesn't render the rel="home" link in the sidebar, so Overview gets a visible entry too. */}
         <a href="/app" rel="home">Overview</a>
+        <a href="/app/overview">Overview</a>
         {/* Ads & Attribution */}
         <a href="/app/analytics">Analytics</a>
+        <a href="/app/journey">Customer journeys</a>
         <a href="/app/meta-ads">Meta Ads</a>
         <a href="/app/google-ads">Google Ads</a>
         {/* <a href="/app/tiktok-ads">TikTok Ads</a> — hidden until TikTok dev app approved */}
@@ -169,10 +158,75 @@ export default function AppRoute() {
         <a href="/app/seo">SEO Audit</a>
         <a href="/app/feeds">Feeds</a>
         {/* Setup */}
-        <a href="/app/integrations/meta">Integrations</a>
+        <a href="/app/integrations">Integrations</a>
+        <a href="/app/setup">Setup guide</a>
         <a href="/app/settings">Settings</a>
       </ui-nav-menu>
-      <Outlet />
+      {legacyScriptTags && <LegacyScriptTagBanner embedUrl={embedUrl} />}
+      <div
+        aria-busy={changingPage}
+        style={{ opacity: changingPage ? 0.45 : 1, transition: changingPage ? "opacity 150ms ease 120ms" : "none", pointerEvents: changingPage ? "none" : undefined }}
+      >
+        <Outlet />
+      </div>
+      {changingPage && (
+        <div role="status" aria-live="polite" style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}>
+          Loading page…
+        </div>
+      )}
     </AppProvider>
+  );
+}
+
+// Shown while the shop still has legacy ScriptTags. Shopify stops running them
+// on Mar 1, 2027, so the merchant needs to switch on the "Attribix Widgets"
+// app embed. When they come back from the theme editor we check the live
+// storefront and clear the banner automatically; the manual button is a
+// fallback for storefronts we can't read.
+function LegacyScriptTagBanner({ embedUrl }) {
+  const fetcher = useFetcher();
+  const [opened, setOpened] = useState(false);
+
+  useEffect(() => {
+    if (!opened) return;
+    const check = () => {
+      if (document.visibilityState !== "visible" || fetcher.state !== "idle") return;
+      fetcher.submit({ intent: "check" }, { method: "post", action: "/app/legacy-script-tags" });
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+    };
+  }, [opened, fetcher]);
+
+  if (fetcher.data?.ok) return null;
+  const checking = fetcher.state !== "idle" && fetcher.formData?.get("intent") === "check";
+  const notDetected = fetcher.state === "idle" && fetcher.data?.intent === "check" && !fetcher.data.ok;
+
+  // Compact on purpose: it shows on every page, so one line plus actions.
+  // Full instructions live in the Setup guide (step 5).
+  return (
+    <div style={{ maxWidth: 998, margin: "12px auto 0", padding: "0 16px" }}>
+      <Banner
+        tone="warning"
+        title="Turn on Attribix Widgets in your theme before 1 March 2027"
+        action={{ content: "Enable in theme", url: embedUrl, target: "_blank", onAction: () => setOpened(true) }}
+        secondaryAction={
+          opened
+            ? { content: "I've enabled it and saved", onAction: () => fetcher.submit({}, { method: "post", action: "/app/legacy-script-tags" }) }
+            : { content: "Why?", url: "/app/setup" }
+        }
+      >
+        {checking && <Text as="p" tone="subdued">Checking your storefront…</Text>}
+        {notDetected && (
+          <Text as="p" tone="subdued">Not on your storefront yet. Make sure you clicked Save in the theme editor.</Text>
+        )}
+        {fetcher.data?.ok === false && !fetcher.data?.intent && (
+          <Text as="p" tone="critical">Couldn't finish the switch. Please try again.</Text>
+        )}
+      </Banner>
+    </div>
   );
 }

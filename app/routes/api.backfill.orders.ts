@@ -15,6 +15,7 @@ const ORDERS_QUERY = `#graphql
         id
         legacyResourceId
         name
+        sourceName
         totalPriceSet { shopMoney { amount currencyCode } }
         createdAt
         billingAddress { countryCodeV2 city firstName lastName }
@@ -93,6 +94,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const form = await request.formData().catch(() => new FormData());
   const maxPages = Math.min(parseInt((form.get("maxPages") as string) || "4", 10), 40);
+  // Only add orders the webhook missed; leave existing rows (and their
+  // attribution) exactly as they are.
+  const onlyMissing = form.get("onlyMissing") === "1";
 
   // ── 0. Dedup pass: merge GID-format rows into numeric-ID rows ────────────
   // The webhook used to store admin_graphql_api_id ("gid://shopify/Order/123")
@@ -183,6 +187,17 @@ export async function action({ request }: ActionFunctionArgs) {
           where: { OR: [{ orderId: numericId }, { orderId: gid }] },
         });
 
+        // The sales channel isn't attribution, so it's filled in even when
+        // only importing missing orders.
+        if (existing && !existing.salesChannel && order.sourceName) {
+          await db.purchase.update({ where: { id: existing.id }, data: { salesChannel: order.sourceName } });
+        }
+
+        if (existing && onlyMissing) {
+          skipped++;
+          continue;
+        }
+
         if (existing) {
           // Patch: only fill in fields that are currently empty
           const needsPatch =
@@ -225,6 +240,7 @@ export async function action({ request }: ActionFunctionArgs) {
             landingPage,
             referrer,
             customerName,
+            salesChannel: order.sourceName || null,
           },
         });
         created++;
