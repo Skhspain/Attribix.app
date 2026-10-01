@@ -25,3 +25,15 @@ describe("order source buckets", () => {
     expect(sorted).toEqual(["meta", "direct", "untracked"]);
   });
 });
+
+describe("offline orders", () => {
+  it("keeps draft orders and POS sales out of the tracking gap", () => {
+    expect(orderSource({ salesChannel: "shopify_draft_order" })).toBe("offline");
+    expect(orderSource({ salesChannel: "pos" })).toBe("offline");
+    expect(orderSource({ salesChannel: "web" })).toBe("untracked");
+  });
+
+  it("still credits an offline order that carries campaign data", () => {
+    expect(orderSource({ salesChannel: "shopify_draft_order", utmSource: "facebook" })).toBe("meta");
+  });
+});

@@ -1,6 +1,6 @@
 // app/routes/app._index.jsx
 import { json } from "@remix-run/node";
-import { channelFromCampaign, orderSource, hasCampaign, visitSeen, bucketRank } from "~/utils/orderSource";
+import { channelFromCampaign, orderSource, hasCampaign, bucketRank } from "~/utils/orderSource";
 import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useMemo, useEffect } from "react";
 import {
@@ -28,6 +28,14 @@ export async function loader({ request }) {
   const { start: since60 } = previousPeriod(PERIOD_DAYS);
   const since7 = periodStart(7);
 
+  // Sales channel for older orders, so offline orders (draft orders/invoices,
+  // POS) aren't counted as unseen visits. Only missing ones are fetched.
+  const { fillSalesChannels } = await import("~/services/salesChannel.server");
+  await Promise.race([
+    fillSalesChannels(shop, admin, since30),
+    new Promise((r) => setTimeout(r, 3000)),
+  ]).catch(() => null);
+
   const [
     settings,
     metaConn,
@@ -51,7 +59,7 @@ export async function loader({ request }) {
         id: true, orderId: true, totalValue: true, currency: true,
         utmSource: true, utmMedium: true, utmCampaign: true,
         fbclid: true, gclid: true, ttclid: true, msclkid: true,
-        createdAt: true, visitorId: true, sessionId: true, landingPage: true, referrer: true,
+        createdAt: true, visitorId: true, sessionId: true, landingPage: true, referrer: true, salesChannel: true,
       },
     }).catch(() => []),
 
@@ -253,8 +261,12 @@ export async function loader({ request }) {
   const attributedOrders = purchases30.filter(hasCampaign).length;
   // Orders where we never saw the buyer's visit at all vs. visits we saw that
   // simply had no campaign or referrer (observed direct traffic).
-  const notTrackedOrders = purchases30.filter(p => !visitSeen(p)).length;
+  const notTrackedOrders = purchases30.filter(p => orderSource(p) === "untracked").length;
   const directOrders = purchases30.filter(p => orderSource(p) === "direct").length;
+  // Draft orders/invoices and POS had no website visit to track, so tracking
+  // coverage is measured against online orders only.
+  const offlineOrders = purchases30.filter(p => orderSource(p) === "offline").length;
+  const onlineOrders = orders30 - offlineOrders;
 
   // Storefront widgets (reviews/newsletter) need the theme app embed. Cached
   // check of the live storefront; don't hold the page up if it's slow.
@@ -263,7 +275,8 @@ export async function loader({ request }) {
     isWidgetsEmbedLive(shop),
     new Promise((r) => setTimeout(() => r(null), 2500)),
   ]).catch(() => null);
-  const attributionRate = orders30 > 0 ? Math.round((attributedOrders / orders30) * 100) : 0;
+  const onlineAttributed = purchases30.filter(p => hasCampaign(p) && orderSource(p) !== "offline").length;
+  const attributionRate = onlineOrders > 0 ? Math.round((onlineAttributed / onlineOrders) * 100) : 0;
   const uniqueVisitors = new Set(trackedEvents30.filter(e => e.visitorId).map(e => String(e.visitorId))).size;
   const metaReportedPurchases = metaKpis.purchases;
   const platformTotal = metaReportedPurchases;
@@ -327,7 +340,7 @@ export async function loader({ request }) {
       googleSyncedAt: googleConn?.lastSyncedAt ?? null,
       googleSyncError: googleConn?.lastSyncError ?? null,
     },
-    tracking: { attributedOrders, notTrackedOrders, directOrders, attributionRate, uniqueVisitors, pixelStatus, metaReportedPurchases, platformTotal, attribixTrackedMore, widgetsEmbedLive },
+    tracking: { attributedOrders, onlineAttributed, notTrackedOrders, directOrders, offlineOrders, onlineOrders, attributionRate, uniqueVisitors, pixelStatus, metaReportedPurchases, platformTotal, attribixTrackedMore, widgetsEmbedLive },
     metaKpis, bestAd, sourceSummary,
     pixelStatus,
     pixelLastSeen: pixelLastSeen?.toISOString() ?? null,
@@ -419,6 +432,7 @@ function DeltaBadge({ delta, invert = false }) {
 const SOURCE_CFG = {
   direct:    { color: "#6B7280", label: "Direct (no referrer)", icon: "↗" },
   referral:  { color: "#8B5CF6", label: "Referral",  icon: "↪" },
+  offline:   { color: "#A16207", label: "Not online (draft order/POS)", icon: "✎" },
   untracked: { color: "#D1D5DB", label: "Not tracked (visit unseen)", icon: "?", textColor: "#374151" },
   google:    { color: "#4285F4", label: "Google",    icon: "G" },
   meta:      { color: "#0866FF", label: "Meta",      icon: "M" },
@@ -490,8 +504,9 @@ function SourceBreakdown({ sources, currency, metaSpend, googleSpend }) {
           const pct = (pred) => Math.round((nonZero.filter(pred).reduce((a, x) => a + x.revenue, 0) / total) * 100);
           const untracked = pct(s => s.source === "untracked");
           const direct = pct(s => s.source === "direct" || s.source === "referral");
-          const attributed = 100 - untracked - direct;
-          return `${attributed}% attributed to a channel · ${direct}% seen visits with no campaign · ${untracked}% not tracked — Attribix never saw the visit, so its source is unknown (not direct).`;
+          const offline = pct(s => s.source === "offline");
+          const attributed = 100 - untracked - direct - offline;
+          return `${attributed}% attributed to a channel · ${direct}% seen visits with no campaign · ${untracked}% not tracked — Attribix never saw the visit, so its source is unknown (not direct)${offline > 0 ? ` · ${offline}% not placed online` : ""}.`;
         })()}
       </Text>
     </BlockStack>
@@ -561,7 +576,7 @@ function ToolkitGrid({ data, navigate }) {
     {
       icon: "📊", bg: "#008060",
       name: "Ads & Attribution", desc: "Track performance and attribute revenue with confidence",
-      metric: orders30 > 0 ? `${tracking.attributionRate}% of ${orders30} orders attributed` : "No orders yet",
+      metric: tracking.onlineOrders > 0 ? `${tracking.attributionRate}% of ${tracking.onlineOrders} online orders attributed` : "No online orders yet",
       status: pixelStatus !== "healthy" ? "No recent events" : orders30 > 0 && tracking.attributionRate < 60 ? "Partial coverage" : "Events arriving",
       tone: pixelStatus !== "healthy" ? "critical" : orders30 > 0 && tracking.attributionRate < 60 ? "attention" : "success",
       url: "/app/analytics",
@@ -826,18 +841,24 @@ export default function AppIndex() {
     const { orders30, metaKpis, bestAd } = data;
 
     // Coverage: say what's actually missing, without inventing a cause.
-    if (orders30 >= 5) {
-      const noSource = orders30 - t.attributedOrders;
-      const pct = Math.round((noSource / orders30) * 100);
+    const online = t.onlineOrders;
+    const offlineNote = t.offlineOrders > 0
+      ? ` ${t.offlineOrders} more ${t.offlineOrders === 1 ? "was a draft order, invoice or POS sale" : "were draft orders, invoices or POS sales"} with no website visit, so they aren't counted here.`
+      : "";
+    if (online >= 5) {
+      const noSource = online - t.onlineAttributed;
+      const pct = Math.round((noSource / online) * 100);
       if (pct >= 30) {
         list.push({
           tone: "warning",
-          title: `${pct}% of orders have no tracked source (${periodText.toLowerCase()})`,
-          body: t.notTrackedOrders > 0
-            ? `${t.notTrackedOrders} of ${orders30} orders came from visits Attribix couldn't see, so their source is unknown. Possible reasons include declined cookies, ad blockers, or buying on a different device. ${t.directOrders > 0 ? `${t.directOrders} more were visits with no campaign or referrer. ` : ""}Channel and ROAS figures based on tracked orders will understate these sales.`
-            : `${noSource} of ${orders30} orders came from visits with no campaign or referrer. Check that your ad links carry UTM parameters.`,
+          title: `${pct}% of online orders have no tracked source (${periodText.toLowerCase()})`,
+          body: (t.notTrackedOrders > 0
+            ? `${t.notTrackedOrders} of ${online} online orders came from visits Attribix couldn't see, so their source is unknown. Possible reasons include declined cookies, ad blockers, or buying on a different device. ${t.directOrders > 0 ? `${t.directOrders} more were visits with no campaign or referrer. ` : ""}Channel and ROAS figures based on tracked orders will understate these sales.`
+            : `${noSource} of ${online} online orders came from visits with no campaign or referrer. Check that your ad links carry UTM parameters.`) + offlineNote,
         });
       }
+    } else if (t.offlineOrders > 0 && orders30 > 0) {
+      list.push({ tone: "info", title: `${t.offlineOrders} of ${orders30} orders weren't placed online`, body: offlineNote.trim() });
     }
 
     // Meta: report the number with its source; no profit claims or "scale" advice.
@@ -897,10 +918,13 @@ export default function AppIndex() {
                 value={data.pixelLastSeen ? `Last event ${timeAgo(data.pixelLastSeen)}` : "No events received yet"}
               />
               <HealthItem
-                label="Orders with a tracked source"
-                tone={data.orders30 === 0 ? "info" : t.attributionRate >= 60 ? "success" : "warning"}
-                value={data.orders30 === 0 ? "No orders yet" : `${t.attributedOrders} of ${data.orders30} (${t.attributionRate}%)`}
-                detail={t.notTrackedOrders > 0 ? `${t.notTrackedOrders} not tracked (visit not seen)` : undefined}
+                label="Online orders with a tracked source"
+                tone={t.onlineOrders === 0 ? "info" : t.attributionRate >= 60 ? "success" : "warning"}
+                value={t.onlineOrders === 0 ? "No online orders yet" : `${t.onlineAttributed} of ${t.onlineOrders} (${t.attributionRate}%)`}
+                detail={[
+                  t.notTrackedOrders > 0 && `${t.notTrackedOrders} not tracked (visit not seen)`,
+                  t.offlineOrders > 0 && `${t.offlineOrders} offline (draft order/POS)`,
+                ].filter(Boolean).join(" · ") || undefined}
               />
               <HealthItem
                 label="Meta Ads"

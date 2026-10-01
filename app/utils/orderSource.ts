@@ -17,9 +17,26 @@ export type OrderLike = {
   sessionId?: string | null;
   landingPage?: string | null;
   referrer?: string | null;
+  salesChannel?: string | null;
 };
 
+// Shopify sales channels that never involve a storefront visit.
+const OFFLINE_CHANNELS: Record<string, string> = {
+  shopify_draft_order: "Draft order / invoice",
+  pos: "In person (POS)",
+};
+
+/** True for orders created without a website visit (draft orders, POS). */
+export function isOfflineOrder(p: OrderLike): boolean {
+  return !!p.salesChannel && p.salesChannel in OFFLINE_CHANNELS;
+}
+
+export function offlineChannelLabel(p: OrderLike): string | null {
+  return p.salesChannel ? OFFLINE_CHANNELS[p.salesChannel] ?? null : null;
+}
+
 export const BUCKET_LABELS: Record<string, string> = {
+  offline: "Not an online order",
   direct: "Direct (no referrer)",
   referral: "Referral",
   untracked: "Not tracked (visit unseen)",
@@ -68,6 +85,9 @@ export function channelFromCampaign(p: OrderLike): string | null {
 
 /** The single bucket an order is reported under. */
 export function orderSource(p: OrderLike): string {
+  // An offline order with campaign data (e.g. an invoice link tagged with
+  // UTMs) still counts for that channel; otherwise it had no visit to see.
+  if (isOfflineOrder(p) && !hasCampaign(p)) return "offline";
   if (!visitSeen(p)) return "untracked";
   return channelFromCampaign(p) ?? (p.referrer ? "referral" : "direct");
 }
@@ -78,5 +98,5 @@ export function bucketLabel(bucket: string): string {
 
 /** Channels first, then direct/referral, then untracked, so a gap can't top the list. */
 export function bucketRank(bucket: string): number {
-  return bucket === "untracked" ? 2 : bucket === "direct" || bucket === "referral" ? 1 : 0;
+  return bucket === "untracked" ? 2 : bucket === "direct" || bucket === "referral" || bucket === "offline" ? 1 : 0;
 }

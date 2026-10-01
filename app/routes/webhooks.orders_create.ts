@@ -97,6 +97,9 @@ export async function action({ request }: ActionFunctionArgs) {
       null;
 
     const referringSite = pickFirstString(payload?.referring_site) || null;
+    // "web", "shopify_draft_order", "pos", … — lets reports tell offline orders
+    // apart from online ones whose visit we didn't see.
+    const salesChannel = pickFirstString(payload?.source_name) || null;
 
     const email =
       pickFirstString(payload?.email) ||
@@ -193,6 +196,7 @@ export async function action({ request }: ActionFunctionArgs) {
           gclid: utm.gclid,
           ttclid: utm.ttclid,
           msclkid: utm.msclkid,
+          salesChannel,
           country,
           city,
           customerName,
@@ -210,6 +214,7 @@ export async function action({ request }: ActionFunctionArgs) {
           gclid: utm.gclid ?? undefined,
           ttclid: utm.ttclid ?? undefined,
           msclkid: utm.msclkid ?? undefined,
+          salesChannel: salesChannel ?? undefined,
           country: country ?? undefined,
           city: city ?? undefined,
           customerName: customerName ?? undefined,

@@ -98,6 +98,8 @@ model Purchase {
   fbc         String?
   referrer    String?
   landingPage String?
+  // Shopify source_name: "web", "shopify_draft_order", "pos", an app id, …
+  salesChannel String?
   country     String?
   city        String?
   customerName String?

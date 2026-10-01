@@ -278,6 +278,21 @@ export async function buildJourneyCredits(input: {
     }];
   }
 
+  // We saw this buyer at checkout but no earlier page views under that visitor
+  // id (the checkout pixel and the storefront can keep separate ids). The
+  // visit was still seen and had no campaign, so it's direct — not unknown.
+  let seenAtCheckoutOnly = false;
+  if (touchpoints.length === 0 && input.visitorId) {
+    seenAtCheckoutOnly = true;
+    touchpoints = [{
+      id:          null,
+      channel:     input.fallback?.referrer ? channelOf({ referrer: input.fallback.referrer }) : "Direct",
+      utmSource:   null, utmMedium: null, utmCampaign: null,
+      fbclid:      null, gclid: null,
+      touchedAt:   new Date(input.purchaseTime.getTime() - 60_000),
+    }];
+  }
+
   // The webhook and the thank-you page both build the journey, in either
   // order. A build must not replace a better one: anything beats unknown, and
   // a visitor's journey beats an order-level guess.
@@ -289,6 +304,8 @@ export async function buildJourneyCredits(input: {
   if (existing.length > 0) {
     if (touchpoints.length === 0) return;
     if (!input.visitorId && existingVisitorId && existingCaptured) return;
+    // A bare "seen at checkout" step mustn't replace a journey with a source.
+    if (seenAtCheckoutOnly && existingCaptured) return;
   }
 
   // No visit history and no attribution on the order: we don't know where the

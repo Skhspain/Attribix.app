@@ -48,6 +48,7 @@ export async function loader({ request }) {
         gclid: true,
         ttclid: true,
         msclkid: true,
+        salesChannel: true,
         landingPage: true,
         referrer: true,
         createdAt: true,

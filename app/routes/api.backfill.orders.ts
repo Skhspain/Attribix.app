@@ -15,6 +15,7 @@ const ORDERS_QUERY = `#graphql
         id
         legacyResourceId
         name
+        sourceName
         totalPriceSet { shopMoney { amount currencyCode } }
         createdAt
         billingAddress { countryCodeV2 city firstName lastName }
@@ -186,6 +187,12 @@ export async function action({ request }: ActionFunctionArgs) {
           where: { OR: [{ orderId: numericId }, { orderId: gid }] },
         });
 
+        // The sales channel isn't attribution, so it's filled in even when
+        // only importing missing orders.
+        if (existing && !existing.salesChannel && order.sourceName) {
+          await db.purchase.update({ where: { id: existing.id }, data: { salesChannel: order.sourceName } });
+        }
+
         if (existing && onlyMissing) {
           skipped++;
           continue;
@@ -233,6 +240,7 @@ export async function action({ request }: ActionFunctionArgs) {
             landingPage,
             referrer,
             customerName,
+            salesChannel: order.sourceName || null,
           },
         });
         created++;
