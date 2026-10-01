@@ -24,6 +24,7 @@ import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 import { formatDateTime } from "~/utils/formatDate";
 import { useReportPeriod } from "~/utils/useReportPeriod";
 import { channelFromCampaign } from "~/utils/orderSource";
+import { formatRoas } from "~/utils/roas";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
@@ -195,10 +196,6 @@ function safeNum(v: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function fmtRoas(roas: number | null) {
-  if (roas === null) return "—";
-  return roas.toFixed(1) + "×";
-}
 
 function fmtDecimal(value: number, currency = "USD") {
   try {
@@ -426,7 +423,7 @@ export default function GoogleAdsDetail() {
         c.impressions > 0 ? ((c.clicks / c.impressions) * 100).toFixed(2) + "%" : "—",
         String(Math.round(c.conversions).toLocaleString()),
         fmtDecimal(c.value, currency),
-        c.spend > 0 ? `${fmtRoas(c.value / c.spend)}${c.goal === "purchases" ? "" : " *"}` : "—",
+        c.spend > 0 ? `${formatRoas(c.value / c.spend)}${c.goal === "purchases" ? "" : " *"}` : "—",
         c.conversions > 0 && c.spend > 0 ? fmtDecimal(c.spend / c.conversions, currency) : "—",
       ]);
   }, [campaignSummaries, currency]);
@@ -520,13 +517,13 @@ export default function GoogleAdsDetail() {
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                   <BlockStack gap="100">
                     <Text as="h3" variant="headingSm">Google reports</Text>
-                    <Text as="p">{`${fmtRoas(kpis.roas)} ROAS · ${Math.round(kpis.conversions).toLocaleString()} conversions · ${fmtDecimal(kpis.value, currency)} value`}</Text>
+                    <Text as="p">{`${formatRoas(kpis.roas)} ROAS · ${Math.round(kpis.conversions).toLocaleString()} conversions · ${fmtDecimal(kpis.value, currency)} value`}</Text>
                   </BlockStack>
                 </Box>
                 <Box padding="400" background="bg-surface-secondary" borderRadius="200">
                   <BlockStack gap="100">
                     <Text as="h3" variant="headingSm">Attribix tracked</Text>
-                    <Text as="p">{`${fmtRoas(attributedRoas)} ROAS · ${attributedOrders} orders · ${fmtDecimal(attributedRevenue, currency)} revenue`}</Text>
+                    <Text as="p">{`${formatRoas(attributedRoas)} ROAS · ${attributedOrders} orders · ${fmtDecimal(attributedRevenue, currency)} revenue`}</Text>
                   </BlockStack>
                 </Box>
               </InlineGrid>
@@ -551,7 +548,7 @@ export default function GoogleAdsDetail() {
             },
             {
               label: "ROAS (Google-reported)",
-              value: kpis.roas !== null ? fmtRoas(kpis.roas) : "—",
+              value: kpis.roas !== null ? formatRoas(kpis.roas) : "—",
               sub: `${Math.round(kpis.conversions).toLocaleString()} conversions · ${fmtDecimal(kpis.value, currency)} value`,
             },
             { label: "Conversions", value: Math.round(kpis.conversions).toLocaleString() },
@@ -616,7 +613,7 @@ export default function GoogleAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#166534", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#15803d" }}>
-                          {topCampaign.spend > 0 ? fmtRoas(topCampaign.value / topCampaign.spend) : "—"}
+                          {topCampaign.spend > 0 ? formatRoas(topCampaign.value / topCampaign.spend) : "—"}
                         </p>
                       </div>
                       <div>
@@ -670,7 +667,7 @@ export default function GoogleAdsDetail() {
                       <div>
                         <p style={{ margin: 0, fontSize: 11, color: "#991b1b", fontWeight: 600 }}>ROAS</p>
                         <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "#dc2626" }}>
-                          {worstCampaign.spend > 0 ? fmtRoas(worstCampaign.value / worstCampaign.spend) : "—"}
+                          {worstCampaign.spend > 0 ? formatRoas(worstCampaign.value / worstCampaign.spend) : "—"}
                         </p>
                       </div>
                       <div>
