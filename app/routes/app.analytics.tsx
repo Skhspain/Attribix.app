@@ -21,6 +21,7 @@ import db from "../db.server";
 import { periodStart } from "~/utils/reportPeriod";
 import { formatDateTime } from "~/utils/formatDate";
 import { useReportPeriod } from "~/utils/useReportPeriod";
+import { channelFromCampaign } from "~/utils/orderSource";
 
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
@@ -230,19 +231,11 @@ function labelShort(iso: string) {
   } catch { return iso; }
 }
 
+// Same rules as every other report (paid vs organic search/social included).
 function normalizeSource(item: any): string {
-  const s = String(item?.utmSource || "").toLowerCase().trim();
-  if (s.includes("google") || s.includes("adwords")) return "google";
-  if (s.includes("meta") || s.includes("facebook") || s.includes("instagram")) return "meta";
-  if (s.includes("tiktok")) return "tiktok";
-  if (s.includes("snap")) return "snapchat";
-  if (s.includes("bing") || s.includes("microsoft")) return "microsoft";
-  if (s) return s;
-  if (item?.gclid) return "google";
-  if (item?.fbclid) return "meta";
-  if (item?.ttclid) return "tiktok";
-  if (item?.msclkid) return "microsoft";
-  return "unknown";
+  const ch = channelFromCampaign(item);
+  if (!ch) return "unknown";
+  return ch === "bing" ? "microsoft" : ch;
 }
 
 function sourceTone(s: string): any {

@@ -23,6 +23,7 @@ import db from "../db.server";
 import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 import { formatDateTime } from "~/utils/formatDate";
 import { useReportPeriod } from "~/utils/useReportPeriod";
+import { channelFromCampaign } from "~/utils/orderSource";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
@@ -152,8 +153,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     date: row.segments?.date ? new Date(row.segments.date + "T00:00:00Z").toISOString() : new Date().toISOString(),
   }));
 
-  // Load Google-attributed purchases (gclid or google UTM) within 90-day history
-  const googleAttributedPurchases = await db.purchase.findMany({
+  // Orders Attribix attributed to Google Ads (90-day history). Organic Google
+  // search isn't ad revenue, so the shared classifier filters it out.
+  const googleCandidates = await db.purchase.findMany({
     where: {
       shop,
       createdAt: { gte: since90 },
@@ -163,8 +165,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
         { utmSource: { contains: "adwords" } },
       ],
     },
-    select: { totalValue: true, createdAt: true },
+    select: { totalValue: true, createdAt: true, utmSource: true, utmMedium: true, gclid: true },
   }).catch(() => []);
+  const googleAttributedPurchases = googleCandidates
+    .filter((p) => channelFromCampaign(p) === "google")
+    .map(({ totalValue, createdAt }) => ({ totalValue, createdAt }));
 
   return json({
     shop,
@@ -180,7 +185,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     hasConnection,
     storeCurrency,
     adAccountCurrency,
-    attributedPurchases: googleAttributedPurchases as Array<{ totalValue: number | null; createdAt: string }>,
+    attributedPurchases: googleAttributedPurchases as unknown as Array<{ totalValue: number | null; createdAt: string }>,
     exchangeRate: rate,
   });
 }

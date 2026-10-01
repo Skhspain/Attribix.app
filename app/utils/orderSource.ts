@@ -9,6 +9,7 @@
 
 export type OrderLike = {
   utmSource?: string | null;
+  utmMedium?: string | null;
   fbclid?: string | null;
   gclid?: string | null;
   ttclid?: string | null;
@@ -40,8 +41,10 @@ export const BUCKET_LABELS: Record<string, string> = {
   direct: "Direct (no referrer)",
   referral: "Referral",
   untracked: "Not tracked (visit unseen)",
-  meta: "Meta",
-  google: "Google",
+  meta: "Meta Ads",
+  google: "Google Ads",
+  meta_organic: "Facebook/Instagram (organic)",
+  google_organic: "Google (organic)",
   instagram: "Instagram",
   tiktok: "TikTok",
   snapchat: "Snapchat",
@@ -64,10 +67,18 @@ export function visitSeen(p: OrderLike): boolean {
 /** The channel from campaign tags / click IDs, or null if there are none. */
 export function channelFromCampaign(p: OrderLike): string | null {
   const s = String(p.utmSource || "").toLowerCase().trim();
+  // Search and social traffic is only "Ads" when it came from an ad: a click
+  // ID, or tags not marked organic. Orders imported from Shopify get
+  // "google / organic" or "facebook / social" from a plain referrer, and
+  // counting those as ad revenue inflated Google/Meta ROAS.
+  const medium = String(p.utmMedium || "").toLowerCase().trim();
+  const organicMedium = ["organic", "social", "referral", "organic_social", "organic-social"].includes(medium);
   if (s) {
-    if (s === "ig" || s.includes("instagram")) return "instagram";
-    if (s.includes("meta") || s.includes("facebook") || s === "fb") return "meta";
-    if (s.includes("google") || s.includes("adwords")) return "google";
+    if (s === "ig" || s === "fb" || s.includes("instagram") || s.includes("meta") || s.includes("facebook")) {
+      return p.fbclid || !organicMedium ? "meta" : "meta_organic";
+    }
+    if (s.includes("adwords")) return "google";
+    if (s.includes("google")) return p.gclid || !organicMedium ? "google" : "google_organic";
     if (s.includes("tiktok")) return "tiktok";
     if (s.includes("snapchat")) return "snapchat";
     if (s.includes("email") || s.includes("klaviyo") || s.includes("mailchimp") || s.includes("newsletter")) return "email";

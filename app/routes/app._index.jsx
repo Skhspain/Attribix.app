@@ -183,7 +183,7 @@ export async function loader({ request }) {
   const totalSpendDelta = pctDelta(totalSpend, totalSpendPrev);
 
   // Attribix-tracked Google revenue (gclid / Google UTM), same period.
-  const isGooglePurchase = (p) => !!p.gclid || (p.utmSource && /google|adwords/i.test(String(p.utmSource)));
+  const isGooglePurchase = (p) => channelFromCampaign(p) === "google";
   const googleRev30 = purchases30.filter(isGooglePurchase).reduce((s, p) => s + Number(p.totalValue || 0), 0);
 
   // Meta-reported results (Meta's own attribution), same period, store currency.
@@ -437,9 +437,11 @@ const SOURCE_CFG = {
   direct:    { color: "#6B7280", label: "Direct (no referrer)", icon: "↗" },
   referral:  { color: "#8B5CF6", label: "Referral",  icon: "↪" },
   offline:   { color: "#A16207", label: "Not online (draft order/POS)", icon: "✎" },
+  google_organic: { color: "#34A853", label: "Google (organic)", icon: "G" },
+  meta_organic:   { color: "#6B8AF0", label: "Facebook/Instagram (organic)", icon: "f" },
   untracked: { color: "#D1D5DB", label: "Not tracked (visit unseen)", icon: "?", textColor: "#374151" },
-  google:    { color: "#4285F4", label: "Google",    icon: "G" },
-  meta:      { color: "#0866FF", label: "Meta",      icon: "M" },
+  google:    { color: "#4285F4", label: "Google Ads", icon: "G" },
+  meta:      { color: "#0866FF", label: "Meta Ads",  icon: "M" },
   instagram: { color: "#C13584", label: "Instagram", icon: "IG" },
   email:     { color: "#F59E0B", label: "Email",     icon: "✉" },
   tiktok:    { color: "#010101", label: "TikTok",    icon: "T" },

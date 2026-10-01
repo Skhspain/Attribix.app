@@ -23,6 +23,7 @@ import {
 import db from "../db.server";
 import { RevenueSpendChart } from "~/components/RevenueSpendChart";
 import { useReportPeriod } from "~/utils/useReportPeriod";
+import { channelFromCampaign } from "~/utils/orderSource";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { authenticate } = await import("../shopify.server");
@@ -61,9 +62,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
           { utmSource: { contains: "facebook" } },
           { utmSource: { contains: "meta" } },
           { utmSource: { contains: "instagram" } },
+          { utmSource: { in: ["ig", "fb", "IG", "FB"] } },
         ],
       },
-      select: { totalValue: true, createdAt: true },
+      select: { totalValue: true, createdAt: true, utmSource: true, utmMedium: true, fbclid: true },
     }).catch(() => []),
     admin.graphql(`{ shop { currencyCode } }`).then((r: any) => r.json()).catch(() => null),
   ]);
@@ -96,7 +98,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     totalOrdersSince: await db.purchase.findMany({ where: { shop, createdAt: { gte: historyCutoff } }, select: { createdAt: true } }).catch(() => []),
     hasConnection,
     adAccountId: metaConn?.adAccountId ?? null,
-    attributedPurchases: attributedPurchases as Array<{ totalValue: number | null; createdAt: string }>,
+    // Organic Facebook/Instagram visits aren't ad revenue.
+    attributedPurchases: (attributedPurchases as any[])
+      .filter((p) => channelFromCampaign(p) === "meta")
+      .map(({ totalValue, createdAt }) => ({ totalValue, createdAt })) as Array<{ totalValue: number | null; createdAt: string }>,
     storeCurrency,
     adAccountCurrency,
     exchangeRate,

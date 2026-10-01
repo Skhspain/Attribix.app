@@ -14,7 +14,7 @@ describe("order source buckets", () => {
 
   it("attributes campaign tags and click IDs to their channel", () => {
     expect(orderSource({ utmSource: "facebook" })).toBe("meta");
-    expect(orderSource({ utmSource: "ig" })).toBe("instagram");
+    expect(orderSource({ utmSource: "ig" })).toBe("meta");
     expect(orderSource({ gclid: "abc" })).toBe("google");
     expect(orderSource({ msclkid: "abc" })).toBe("bing");
     expect(orderSource({ ttclid: "abc", visitorId: "v1" })).toBe("tiktok");
@@ -35,5 +35,19 @@ describe("offline orders", () => {
 
   it("still credits an offline order that carries campaign data", () => {
     expect(orderSource({ salesChannel: "shopify_draft_order", utmSource: "facebook" })).toBe("meta");
+  });
+});
+
+describe("paid vs organic search and social", () => {
+  it("keeps organic Google and Facebook out of the ad channels", () => {
+    expect(orderSource({ utmSource: "google", utmMedium: "organic", landingPage: "/" })).toBe("google_organic");
+    expect(orderSource({ utmSource: "facebook", utmMedium: "social", landingPage: "/" })).toBe("meta_organic");
+  });
+
+  it("counts click IDs and paid or untagged-medium campaigns as ads", () => {
+    expect(orderSource({ utmSource: "google", utmMedium: "organic", gclid: "x" })).toBe("google");
+    expect(orderSource({ utmSource: "google", utmMedium: "cpc" })).toBe("google");
+    expect(orderSource({ utmSource: "ig", utmMedium: "paid" })).toBe("meta");
+    expect(orderSource({ utmSource: "facebook" })).toBe("meta");
   });
 });

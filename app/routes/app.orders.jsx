@@ -61,9 +61,11 @@ export async function loader({ request }) {
       where: { shop, createdAt: { gte: historyCutoff } },
       _sum: { totalValue: true },
     }).catch(() => ({ _sum: { totalValue: 0 } })),
-    db.purchase.count({
-      where: { shop, createdAt: { gte: historyCutoff }, utmSource: { not: null } },
-    }).catch(() => 0),
+    // Attributed = linked to a channel, same rule as every other report.
+    db.purchase.findMany({
+      where: { shop, createdAt: { gte: historyCutoff } },
+      select: { utmSource: true, utmMedium: true, fbclid: true, gclid: true, ttclid: true, msclkid: true, visitorId: true, sessionId: true, landingPage: true, referrer: true, salesChannel: true },
+    }).then((rows) => rows.filter((p) => !["direct", "untracked", "offline"].includes(orderSource(p))).length).catch(() => 0),
     db.purchase.count({ where: { shop, createdAt: { gte: historyCutoff } } }).catch(() => 0),
     admin.graphql(`{ shop { currencyCode } }`).then(r => r.json()).catch(() => null),
   ]);
@@ -78,6 +80,7 @@ export async function loader({ request }) {
     attributedCount,
     totalCount,
     storeCurrency,
+    historyDays: Math.round((Date.now() - historyCutoff.getTime()) / 864e5),
   });
 }
 
@@ -134,7 +137,7 @@ function truncateUrl(url, maxLen = 45) {
 }
 
 export default function AppOrders() {
-  const { purchases, totalRevenue, attributedCount, totalCount, storeCurrency } = useLoaderData();
+  const { purchases, totalRevenue, attributedCount, totalCount, storeCurrency, historyDays } = useLoaderData();
   const navigate = useNavigate();
   const backfillFetcher = useFetcher();
 
@@ -204,7 +207,7 @@ export default function AppOrders() {
       <Text as="span" variant="bodySm" tone="subdued">{p.customerName || "—"}</Text>,
       <Text as="span" variant="bodySm">{formatMoney(p.totalValue, p.currency)}</Text>,
       source
-        ? <Badge tone={sourceBadgeTone(source)}>{source}</Badge>
+        ? <Badge tone={sourceBadgeTone(source)}>{bucketLabel(source)}</Badge>
         : p.tracked
           ? <Text as="span" variant="bodySm" tone="subdued">{p.referrer ? "referral" : "direct (no referrer)"}</Text>
           : <Tooltip content="We didn't see this buyer's visit, so the source is unknown. Possible reasons include declined cookies, ad blockers or a different device. Ad platforms may still count it through server-side matching."><Text as="span" variant="bodySm" tone="subdued">not tracked</Text></Tooltip>,
@@ -217,7 +220,7 @@ export default function AppOrders() {
   return (
     <Page
       title="Orders"
-      subtitle={`${totalCount} total · ${attributedCount} attributed (${attributionRate}%)`}
+      subtitle={`Last ${historyDays} days · ${totalCount} orders · ${attributedCount} attributed (${attributionRate}%)`}
       secondaryActions={[
         {
           content: "View attribution",
@@ -235,7 +238,12 @@ export default function AppOrders() {
         {backfillResult && (
           <Banner tone={backfillResult.ok ? "success" : "critical"} title={backfillResult.ok ? "Shopify import complete" : "Import failed"} onDismiss={() => {}}>
             {backfillResult.ok
-              ? <Text as="p">{backfillResult.created} new orders added, {backfillResult.updated ?? 0} patched with names/source data{backfillResult.deduped > 0 ? `, ${backfillResult.deduped} duplicate rows removed` : ""}, {backfillResult.skipped} unchanged. Reload to see updated totals.</Text>
+              ? <Text as="p">{backfillResult.created > 0
+                  ? `Added ${backfillResult.created} order${backfillResult.created === 1 ? "" : "s"} Attribix was missing`
+                  : `Checked ${backfillResult.created + (backfillResult.updated ?? 0) + backfillResult.skipped} Shopify orders: Attribix already had all of them`}
+                  {(backfillResult.updated ?? 0) > 0 ? `, and filled in missing details on ${backfillResult.updated}` : ""}
+                  {backfillResult.deduped > 0 ? `, and removed ${backfillResult.deduped} duplicate${backfillResult.deduped === 1 ? "" : "s"}` : ""}.
+                  {backfillResult.created + (backfillResult.updated ?? 0) > 0 ? " Reload to see updated totals." : ""}</Text>
               : <Text as="p">{backfillResult.error}</Text>}
           </Banner>
         )}
@@ -244,13 +252,13 @@ export default function AppOrders() {
         <InlineStack gap="300">
           <Card>
             <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Total revenue</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Revenue · {historyDays} days</Text>
               <Text as="p" variant="headingLg">{formatMoney(totalRevenue, storeCurrency)}</Text>
             </BlockStack>
           </Card>
           <Card>
             <BlockStack gap="100">
-              <Text as="p" variant="bodySm" tone="subdued">Total orders</Text>
+              <Text as="p" variant="bodySm" tone="subdued">Orders · {historyDays} days</Text>
               <Text as="p" variant="headingLg">{totalCount}</Text>
             </BlockStack>
           </Card>
