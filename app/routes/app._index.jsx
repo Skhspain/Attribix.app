@@ -1,6 +1,6 @@
 // app/routes/app._index.jsx
 import { json } from "@remix-run/node";
-import { channelFromCampaign, orderSource, hasCampaign, bucketRank } from "~/utils/orderSource";
+import { channelFromCampaign, orderSource, bucketRank } from "~/utils/orderSource";
 import { useLoaderData, useNavigate, useFetcher } from "@remix-run/react";
 import { useMemo, useEffect } from "react";
 import {
@@ -8,6 +8,7 @@ import {
   Grid, InlineGrid, InlineStack, Layout, Page, Text, Tooltip,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
+import { SourceDefinitions } from "~/components/SourceDefinitions";
 import db from "~/db.server";
 import { periodStart, previousPeriod } from "~/utils/reportPeriod";
 import { getReportingCurrency } from "~/services/reportingCurrency.server";
@@ -258,7 +259,7 @@ export async function loader({ request }) {
       visitors: visitorMap.get(src)?.size ?? 0,
     }));
 
-  const attributedOrders = purchases30.filter(hasCampaign).length;
+  const attributedOrders = purchases30.filter(p => !["direct", "untracked", "offline"].includes(orderSource(p))).length;
   // Orders where we never saw the buyer's visit at all vs. visits we saw that
   // simply had no campaign or referrer (observed direct traffic).
   const notTrackedOrders = purchases30.filter(p => orderSource(p) === "untracked").length;
@@ -275,7 +276,7 @@ export async function loader({ request }) {
     isWidgetsEmbedLive(shop),
     new Promise((r) => setTimeout(() => r(null), 2500)),
   ]).catch(() => null);
-  const onlineAttributed = purchases30.filter(p => hasCampaign(p) && orderSource(p) !== "offline").length;
+  const onlineAttributed = purchases30.filter(p => !["direct", "untracked", "offline"].includes(orderSource(p))).length;
   const attributionRate = onlineOrders > 0 ? Math.round((onlineAttributed / onlineOrders) * 100) : 0;
   const uniqueVisitors = new Set(trackedEvents30.filter(e => e.visitorId).map(e => String(e.visitorId))).size;
   const metaReportedPurchases = metaKpis.purchases;
@@ -490,7 +491,7 @@ function SourceBreakdown({ sources, currency, metaSpend, googleSpend }) {
                   <div style={{ height: "100%", width: `${Math.min(s.share, 100)}%`, background: cfg.color, borderRadius: 2 }} />
                 </div>
                 <Text as="p" variant="bodySm" tone="subdued">{fmt(s.revenue, currency)}</Text>
-                {srcRoas && <Text as="p" variant="bodySm" tone="subdued">{srcRoas}× on tracked orders</Text>}
+                {srcRoas && <Text as="p" variant="bodySm" tone="subdued">{srcRoas}× on attributed orders</Text>}
               </BlockStack>
             </div>
           );
@@ -829,7 +830,7 @@ export default function AppIndex() {
   const nextStep = !trackingOk
     ? { title: "Check your tracking pixel", desc: "Attribix hasn't received storefront events in the last 24 hours.", url: "/app/settings/tracking", cta: "Open tracking settings" }
     : !data.metaConnected
-      ? { title: "Connect Meta Ads", desc: "Bring in Meta spend so you can compare it with tracked revenue.", url: "/app/integrations/meta", cta: "Connect Meta" }
+      ? { title: "Connect Meta Ads", desc: "Bring in Meta spend so you can compare it with your store revenue.", url: "/app/integrations/meta", cta: "Connect Meta" }
       : !data.googleConnected
         ? { title: "Connect Google Ads", desc: "Bring in Google spend so ad costs are complete.", url: "/app/integrations/google", cta: "Connect Google Ads" }
         : googleFailing
@@ -851,9 +852,9 @@ export default function AppIndex() {
       if (pct >= 30) {
         list.push({
           tone: "warning",
-          title: `${pct}% of online orders have no tracked source (${periodText.toLowerCase()})`,
+          title: `${pct}% of online orders aren't attributed to a channel (${periodText.toLowerCase()})`,
           body: (t.notTrackedOrders > 0
-            ? `${t.notTrackedOrders} of ${online} online orders came from visits Attribix couldn't see, so their source is unknown. Possible reasons include declined cookies, ad blockers, or buying on a different device. ${t.directOrders > 0 ? `${t.directOrders} more were visits with no campaign or referrer. ` : ""}Channel and ROAS figures based on tracked orders will understate these sales.`
+            ? `${t.notTrackedOrders} of ${online} online orders came from visits Attribix couldn't see, so their source is unknown. Possible reasons include declined cookies, ad blockers, or buying on a different device. ${t.directOrders > 0 ? `${t.directOrders} more were visits with no campaign or referrer. ` : ""}Channel figures based on attributed orders will understate these sales.`
             : `${noSource} of ${online} online orders came from visits with no campaign or referrer. Check that your ad links carry UTM parameters.`) + offlineNote,
         });
       }
@@ -918,7 +919,7 @@ export default function AppIndex() {
                 value={data.pixelLastSeen ? `Last event ${timeAgo(data.pixelLastSeen)}` : "No events received yet"}
               />
               <HealthItem
-                label="Online orders with a tracked source"
+                label="Online orders attributed to a channel"
                 tone={t.onlineOrders === 0 ? "info" : t.attributionRate >= 60 ? "success" : "warning"}
                 value={t.onlineOrders === 0 ? "No online orders yet" : `${t.onlineAttributed} of ${t.onlineOrders} (${t.attributionRate}%)`}
                 detail={[
@@ -1039,7 +1040,7 @@ export default function AppIndex() {
                     ? "Needs ad spend to calculate"
                     : spendPartial
                       ? `Partial — ${spendGaps.join(", ")}, so this is likely overstated`
-                      : "All tracked revenue ÷ ad spend"}
+                      : "All store revenue ÷ ad spend"}
                 </Text>
               </BlockStack>
             </Card>
@@ -1077,7 +1078,7 @@ export default function AppIndex() {
                     <InlineStack align="space-between" blockAlign="center">
                       <BlockStack gap="025">
                         <Text as="h2" variant="headingMd">Revenue by source</Text>
-                        <Text as="p" variant="bodySm" tone="subdued">Attribix-tracked orders · {periodText.toLowerCase()} · ROAS uses spend from the same days</Text>
+                        <Text as="p" variant="bodySm" tone="subdued">All orders by source · {periodText.toLowerCase()} · ROAS uses spend from the same days</Text>
                       </BlockStack>
                     </InlineStack>
                     <SourceBreakdown
@@ -1086,6 +1087,7 @@ export default function AppIndex() {
                       metaSpend={data.metaSpend}
                       googleSpend={data.googleSpend}
                     />
+                    <SourceDefinitions />
                   </BlockStack>
                 </Card>
               )}
@@ -1150,8 +1152,8 @@ export default function AppIndex() {
                     <Text as="p" variant="bodySm" tone="subdued">{periodText}</Text>
                   </BlockStack>
                   {[
-                    { label: "Tracked orders", value: String(data.orders30) },
-                    { label: "Tracked revenue", value: fmt(data.rev30, currency) },
+                    { label: "Orders", value: String(data.orders30) },
+                    { label: "Revenue", value: fmt(data.rev30, currency) },
                     { label: "Average order value", value: fmt(aov, currency) },
                     { label: "Meta-reported ROAS", value: metaRoas !== null ? fmtRoas(metaRoas) : "—" },
                   ].map(row => (

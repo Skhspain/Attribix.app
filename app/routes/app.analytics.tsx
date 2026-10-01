@@ -724,7 +724,7 @@ export default function AppAnalytics() {
                   Revenue vs spend{blendedRoas ? ` — blended ROAS ${blendedRoas.toFixed(1)}×${spendPartial ? " (partial)" : ""}` : ""} — last {window} days
                 </Text>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Green = tracked revenue at or above that day's ad spend; red = below it. Indigo = revenue on days with no ad spend. Bars share one scale. Revenue minus spend is not profit — product costs aren't included.
+                  Green = store revenue at or above that day's ad spend; red = below it. Indigo = revenue on days with no ad spend. Bars share one scale. Revenue minus spend is not profit — product costs aren't included.
                 </Text>
               </BlockStack>
               <InlineStack gap="300" blockAlign="center">
@@ -754,7 +754,7 @@ export default function AppAnalytics() {
         <Text as="p" variant="bodySm" tone="subdued" fontWeight="semibold">METRICS FROM ADVERTISING PLATFORMS</Text>
         <Grid>
           {[
-            { label: `Revenue (${window}d)`, value: fmtDecimal(totalRevenue, currency), sub: `${totalOrders} attributed orders` },
+            { label: `Revenue (${window}d)`, value: fmtDecimal(totalRevenue, currency), sub: `${totalOrders} orders` },
             { label: `Ad Spend (${window}d)${spendPartial ? " · Partial" : ""}`, value: fmtDecimal(totalSpend, currency), sub: spendPartial ? `Partial — ${spendGaps.join(", ")}` : hasSpend ? `Meta ${fmtDecimal(metaSpend, currency)} · Google ${fmtDecimal(googleSpend, currency)}` : "Sync spend in Integrations" },
             { label: `Blended ROAS (${window}d)${spendPartial && blendedRoas ? " · Partial" : ""}`, value: blendedRoas ? blendedRoas.toFixed(1) + "×" : "—", sub: !hasSpend ? "No spend data" : spendPartial ? `Partial — ${spendGaps.join(", ")}, so likely overstated` : "Revenue ÷ total spend", highlight: !spendPartial && blendedRoas !== null && blendedRoas >= 2 },
             { label: "Avg Order Value", value: aov > 0 ? fmtDecimal(aov, currency) : "—", sub: "Attributed purchases" },

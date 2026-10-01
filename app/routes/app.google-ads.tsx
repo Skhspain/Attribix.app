@@ -526,7 +526,7 @@ export default function GoogleAdsDetail() {
               </InlineGrid>
               {attributedOrders < MIN_TRACKED_ORDERS && (
                 <Text as="p" tone="subdued">
-                  {`Only ${attributedOrders} Attribix-tracked Google order${attributedOrders === 1 ? "" : "s"} in this period — too few to judge performance on.`}
+                  {`Only ${attributedOrders} Attribix-attributed Google order${attributedOrders === 1 ? "" : "s"} in this period — too few to judge performance on.`}
                 </Text>
               )}
             </BlockStack>
@@ -566,7 +566,7 @@ export default function GoogleAdsDetail() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Daily spend vs Attribix-tracked revenue</Text>
+              <Text as="h2" variant="headingMd">Daily spend vs Attribix-attributed revenue</Text>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />

@@ -593,7 +593,7 @@ export default function MetaAdsDetail() {
                 </Banner>
               ) : (
                 <Text as="p" tone="subdued">
-                  {`Based on ${attributedOrders} Attribix-tracked orders out of ${totalOrdersInWindow} total orders in this period.`}
+                  {`Based on ${attributedOrders} Attribix-attributed orders out of ${totalOrdersInWindow} total orders in this period.`}
                 </Text>
               )}
             </BlockStack>
@@ -624,7 +624,7 @@ export default function MetaAdsDetail() {
         <Card>
           <BlockStack gap="300">
             <InlineStack align="space-between" blockAlign="center">
-              <Text as="h2" variant="headingMd">Daily spend vs Attribix-tracked revenue</Text>
+              <Text as="h2" variant="headingMd">Daily spend vs Attribix-attributed revenue</Text>
               <InlineStack gap="300" blockAlign="center">
                 <InlineStack gap="100" blockAlign="center">
                   <div style={{ width: 10, height: 10, borderRadius: 99, background: "#6366f1" }} />

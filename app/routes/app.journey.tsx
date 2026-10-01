@@ -401,14 +401,14 @@ export default function JourneyPage() {
           <Card>
             <BlockStack gap="100">
               <InlineStack align="space-between" blockAlign="start">
-                <Text as="p" variant="bodySm" tone="subdued">Revenue with a known source</Text>
+                <Text as="p" variant="bodySm" tone="subdued">Revenue from attributed or direct orders</Text>
               </InlineStack>
               <Text as="p" variant="heading2xl" fontWeight="bold">{fmt(knownRevenue, currency)}</Text>
               <Text as="p" variant="bodySm" tone="subdued">
                 {[
                   unknownRevenue > 0 && `${fmt(unknownRevenue, currency)} unknown`,
                   offlineRevenue > 0 && `${fmt(offlineRevenue, currency)} offline`,
-                ].filter(Boolean).join(" · ") || "all online orders in the period"}
+                ].filter(Boolean).join(" · ").replace("unknown", "not tracked") || "all online orders in the period"}
               </Text>
             </BlockStack>
           </Card>

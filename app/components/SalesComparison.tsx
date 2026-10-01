@@ -37,12 +37,12 @@ export function SalesComparison({ shopifyRevenue, shopifyOrders, platformName, p
   return (
     <Card>
       <BlockStack gap="300">
-        <Text as="h2" variant="headingSm">Attribix-tracked vs {platformName}-reported ({period})</Text>
+        <Text as="h2" variant="headingSm">Attribix-attributed vs {platformName}-reported ({period})</Text>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "14px 16px" }}>
             <Text as="p" variant="bodySm" tone="subdued">{platformName}-attributed Shopify revenue</Text>
             <Text as="p" variant="headingLg">{fmt(shopifyRevenue, currency)}</Text>
-            <Text as="p" variant="bodySm" tone="subdued">{shopifyOrders} orders tracked by Attribix</Text>
+            <Text as="p" variant="bodySm" tone="subdued">{shopifyOrders} orders Attribix attributed to {platformName}</Text>
           </div>
           <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "14px 16px" }}>
             <Text as="p" variant="bodySm" tone="subdued">{platformName}-reported conversion value</Text>
