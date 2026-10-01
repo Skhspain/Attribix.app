@@ -472,7 +472,7 @@ export default function JourneyPage() {
                           <>
                             <Text as="p" variant="bodySm" fontWeight="semibold">Too few full journeys to show a pattern yet.</Text>
                             <Text as="p" variant="bodySm" tone="subdued">
-                              {capturedCount} of {totalOrders} orders have captured touchpoints. Treat this path as an example, not typical behaviour.
+                              {capturedCount} of {totalOrders} orders have a full journey (visit history before purchase). Treat this path as an example, not typical behaviour.
                             </Text>
                           </>
                         ) : len1 / capturedCount > 0.5 ? (
@@ -537,9 +537,8 @@ export default function JourneyPage() {
                           </div>
                         ))}
                         {(j.kind === "full" || j.kind === "source") && <PurchaseBox size={26} />}
-                        {j.kind === "source" && <Text as="span" variant="bodySm" tone="subdued">source only</Text>}
                       </div>
-                      <Text as="p" variant="bodySm" tone={j.kind === "full" ? undefined : "subdued"}>{j.touchpoints ?? (j.kind === "offline" ? "—" : "Unknown")}</Text>
+                      <Text as="p" variant="bodySm" tone={j.kind === "full" ? undefined : "subdued"}>{j.touchpoints ?? (j.kind === "offline" ? "—" : j.kind === "source" ? "Source only" : "Unknown")}</Text>
                       <Text as="p" variant="bodySm" fontWeight="semibold">{fmt(j.revenue, currency)}</Text>
                       <Text as="p" variant="bodySm" tone="subdued">{j.timeToPurchase}</Text>
                     </div>
