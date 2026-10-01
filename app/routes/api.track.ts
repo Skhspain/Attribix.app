@@ -895,7 +895,12 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // ── Upsert touchpoint for multi-touch attribution journey ──
+    // Click ids only count when this page carries them: the theme embed resends
+    // 30-day cookie copies on every page view, which would label a later direct
+    // or organic visit as another ad click.
     if (resolvedShop && visitorId && sessionId) {
+      const fresh = (key: "fbclid" | "gclid" | "ttclid" | "msclkid") =>
+        pickFirstString(clickIds?.[key]) || urlAttribution[key] || referrerAttribution[key] || null;
       upsertTouchpoint({
         shop:        resolvedShop,
         visitorId,
@@ -903,10 +908,10 @@ export async function action({ request }: ActionFunctionArgs) {
         utmSource,
         utmMedium,
         utmCampaign,
-        fbclid,
-        gclid,
-        ttclid,
-        msclkid,
+        fbclid:      fresh("fbclid"),
+        gclid:       fresh("gclid"),
+        ttclid:      fresh("ttclid"),
+        msclkid:     fresh("msclkid"),
         referrer,
         landingPage: url,
       }).catch(() => null); // fire-and-forget, non-fatal

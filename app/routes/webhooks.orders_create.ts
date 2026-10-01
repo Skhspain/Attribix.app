@@ -237,6 +237,7 @@ export async function action({ request }: ActionFunctionArgs) {
           gclid:       utm.gclid,
           ttclid:      utm.ttclid,
           msclkid:     utm.msclkid,
+          referrer:    referringSite,
         },
       }).catch((e: any) =>
         console.error("[webhooks.orders_create] buildJourneyCredits error:", e?.message)

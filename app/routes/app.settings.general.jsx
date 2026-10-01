@@ -76,7 +76,7 @@ export default function GeneralSettings() {
                   <BlockStack gap="050">
                     <Text as="h2" variant="headingMd">Historical order backfill</Text>
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Import the last 90 days of Shopify orders into Attribix so attribution data covers orders placed before the app was installed.
+                      Import the last 90 days of Shopify orders into Attribix so attribution data covers orders placed before the app was installed, and rebuild customer journeys from the visits Attribix has tracked.
                     </Text>
                   </BlockStack>
 
@@ -85,6 +85,7 @@ export default function GeneralSettings() {
                   {backfillFetcher.data?.ok && (
                     <Banner tone="success">
                       Backfill complete — {backfillFetcher.data.created} orders imported, {backfillFetcher.data.skipped} already tracked.
+                      {backfillFetcher.data.journeys && ` Journeys rebuilt: ${backfillFetcher.data.journeys.captured} of ${backfillFetcher.data.journeys.orders} orders now have captured touchpoints.`}
                     </Banner>
                   )}
                   {backfillFetcher.data?.error && (

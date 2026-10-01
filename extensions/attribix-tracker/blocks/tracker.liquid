@@ -34,6 +34,21 @@
   if (!sid) { sid = uid(); }
   sc('attribix_sid', sid, 0.02);
 
+  // Put the visitor id on the cart; Shopify copies cart attributes onto the
+  // order, so the orders webhook can link the order to this visitor's journey
+  // even when the thank-you page event never reaches us.
+  var cartVid = {{ cart.attributes.attribix_visitor_id | json }};
+  if (cartVid !== vid) {
+    try {
+      fetch((window.Shopify && Shopify.routes && Shopify.routes.root || '/') + 'cart/update.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
+        body: JSON.stringify({ attributes: { attribix_visitor_id: vid } }),
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   // First-touch UTM persistence (30 days)
   ['utm_source','utm_medium','utm_campaign','utm_term','utm_content'].forEach(function (p) {
     var v = qp(p);

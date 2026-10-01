@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { periodStart, previousPeriod } from "~/utils/reportPeriod";
 
 vi.mock("~/db.server", () => ({ default: {}, db: {} }));
-const { channelOf, NOT_TRACKED_CHANNEL } = await import("~/services/touchpoints.server");
+const { channelOf, mergeVisits, NOT_TRACKED_CHANNEL } = await import("~/services/touchpoints.server");
 
 describe("report periods", () => {
   const now = Date.UTC(2026, 8, 28, 11, 30); // 28 Sept 2026, 11:30 UTC
@@ -37,5 +37,31 @@ describe("journey channels", () => {
   it("calls a seen visit without source 'Direct', distinct from an order we never saw", () => {
     expect(channelOf({})).toBe("Direct");
     expect(NOT_TRACKED_CHANNEL).toBe("Not tracked");
+  });
+});
+
+describe("journey visits", () => {
+  const at = (min: number) => new Date(Date.UTC(2026, 8, 1, 10, min));
+
+  it("counts the theme embed's and the pixel's session of one visit once, keeping the ad click", () => {
+    const merged = mergeVisits([
+      { touchedAt: at(0), channel: "Direct" },
+      { touchedAt: at(1), channel: "Google Ads", gclid: "abc" },
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].channel).toBe("Google Ads");
+    expect(merged[0].touchedAt).toEqual(at(0));
+  });
+
+  it("keeps separate visits apart", () => {
+    const merged = mergeVisits([
+      { touchedAt: at(45), channel: "Organic Search" },
+      { touchedAt: at(0), channel: "Meta Ads", fbclid: "x" },
+    ]);
+    expect(merged.map((v) => v.channel)).toEqual(["Meta Ads", "Organic Search"]);
+  });
+
+  it("labels an unattributed visit by its referrer", () => {
+    expect(channelOf({ referrer: "https://www.google.com/" })).toBe("Organic Search");
   });
 });
