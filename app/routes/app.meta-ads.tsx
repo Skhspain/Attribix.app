@@ -1177,15 +1177,26 @@ export default function MetaAdsDetail() {
             {/* What to do callout */}
             {view === "ads" && adTableData.length > 0 && (() => {
               const roasTarget = parseFloat(targetRoas) || null;
-              const scale = adTableData.filter(a => roasTarget ? (a.roas !== null && a.roas >= roasTarget) : (a.roas !== null && a.roas >= 3));
-              const watch = adTableData.filter(a => {
-                const tgt = roasTarget || 3;
-                return a.roas !== null && a.roas >= 1 && a.roas < tgt;
-              });
-              // Only flag true conversion ads with no sales — exclude awareness/lead/negligible
-              const pause = adTableData.filter(a => a.adType === "conversion" && a.purchases === 0 && a.spend > 0.5);
+              const tgt = roasTarget || 3;
+              // Only suggest anything with enough evidence: a few purchases
+              // before judging ROAS, and enough spend before calling an ad a
+              // dud. ROAS is revenue, not profit (no product costs), so these
+              // are things to look at, not instructions.
+              const MIN_PURCHASES = 3;
+              const totalPurchases = adTableData.reduce((s, a) => s + a.purchases, 0);
+              const totalAdSpend = adTableData.reduce((s, a) => s + a.spend, 0);
+              const avgCostPerPurchase = totalPurchases > 0 ? totalAdSpend / totalPurchases : null;
+              // "No sales yet" only means something after spending well past a typical sale's cost.
+              const reviewSpend = Math.max(minSpend, avgCostPerPurchase ? avgCostPerPurchase * 2 : 0);
+              const judged = adTableData.filter(a => a.roas !== null && a.purchases >= MIN_PURCHASES);
+              const scale = judged.filter(a => a.roas! >= tgt);
+              const watch = judged.filter(a => a.roas! < tgt);
+              const pause = adTableData.filter(a => a.adType === "conversion" && a.purchases === 0 && a.spend >= reviewSpend);
+              const tooEarly = adTableData.filter(a =>
+                (a.purchases > 0 && a.purchases < MIN_PURCHASES) ||
+                (a.adType === "conversion" && a.purchases === 0 && a.spend > 0.5 && a.spend < reviewSpend));
               const notTracked = adTableData.filter(a => a.adType === "awareness" || a.adType === "traffic");
-              if (scale.length === 0 && watch.length === 0 && pause.length === 0 && notTracked.length === 0) return null;
+              if (scale.length === 0 && watch.length === 0 && pause.length === 0 && notTracked.length === 0 && tooEarly.length === 0) return null;
               return (
                 <div style={{ marginTop: 8, borderTop: "1px solid #f1f2f3", paddingTop: 20 }}>
                   <p style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700, color: "#374151", textTransform: "uppercase", letterSpacing: "0.06em" }}>What to do next</p>
@@ -1194,8 +1205,9 @@ export default function MetaAdsDetail() {
                       <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 16px", background: "#f0fdf4", borderRadius: 10, border: "1px solid #bbf7d0" }}>
                         <span style={{ fontSize: 18, flexShrink: 0 }}>📈</span>
                         <div>
-                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#166534" }}>Scale these ads — they're profitable</p>
-                          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#15803d" }}>{scale.map(a => a.name).join(" · ")}</p>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#166534" }}>{`At or above ${tgt}× Meta-reported ROAS — worth testing more budget`}</p>
+                          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#15803d" }}>{scale.map(a => `${a.name} (${a.purchases} purchases)`).join(" · ")}</p>
+                          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#166534" }}>ROAS is revenue ÷ spend. It doesn't include product costs, shipping or fees, so check your margins before increasing budgets.</p>
                         </div>
                       </div>
                     )}
@@ -1203,8 +1215,8 @@ export default function MetaAdsDetail() {
                       <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 16px", background: "#fffbeb", borderRadius: 10, border: "1px solid #fde68a" }}>
                         <span style={{ fontSize: 18, flexShrink: 0 }}>👀</span>
                         <div>
-                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#92400e" }}>Watch these — almost breaking even</p>
-                          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#b45309" }}>{watch.map(a => a.name).join(" · ")}</p>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#92400e" }}>{`Below ${tgt}× Meta-reported ROAS`}</p>
+                          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#b45309" }}>{watch.map(a => `${a.name} (${a.roas!.toFixed(1)}×, ${a.purchases} purchases)`).join(" · ")}</p>
                         </div>
                       </div>
                     )}
@@ -1212,8 +1224,18 @@ export default function MetaAdsDetail() {
                       <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 16px", background: "#fff1f2", borderRadius: 10, border: "1px solid #fecdd3" }}>
                         <span style={{ fontSize: 18, flexShrink: 0 }}>⏸️</span>
                         <div>
-                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#9f1239" }}>Consider pausing — spending money, zero sales</p>
-                          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#be123c" }}>{pause.map(a => a.name).join(" · ")}</p>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#9f1239" }}>{`Review: spent ${fmtDecimal(reviewSpend, currency)}+ with no Meta-reported purchase`}</p>
+                          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#be123c" }}>{pause.map(a => `${a.name} (${fmtDecimal(a.spend, currency)})`).join(" · ")}</p>
+                          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#9f1239" }}>{avgCostPerPurchase ? "That's at least twice what a purchase usually costs in this account." : "No purchases recorded in this account yet, so compare against your own target cost per sale."} Check the ad's audience and landing page before pausing.</p>
+                        </div>
+                      </div>
+                    )}
+                    {tooEarly.length > 0 && (
+                      <div style={{ display: "flex", gap: 12, alignItems: "flex-start", padding: "12px 16px", background: "#f8fafc", borderRadius: 10, border: "1px solid #e2e8f0" }}>
+                        <span style={{ fontSize: 18, flexShrink: 0 }}>⏳</span>
+                        <div>
+                          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#374151" }}>{`Too early to judge (${tooEarly.length} ad${tooEarly.length === 1 ? "" : "s"})`}</p>
+                          <p style={{ margin: "2px 0 0", fontSize: 13, color: "#6b7280" }}>{`Fewer than ${MIN_PURCHASES} purchases, or not enough spend yet to tell. One sale can make an ad look great or terrible.`}</p>
                         </div>
                       </div>
                     )}
