@@ -77,34 +77,17 @@ export async function action({ request }: ActionFunctionArgs) {
       totalsByDate.set(r.date, (totalsByDate.get(r.date) ?? 0) + r.costMicros);
     }
 
-    const items = Array.from(totalsByDate.entries()).map(([dateStr, micros]) => {
+    // One row per shop/day. This used to delete-then-insert with no shop on
+    // either side, wiping every store's Google spend for those days and
+    // saving rows that belonged to no store.
+    for (const [dateStr, micros] of totalsByDate) {
+      const date = parseGoogleDateToUtcMidnight(dateStr);
       const spend = micros / 1_000_000;
-      return {
-        date: parseGoogleDateToUtcMidnight(dateStr),
-        platform: "google",
-        campaign: null,
-        adset: null,
-        ad: null,
-        spend,
-      };
-    });
-
-    if (items.length > 0) {
-      const times = items.map((i) => i.date.getTime());
-      const minDate = new Date(Math.min(...times));
-      const maxDate = new Date(Math.max(...times));
-
-      await db.adSpendDaily.deleteMany({
-        where: {
-          platform: "google",
-          campaign: null,
-          adset: null,
-          ad: null,
-          date: { gte: minDate, lte: maxDate },
-        },
+      await db.adSpendDaily.upsert({
+        where: { shop_platform_date: { shop, platform: "google", date } },
+        update: { spend },
+        create: { shop, platform: "google", date, spend, campaign: null, adset: null, ad: null },
       });
-
-      await db.adSpendDaily.createMany({ data: items });
     }
 
     // ✅ ensure connection has the latest chosen ID
@@ -116,7 +99,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({
       ok: true,
       customerId,
-      insertedDays: items.length,
+      insertedDays: totalsByDate.size,
     });
   } catch (err: any) {
     return json(
