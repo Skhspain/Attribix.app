@@ -1,6 +1,7 @@
 // app/routes/app.journey.tsx
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useNavigate } from "@remix-run/react";
+import { useState } from "react";
 import { Badge, Banner, BlockStack, Button, Card, InlineStack, Page, Text } from "@shopify/polaris";
 import { periodStart } from "~/utils/reportPeriod";
 import { offlineChannelLabel, orderSource } from "~/utils/orderSource";
@@ -148,9 +149,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   // Most informative first: full journeys, then known sources, then the rest.
   const kindRank: Record<Kind, number> = { full: 0, source: 1, offline: 2, unknown: 3 };
+  // Every order in the period (the page shows 8 until "Show all"). Shopify
+  // looks up at most 250 order names per request.
   const listed = [...journeys]
     .sort((a: any, b: any) => kindRank[a.kind as Kind] - kindRank[b.kind as Kind] || b.revenue - a.revenue)
-    .slice(0, 8);
+    .slice(0, 250);
 
   // Merchants know orders by name ("#1042"), not by Shopify's internal id.
   const names = new Map<string, string>();
@@ -311,6 +314,7 @@ function DonutChart({ len1, len2, len3plus, total }: { len1: number; len2: numbe
 export default function JourneyPage() {
   const data = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const [showAll, setShowAll] = useState(false);
   const {
     totalOrders, capturedCount, sourceOnlyCount, offlineCount, unknownCount,
     knownRevenue, unknownRevenue, offlineRevenue,
@@ -336,7 +340,7 @@ export default function JourneyPage() {
       <BlockStack gap="500">
 
         {/* ── Header ─────────────────────────────────────────────────── */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 12 }}>
           <BlockStack gap="100">
             <Text as="h1" variant="headingXl" fontWeight="bold">Customer journeys</Text>
             <Text as="p" variant="bodySm" tone="subdued">
@@ -359,7 +363,9 @@ export default function JourneyPage() {
         {totalOrders > 0 && (unknownCount > 0 || sourceOnlyCount > 0 || offlineCount > 0) && (
           <Banner
             tone={unknownCount > onlineOrders / 2 ? "warning" : "info"}
-            title={`Full journeys for ${capturedCount} of ${plural(onlineOrders, "online order")}`}
+            title={capturedCount < onlineOrders / 2
+              ? `Only ${capturedCount} of ${plural(onlineOrders, "online order")} ${capturedCount === 1 ? "has" : "have"} a full journey`
+              : `Full journeys for ${capturedCount} of ${plural(onlineOrders, "online order")}`}
           >
             <BlockStack gap="100">
               {sourceOnlyCount > 0 && (
@@ -545,7 +551,7 @@ export default function JourneyPage() {
                   {/* One line per order: path, order + plain-English detail, revenue.
                       Fits the narrow column without sideways scrolling. */}
                   <div>
-                    {recentJourneys.map((j: any, i: number) => (
+                    {(showAll ? recentJourneys : recentJourneys.slice(0, 8)).map((j: any, i: number) => (
                       <div key={j.orderId} style={{
                         display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto",
                         gap: 12, alignItems: "center", padding: "10px 0",
@@ -574,9 +580,16 @@ export default function JourneyPage() {
                     ))}
                   </div>
 
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Showing {recentJourneys.length} of {totalOrders} orders
-                  </Text>
+                  <InlineStack align="space-between" blockAlign="center">
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Showing {showAll ? recentJourneys.length : Math.min(8, recentJourneys.length)} of {totalOrders} orders
+                    </Text>
+                    {recentJourneys.length > 8 && (
+                      <Button variant="plain" onClick={() => setShowAll((v) => !v)}>
+                        {showAll ? "Show fewer" : `Show all ${recentJourneys.length} orders`}
+                      </Button>
+                    )}
+                  </InlineStack>
                 </BlockStack>
               </Card>
             )}
@@ -596,6 +609,13 @@ export default function JourneyPage() {
                   </Text>
                 </BlockStack>
 
+                {!enoughForPatterns ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    {capturedCount === 0
+                      ? "No full journeys yet."
+                      : `Only ${plural(capturedCount, "full journey")} so far: ${len1} with 1 visit, ${len2} with 2, ${len3plus} with 3 or more. A chart needs at least ${MIN_JOURNEYS_FOR_PATTERNS}.`}
+                  </Text>
+                ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
                   <div style={{ flexShrink: 0 }}>
                     <DonutChart len1={len1} len2={len2} len3plus={len3plus} total={capturedCount} />
@@ -621,8 +641,9 @@ export default function JourneyPage() {
                     ))}
                   </BlockStack>
                 </div>
+                )}
 
-                {multiTouchCount === 0 && (
+                {multiTouchCount === 0 && enoughForPatterns && (
                   <div style={{
                     padding: "10px 12px", borderRadius: 8,
                     background: "#FFFBEB", border: "1px solid #FDE68A",
