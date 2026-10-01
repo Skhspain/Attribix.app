@@ -156,6 +156,9 @@ export async function loader({ request }) {
     new Promise((r) => setTimeout(() => r(null), 3000)),
   ]).catch(() => null);
 
+  const { getSetupStatus } = await import("~/services/setupStatus.server");
+  const setup = await getSetupStatus(shop);
+
   const storeCurrency = await getReportingCurrency(shop, admin);
   const rates = await adAccountRates(shop, storeCurrency);
 
@@ -326,7 +329,7 @@ export async function loader({ request }) {
 
   return json({
     shop,
-    rev30, rev7, orders30, orders7, aov, shopifyOrders30,
+    rev30, rev7, orders30, orders7, aov, shopifyOrders30, setup,
     rev30Delta, orders30Delta,
     dailyRevArr, dailyOrdersArr,
     periodDays: PERIOD_DAYS,
@@ -892,13 +895,15 @@ export default function AppIndex() {
     <Text as="span" variant="bodySm" tone="subdued">{formatDate(p.createdAt)}</Text>,
   ]);
 
-  // Each item is checked against real data, not just "a connection exists".
-  const setupSteps = [
-    { label: "Storefront events received (last 24 h)", done: trackingOk, url: "/app/settings/tracking" },
-    { label: data.metaConnected ? "Meta Ads syncing" : "Connect Meta Ads", done: data.metaConnected && !metaStale, url: "/app/integrations/meta" },
-    { label: data.googleConnected ? "Google Ads syncing" : "Connect Google Ads", done: data.googleConnected && !googleFailing && !googleStale, url: "/app/integrations/google" },
-    ...(t.widgetsEmbedLive === null ? [] : [{ label: "Storefront widgets embed on", done: !!t.widgetsEmbedLive, url: "/app/setup" }]),
-  ];
+  // Same steps and rules as the Setup guide (getSetupStatus), so the two
+  // pages always show the same progress.
+  const SETUP_LABELS = {
+    meta: "Meta Ads syncing", google: "Google Ads syncing", tracking: "Storefront events arriving",
+    conversions: "Orders matched to visits", widgets: "Storefront widgets embed on",
+  };
+  const setupSteps = Object.entries(data.setup.steps)
+    .filter(([, st]) => !st.unknown)
+    .map(([key, st]) => ({ label: SETUP_LABELS[key] ?? key, done: st.done, url: "/app/setup" }));
   const setupDone = setupSteps.filter(s => s.done).length;
 
   return (
